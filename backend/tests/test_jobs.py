@@ -82,10 +82,9 @@ def test_layer_png_renders_ink_and_is_cached(tmp_path: Path) -> None:
     png1 = layer_png(job, 1, max_px=200)
     assert png1[:8] == b"\x89PNG\r\n\x1a\n"
     im = Image.open(__import__("io").BytesIO(png1))
-    assert im.size[0] <= 200 and im.mode == "RGBA"
-    alpha = im.getchannel("A")
-    assert alpha.getpixel((0, 0)) == 0  # paper is transparent
-    assert alpha.getpixel((int(12 * im.size[0] / 300), im.size[1] // 2)) == 255  # ink is opaque
+    assert im.size[0] <= 200 and im.mode == "L"
+    assert im.getpixel((0, 0)) == 255  # paper is white
+    assert im.getpixel((int(12 * im.size[0] / 300), im.size[1] // 2)) == 0  # ink is black
     assert layer_png(job, 1, max_px=200) is png1  # cached object
     with pytest.raises(IndexError):
         layer_png(job, 3)

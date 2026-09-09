@@ -167,9 +167,9 @@ button.small { height: 34px; padding: 0 12px; border: 1px solid var(--line-contr
 @media (prefers-reduced-motion: reduce) { .badge.rec, .el-moving { animation: none; } }
 
 /* ---- jobs / cross-section ---- */
-.xsec { position: relative; flex: 1; min-height: 0; display: grid; place-items: center; background: var(--image-bg); border: 1px solid var(--line); border-radius: var(--radius); overflow: hidden; }
-.xsec img { max-width: 100%; max-height: 100%; image-rendering: pixelated; }
-.xsec .cap { position: absolute; left: 14px; bottom: 10px; font: 12px var(--font-mono); color: var(--muted); }
+.xsec { position: relative; flex: 1; min-height: 0; display: grid; place-items: center; background: var(--bg-deep); border: 1px solid var(--line); border-radius: var(--radius); overflow: hidden; }
+.xsec img { max-width: 100%; max-height: 100%; image-rendering: auto; border: 1px solid var(--line-strong); }
+.xsec .cap { position: absolute; left: 14px; bottom: 10px; font: 12px var(--font-mono); color: var(--muted); background: var(--scrim); padding: 2px 6px; }
 .xsec .cap b { color: var(--fg-strong); }
 .xsec .empty { color: var(--muted); font-size: 15px; text-align: center; padding: 24px; }
 .job-list { display: flex; flex-direction: column; gap: 6px; margin-top: 8px; max-height: 300px; overflow: auto; }

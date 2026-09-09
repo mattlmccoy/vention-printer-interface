@@ -27,7 +27,7 @@ export function JobView({ status, gates, call, order, onOrder, onStarted }: { st
   useEffect(() => { refresh(); }, [gates.reachable, job?.path]);
   const edit = (patch: Partial<RecipePlan>) => plan && (setPlan({ ...plan, ...patch }), setDirty(true));
   const editPh = (ph: "precoat" | "printing" | "postcoat", patch: Partial<RecipePlan["precoat"]>) => plan && edit({ [ph]: { ...plan[ph], ...patch } } as Partial<RecipePlan>);
-  const save = async () => { if (!plan) return; await call("save recipe", () => api.setRecipe(plan as unknown as Record<string, unknown>).then((r) => { setPlan(r.plan as unknown as RecipePlan); setDirty(false); })); };
+  const save = async () => { if (!plan) return; await call("save print settings", () => api.setRecipe(plan as unknown as Record<string, unknown>).then((r) => { setPlan(r.plan as unknown as RecipePlan); setDirty(false); })); };
   const reasons = plan ? validate(plan) : [];
   const total = plan ? totalThickness(plan) : 0;
   const layers = plan ? totalLayers(plan) : 0;
@@ -37,7 +37,7 @@ export function JobView({ status, gates, call, order, onOrder, onStarted }: { st
   const start = async () => {
     if (!plan) return;
     if (dirty) await save();
-    if (!dry && !window.confirm(`Start ${job ? job.name : "the manual recipe"} on the machine?\n${layers} layers · ${total.toFixed(1)} mm · heater ${plan.heater_enabled ? "ENABLED" : "off"} · about ${fmtSecs(estimateDurationS(plan))}`)) return;
+    if (!dry && !window.confirm(`Start ${job ? job.name : "the manual print"} on the machine?\n${layers} layers · ${total.toFixed(1)} mm · heater ${plan.heater_enabled ? "ENABLED" : "off"} · about ${fmtSecs(estimateDurationS(plan))}`)) return;
     await call("start", () => api.recipeStart({ dry_run: dry, single_step: single, name: name || job?.name || "print" }).then(onStarted));
   };
   const modules: Module[] = [
@@ -53,7 +53,7 @@ export function JobView({ status, gates, call, order, onOrder, onStarted }: { st
           ))}
           {jobs.length === 0 && <div className="hint">no job_info.json folders found. Slice a part with the Meteor RIP tool; its hot-folder archive is scanned.</div>}
         </div>
-        {job && <div className="row" style={{ marginTop: 10 }}><button className="small" disabled={running} onClick={() => call("clear job", api.clearJob)}>manual recipe (no job)</button></div>}
+        {job && <div className="row" style={{ marginTop: 10 }}><button className="small" disabled={running} onClick={() => call("clear job", api.clearJob)}>manual print (no job)</button></div>}
       </>
     ) },
     { id: "preview", title: job ? `${job.name} · preview` : "preview", size: "l", node: (
@@ -68,7 +68,7 @@ export function JobView({ status, gates, call, order, onOrder, onStarted }: { st
         <span>layer thickness</span><span className={mismatch ? "warnv" : ""}>{job.layer_height_mm} mm</span>
         <span>part height</span><span>{job.height_mm} mm</span>
         <span>footprint</span><span>{job.bbox_mm.x} × {job.bbox_mm.y} mm</span>
-        <span>recipe print phase</span><span className={mismatch ? "warnv" : ""}>{plan.printing.n_layers} × {plan.printing.layer_thickness_mm} mm{mismatch ? " ≠ job" : ""}</span>
+        <span>print settings</span><span className={mismatch ? "warnv" : ""}>{plan.printing.n_layers} × {plan.printing.layer_thickness_mm} mm{mismatch ? " ≠ job" : ""}</span>
         <span>MetPrint</span><span className="warnv">queue the job's TIFFs in the hot folder (v2 automates this)</span>
       </div>
     ) : null },
@@ -92,7 +92,7 @@ export function JobView({ status, gates, call, order, onOrder, onStarted }: { st
         </div>
         {reasons.length > 0 ? <div className="errline">{reasons.join(" · ")}</div> : <div className="okline">printable</div>}
       </>
-    ) : <div className="hint">loading recipe…</div> },
+    ) : <div className="hint">loading print settings…</div> },
     { id: "start", title: "start", size: "s", node: plan ? (
       <>
         <div className="est" style={{ gridTemplateColumns: "1fr 1fr" }}><div><div className="l">about</div><div className="v" style={{ fontSize: 26 }}>{fmtSecs(estimateDurationS(plan))}</div></div><div><div className="l">layers</div><div className="v" style={{ fontSize: 26 }}>{layers}</div></div></div>
@@ -109,7 +109,7 @@ export function JobView({ status, gates, call, order, onOrder, onStarted }: { st
         {!gates.controllable && <div className="lock">{gates.connected ? "read-only · take control from the connection pill" : "connect a controller to start"}</div>}
       </>
     ) : null },
-    { id: "advanced", title: "speeds and positions", size: "m", node: plan ? (
+    { id: "advanced", title: "print settings · speeds and positions", size: "m", node: plan ? (
       <div className="fields adv" style={{ marginTop: 0 }}>
         <span>piston speed</span><span className="row"><input type="number" step="0.1" value={plan.printing.part_speed} disabled={running} onChange={(e) => { const s = num(e.target.value, plan.printing.part_speed); const u = (p: RecipePlan["precoat"]) => ({ ...p, part_speed: s, feed_speed: s }); edit({ precoat: u(plan.precoat), printing: u(plan.printing), postcoat: u(plan.postcoat) }); }} /> mm/s</span>
         <span>recoater speed</span><span className="row"><input type="number" value={plan.printing.recoater_speed} disabled={running} onChange={(e) => { const s = num(e.target.value, plan.printing.recoater_speed); edit({ precoat: { ...plan.precoat, recoater_speed: s }, printing: { ...plan.printing, recoater_speed: s }, postcoat: { ...plan.postcoat, recoater_speed: s } }); }} /> mm/s</span>
