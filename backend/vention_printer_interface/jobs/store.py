@@ -102,14 +102,16 @@ def layer_png(job: JobInfo, layer: int, *, max_px: int = 700) -> bytes:
         return job._cache[key]
     with Image.open(job.pages[layer - 1]) as im:
         gray = im.convert("L")
-        # WhiteIsZero is already resolved by Pillow into L where 0 = white. Ink = value > 0.
+        # Pillow presents WhiteIsZero pages as a normal L image: 255 = paper, 0 = full ink
+        # (verified on ir_heater_socket_mount_v1 from the lab hot folder, 2026-09-09).
+        # Ink darkness (255 - v) becomes the alpha of the amber overlay.
         w, h = gray.size
         scale = min(1.0, max_px / max(w, h))
         if scale < 1.0:
             gray = gray.resize(
                 (max(1, int(w * scale)), max(1, int(h * scale))), Image.Resampling.BOX
             )
-        alpha = gray.point(lambda v: 255 if v > 0 else 0)
+        alpha = gray.point(lambda v: 255 - v)
         rgba = Image.new("RGBA", gray.size, (255, 180, 84, 0))
         rgba.putalpha(alpha)
         buf = io.BytesIO()

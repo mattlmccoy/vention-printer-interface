@@ -35,10 +35,10 @@ def make_job(
     info = {**SAMPLE_INFO, "layer_count": layers, "tiff_count": layers, "height_mm": layers * 0.1}
     (d / "job_info.json").write_text(json.dumps(info))
     for n in range(1, layers + 1):  # pages are 1-based: <job>_Page<N>_Clr1.tif
-        im = Image.new("L", (300, 30), 0)  # WhiteIsZero: 0 = no ink
+        im = Image.new("L", (300, 30), 255)  # as Pillow loads them: 255 = paper, 0 = ink
         for x in range(10, 10 + n * 5):
             for y in range(5, 25):
-                im.putpixel((x, y), 255)
+                im.putpixel((x, y), 0)
         im.save(d / f"{SAMPLE_INFO['job_name']}_Page{n}_Clr1.tif", compression="tiff_lzw")
     return d
 
@@ -83,6 +83,9 @@ def test_layer_png_renders_ink_and_is_cached(tmp_path: Path) -> None:
     assert png1[:8] == b"\x89PNG\r\n\x1a\n"
     im = Image.open(__import__("io").BytesIO(png1))
     assert im.size[0] <= 200 and im.mode == "RGBA"
+    alpha = im.getchannel("A")
+    assert alpha.getpixel((0, 0)) == 0  # paper is transparent
+    assert alpha.getpixel((int(12 * im.size[0] / 300), im.size[1] // 2)) == 255  # ink is opaque
     assert layer_png(job, 1, max_px=200) is png1  # cached object
     with pytest.raises(IndexError):
         layer_png(job, 3)

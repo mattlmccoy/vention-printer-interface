@@ -591,7 +591,9 @@ def create_app(
         except IndexError as exc:
             raise HTTPException(404, str(exc)) from exc
         return Response(
-            content=data, media_type="image/png", headers={"Cache-Control": "max-age=3600"}
+            content=data,
+            media_type="image/png",
+            headers={"Cache-Control": "no-cache", "ETag": f'"{job.dir.name}-{layer}"'},
         )
 
     @app.post("/api/macro/{name}")
