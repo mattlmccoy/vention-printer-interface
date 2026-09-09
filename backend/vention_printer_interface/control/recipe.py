@@ -292,3 +292,36 @@ def compile_recipe(plan: RecipePlan) -> tuple[Step, ...]:
                     add(name, layer_no, "heater", value=0.0)
             add(name, layer_no, "mark", label="layer_end")
     return tuple(out)
+
+
+# Homing speeds (mm/s) from vention/json/configuration.json; travel from safety.TRAVEL_MM.
+_HOMING = {PART: 68.8, FEED: 68.8, PRINTHEAD: 66.3, RECOATER: 66.3}
+_TRAVEL = {PART: 145.0, FEED: 145.0, PRINTHEAD: 840.0, RECOATER: 930.0}
+
+
+def estimate_duration_s(plan: RecipePlan, min_wait_s: float = 0.5) -> float:
+    """Rough wall-clock estimate: constant-velocity moves at the commanded speed, dwells, and
+    homing at the configured homing speed; acceleration is ignored (mirrored in the UI)."""
+    speed = {PART: 5.0, FEED: 5.0, PRINTHEAD: 100.0, RECOATER: 100.0}
+    pos = dict.fromkeys(speed, 0.0)
+    total = 0.0
+    pending = 0.0
+    for step in compile_recipe(plan):
+        if step.kind == "home_all":
+            pending = max(_TRAVEL[a] / _HOMING[a] for a in speed) * 0.5  # typically half travel
+        elif step.kind == "set_speed" and step.axis is not None:
+            speed[step.axis] = max(float(step.value or 0.1), 0.1)
+        elif step.kind in ("move_abs", "move_rel") and step.axis is not None:
+            target = (
+                float(step.value or 0.0)
+                if step.kind == "move_abs"
+                else pos[step.axis] + float(step.value or 0.0)
+            )
+            pending = max(pending, abs(target - pos[step.axis]) / speed[step.axis])
+            pos[step.axis] = target
+        elif step.kind == "wait":
+            total += max(pending, min_wait_s)
+            pending = 0.0
+        elif step.kind == "dwell":
+            total += float(step.value or 0.0)
+    return round(total + pending, 1)

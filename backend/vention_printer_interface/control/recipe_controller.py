@@ -20,7 +20,7 @@ from collections.abc import Callable
 from typing import Any
 
 from vention_printer_interface.control.controller import Controller, ControllerState
-from vention_printer_interface.control.recipe import RecipePlan, Step, compile_recipe
+from vention_printer_interface.control.recipe import PART, RecipePlan, Step, compile_recipe
 
 log = logging.getLogger(__name__)
 EventHook = Callable[[str, dict[str, Any]], None]
@@ -52,9 +52,13 @@ class RecipeController:
         self.on_event: EventHook | None = None
         self._reset(None)
 
-    def _reset(self, plan: RecipePlan | None) -> None:
+    def _reset(self, plan: RecipePlan | None, steps: tuple[Step, ...] | None = None) -> None:
         self.plan = plan
-        self.steps: tuple[Step, ...] = compile_recipe(plan) if plan else ()
+        self.macro: str | None = None
+        self.steps: tuple[Step, ...] = (
+            steps if steps is not None else (compile_recipe(plan) if plan else ())
+        )
+        self.part_zero_mm: float | None = None
         self.state = RecipeState.IDLE
         self.step_index = 0  # next step to issue
         self.dry_run = False
@@ -81,9 +85,31 @@ class RecipeController:
             self._c._require_armed()
             self._reset(plan)
             self.dry_run, self.single_step = dry_run, single_step
+            self.part_zero_mm = self._part_position()
             self.state = RecipeState.RUNNING
             self._started_at = self._clock()
         self._emit("recipe_started", {"n_steps": len(self.steps), "dry_run": dry_run})
+
+    def start_macro(self, name: str, steps: tuple[Step, ...]) -> None:
+        """Run a park macro on the same machine (armed-gated, pausable, abortable)."""
+        with self._lock:
+            if self.state in (RecipeState.RUNNING, RecipeState.PAUSED):
+                raise RuntimeError("recipe or macro already running")
+            if not steps:
+                raise RuntimeError("macro has no steps")
+            self._c._require_armed()
+            self._reset(None, steps)
+            self.macro = name
+            self.state = RecipeState.RUNNING
+            self._started_at = self._clock()
+        self._emit("macro_started", {"macro": name, "n_steps": len(steps)})
+
+    def _part_position(self) -> float | None:
+        tel = self._c.snapshot().get("telemetry")
+        if not tel:
+            return None
+        value = tel["positions"].get(str(PART))
+        return float(value) if isinstance(value, int | float) else None
 
     def pause(self) -> None:
         with self._lock:
@@ -170,6 +196,10 @@ class RecipeController:
                     return ("recipe_fault", {"reason": self.reason})
                 return None
             self._in_flight = None
+            if inflight.phase == "setup" and inflight.index == 1 and self.macro is None:
+                self.part_zero_mm = (
+                    self._part_position()
+                )  # after home: the build piston's true zero
             if self._pause_requested or (self.single_step and not self._step_granted):
                 self._pause_requested, self._step_granted = False, False
                 self.state = RecipeState.PAUSED
@@ -187,6 +217,8 @@ class RecipeController:
                 return event
         self.state = RecipeState.DONE
         self._finished_at = now
+        if self.macro:
+            return ("macro_done", {"macro": self.macro})
         return ("recipe_done", {"layers": self._layer, "part_height_mm": self._height})
 
     def _blocking_done(self, step: Step, snapshot: dict[str, Any], now: float) -> bool:
@@ -252,8 +284,17 @@ class RecipeController:
             cur = self._in_flight
             if cur is None and 0 < self.step_index <= len(self.steps):
                 cur = self.steps[self.step_index - 1]
+            here = self._part_position()
+            measured = (
+                round(here - self.part_zero_mm, 3)
+                if here is not None and self.part_zero_mm is not None
+                else None
+            )
             return {
                 "state": self.state.value,
+                "macro": self.macro,
+                "part_zero_mm": self.part_zero_mm,
+                "part_height_measured_mm": measured,
                 "step_index": self.step_index,
                 "n_steps": len(self.steps),
                 "phase": self._phase,
