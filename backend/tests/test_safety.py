@@ -41,12 +41,27 @@ def test_drives_not_ready_trips_only_when_move_pending() -> None:
     assert evaluate(tel(drives_ready=False), SafetyLimits(), 0.1, 0, True).trip is True
 
 
+def test_homed_negative_position_is_within_limits() -> None:
+    # real recoater homes to ~-22 mm; the soft floor must accommodate that (2026-09-09)
+    lim = SafetyLimits()
+    assert lim.travel_min[4] <= -22.0
+    assert not evaluate(tel(positions={1: -0.1, 2: 0.1, 3: 250, 4: -22.0}), lim, 0.1, 0, False).trip
+    assert evaluate(tel(positions={1: 10, 2: 10, 3: 10, 4: -40.0}), lim, 0.1, 0, False).trip
+
+
+def test_bounded_allows_negative_travel_min() -> None:
+    lim = SafetyLimits.bounded(travel_min={"4": -25})
+    assert lim.travel_min[4] == -25.0
+    # but not past the hard floor
+    assert SafetyLimits.bounded(travel_min={"4": -999}).travel_min[4] == -50.0
+
+
 def test_encoder_drift_at_ends_does_not_fault() -> None:
     # real controller rests at ~-0.1 mm near home; a small tolerance must not fault (2026-09-09)
     lim = SafetyLimits()
     assert not evaluate(tel(positions={1: -0.1, 2: 0.1, 3: 250, 4: -0.1}), lim, 0.1, 0, False).trip
-    # but a real overshoot past the tolerance still trips
-    assert evaluate(tel(positions={1: -3.0, 2: 10, 3: 10, 4: 10}), lim, 0.1, 0, False).trip
+    # but a real overshoot past the floor/ceiling still trips
+    assert evaluate(tel(positions={1: -40.0, 2: 10, 3: 10, 4: 10}), lim, 0.1, 0, False).trip
     assert evaluate(tel(positions={1: 10, 2: 10, 3: 10, 4: 933}), lim, 0.1, 0, False).trip
 
 
@@ -106,6 +121,7 @@ def test_clamps() -> None:
     lim = SafetyLimits()
     assert lim.clamp_speed(1, 1000) == lim.max_speed[1]
     assert lim.clamp_accel(3, 1e9) == lim.max_accel[3]
-    assert lim.clamp_position(2, -5) == 0.0
+    assert lim.clamp_position(2, -5) == -5.0  # travel_min is negative (home offset)
+    assert lim.clamp_position(2, -999) == lim.travel_min[2]
     with pytest.raises(ValueError):
         lim.clamp_speed(9, 1)

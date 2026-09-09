@@ -15,7 +15,8 @@ from typing import TYPE_CHECKING, Any
 if TYPE_CHECKING:
     from vention_printer_interface.device.printer import Telemetry
 
-TRAVEL_MM: dict[int, float] = {1: 145.0, 2: 145.0, 3: 840.0, 4: 930.0}  # V1.py
+TRAVEL_MM: dict[int, float] = {1: 145.0, 2: 145.0, 3: 840.0, 4: 930.0}  # V1.py extents
+TRAVEL_FLOOR = -50.0  # axes home to negative positions (recoater ~-22 mm, 2026-09-09)
 
 Bound = tuple[float, float]
 MAX_SPEED_BOUNDS: dict[int, Bound] = {
@@ -38,7 +39,7 @@ TRAVEL_TOLERANCE_BOUNDS: Bound = (0.0, 5.0)  # encoder drift at the ends (real: 
 HARD_BOUNDS: dict[str, Any] = {
     "max_speed": MAX_SPEED_BOUNDS,  # mm/s
     "max_accel": MAX_ACCEL_BOUNDS,  # mm/s^2
-    "travel": {n: (0.0, t) for n, t in TRAVEL_MM.items()},  # mm
+    "travel": {n: (TRAVEL_FLOOR, t) for n, t in TRAVEL_MM.items()},  # mm
     "heater_max_on_s": HEATER_MAX_ON_BOUNDS,
     "telemetry_timeout_s": TELEMETRY_TIMEOUT_BOUNDS,
     "near_limit_mm": NEAR_LIMIT_BOUNDS,
@@ -59,7 +60,7 @@ def _per_axis(
             n = int(key)
             if n not in out:
                 continue
-            lo, hi = bounds[n] if bounds else (0.0, TRAVEL_MM[n])
+            lo, hi = bounds[n] if bounds else (TRAVEL_FLOOR, TRAVEL_MM[n])
             out[n] = _clamp(float(value), lo, hi)
     return out
 
@@ -72,7 +73,7 @@ class SafetyLimits:
     max_accel: dict[int, float] = field(
         default_factory=lambda: {1: 30.0, 2: 30.0, 3: 1000.0, 4: 1000.0}
     )
-    travel_min: dict[int, float] = field(default_factory=lambda: dict.fromkeys(TRAVEL_MM, 0.0))
+    travel_min: dict[int, float] = field(default_factory=lambda: dict.fromkeys(TRAVEL_MM, -30.0))
     travel_max: dict[int, float] = field(default_factory=lambda: dict(TRAVEL_MM))
     heater_max_on_s: float = 120.0
     telemetry_timeout_s: float = 2.0
