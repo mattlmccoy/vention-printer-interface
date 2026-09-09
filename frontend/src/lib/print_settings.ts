@@ -1,5 +1,5 @@
-/** Mirror of backend/vention_printer_interface/control/recipe.py: the same plan shape, the
- *  same defaults (V1.py constants) and the same step order, so the UI can preview a recipe and
+/** Mirror of backend/vention_printer_interface/control/print_settings.py: the same plan shape, the
+ *  same defaults (V1.py constants) and the same step order, so the UI can preview a print_settings and
  *  show the printability verdict before asking the operator. The backend is the authority. */
 
 export const PART = 1, FEED = 2, PRINTHEAD = 3, RECOATER = 4;
@@ -19,7 +19,7 @@ export interface PhasePlan {
   recoater_accel: number;
 }
 
-export interface RecipePlan {
+export interface PrintSettings {
   precoat: PhasePlan;
   printing: PhasePlan;
   postcoat: PhasePlan;
@@ -44,7 +44,7 @@ const basePhase: PhasePlan = {
   printhead_speed: 100, printhead_accel: 500, recoater_speed: 100, recoater_accel: 500,
 };
 
-export const DEFAULT_PLAN: RecipePlan = {
+export const DEFAULT_PLAN: PrintSettings = {
   precoat: { ...basePhase, layer_thickness_mm: 5, n_layers: 1 },
   printing: { ...basePhase, layer_thickness_mm: 2, n_layers: 10 },
   postcoat: { ...basePhase, layer_thickness_mm: 5, n_layers: 1 },
@@ -65,15 +65,15 @@ export interface Step {
   part_height_mm: number;
 }
 
-export function totalThickness(p: RecipePlan): number {
+export function totalThickness(p: PrintSettings): number {
   return PHASES.reduce((s, ph) => s + p[ph].layer_thickness_mm * p[ph].n_layers, 0);
 }
-export function totalLayers(p: RecipePlan): number {
+export function totalLayers(p: PrintSettings): number {
   return PHASES.reduce((s, ph) => s + p[ph].n_layers, 0);
 }
 
-/** Same reasons as RecipePlan.validate() (travel window defaults to the axis extents). */
-export function validate(p: RecipePlan, travelMax: Record<number, number> = { 2: 145, 3: 840, 4: 930 }): string[] {
+/** Same reasons as PrintSettings.validate() (travel window defaults to the axis extents). */
+export function validate(p: PrintSettings, travelMax: Record<number, number> = { 2: 145, 3: 840, 4: 930 }): string[] {
   const reasons: string[] = [];
   const total = totalThickness(p);
   if (total > p.feed_end_mm)
@@ -89,12 +89,12 @@ export function validate(p: RecipePlan, travelMax: Record<number, number> = { 2:
     const hi = travelMax[axis] ?? Infinity;
     if (v < 0 || v > hi) reasons.push(`${label}=${v} outside axis ${axis} travel [0, ${hi}]`);
   }
-  if (totalLayers(p) === 0) reasons.push("recipe has no layers");
+  if (totalLayers(p) === 0) reasons.push("no layers to print");
   return reasons;
 }
 
-/** Exact mirror of compile_recipe(); tested to produce the same kinds/count as the backend. */
-export function compileRecipe(plan: RecipePlan): Step[] {
+/** Exact mirror of compile_print(); tested to produce the same kinds/count as the backend. */
+export function compilePrint(plan: PrintSettings): Step[] {
   const out: Step[] = [];
   let height = 0;
   const add = (phase: string, layer: number, kind: StepKind, axis: number | null = null, value: number | null = null, label = "") =>
@@ -157,7 +157,7 @@ export function compileRecipe(plan: RecipePlan): Step[] {
   return out;
 }
 
-/** Human label for a step, for the recipe cursor. */
+/** Human label for a step, for the print_settings cursor. */
 export function describeStep(s: Step | null | undefined): string {
   if (!s) return "—";
   const ax = s.axis ? ({ 1: "part", 2: "feed", 3: "printhead", 4: "recoater" } as Record<number, string>)[s.axis] : "";

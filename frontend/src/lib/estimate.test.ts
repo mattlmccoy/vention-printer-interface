@@ -1,7 +1,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { estimateDurationS, heaterOnTimeS } from "./estimate.ts";
-import { DEFAULT_PLAN } from "./recipe.ts";
+import { DEFAULT_PLAN } from "./print_settings.ts";
 
 test("estimate scales with layers and is in a sane range", () => {
   const one = { ...DEFAULT_PLAN, precoat: { ...DEFAULT_PLAN.precoat, n_layers: 0 }, printing: { ...DEFAULT_PLAN.printing, n_layers: 1 }, postcoat: { ...DEFAULT_PLAN.postcoat, n_layers: 0 } };

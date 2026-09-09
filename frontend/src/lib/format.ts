@@ -10,21 +10,21 @@ export interface Gates {
   armed: boolean;
   controllable: boolean;
   faulted: boolean;
-  recipeActive: boolean;
+  printActive: boolean;
 }
 
 export function gates(status: StatusPayload | null, reachable: boolean): Gates {
   const state = status?.controller.state ?? "disconnected";
   const connected = reachable && (state === "connected" || state === "fault");
   const armed = connected && (status?.controller.armed ?? false);
-  const rs = status?.recipe.state;
+  const rs = status?.print.state;
   return {
     reachable,
     connected,
     armed,
     controllable: connected && armed,
     faulted: state === "fault",
-    recipeActive: rs === "running" || rs === "paused",
+    printActive: rs === "running" || rs === "paused",
   };
 }
 
@@ -53,15 +53,15 @@ export function armHint(g: Gates, faultReasons: string[]): string {
   if (!g.connected) return "Connect a controller to begin.";
   if (g.faulted) return `FAULT: ${faultReasons.join("; ") || "see status"}. Clear the fault to continue.`;
   if (!g.armed) return "Read-only. Check positions against the machine, then ARM to take control.";
-  return "Armed. Motion, heater and recipe controls are live.";
+  return "Armed. Motion, heater and print_settings controls are live.";
 }
 
-/** Part height agreement: measured vs recipe-expected, amber when off by more than half a layer. */
+/** Part height agreement: measured vs print_settings-expected, amber when off by more than half a layer. */
 export function heightMismatch(measured: number | null, expected: number, layerMm: number): boolean {
   return measured !== null && Math.abs(measured - expected) > Math.max(layerMm / 2, 0.05);
 }
 
-/** Layer-cycle step (1-6) for the current recipe step, from its kind/axis/value sequence. */
+/** Layer-cycle step (1-6) for the current print_settings step, from its kind/axis/value sequence. */
 export function cycleIndex(step: { kind: string; axis: number | null; value: number | null; phase: string } | null, plan: { recoater_end_mm: number; heater_end_mm: number; printhead_end_mm: number } | null): number {
   if (!step || !plan || step.phase === "setup") return 0;
   if (step.kind === "heater" || (step.axis === 4 && step.kind === "move_abs" && step.value === plan.heater_end_mm)) return 6;

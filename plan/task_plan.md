@@ -32,7 +32,7 @@ Plans: `docs/superpowers/plans/2026-09-08-backend-core.md` (Plan 1), Plan 2 reci
   the IO lock with a 330 s timeout; confirm in the lab). Citations corrected.
 
 ## Plan 2 — recipe engine (2026-09-09)
-- [x] T1 RecipePlan + compile_recipe · T2 RecipeController · T3 store + layers.csv · T4 API · T5 docs
+- [x] T1 PrintSettings + compile_print · T2 PrintController · T3 store + layers.csv · T4 API · T5 docs
 - Verification: 164 backend tests; ruff + mypy strict clean.
 
 ## Plan 3 — Studio UI (2026-09-09)
@@ -49,9 +49,9 @@ Plans: `docs/superpowers/plans/2026-09-08-backend-core.md` (Plan 1), Plan 2 reci
 - Spec §6 rewritten: share FLIR's design language, not its studio layout. Mockup approved (artifact "Binder Jet Console").
 - Backend: `control/events.py` (ring + sinks, `/api/events`, status.events), `control/macros.py`
   (`load_cart` = home all then both pistons to bottom of travel; `clear_bed`) run through
-  `RecipeController.start_macro`, `part_zero_mm` captured at start and re-captured after the setup
+  `PrintController.start_macro`, `part_zero_mm` captured at start and re-captured after the setup
   home, `part_height_measured_mm` in the snapshot, `estimate_duration_s`; auto-log run now opens
-  before the recipe starts so `recipe_started` is recorded once.
+  before the recipe starts so `print_started` is recorded once.
 - Frontend rewritten: Print / Prepare / Control / Runs views; ARM lock + E-STOP in the top bar;
   fault banner with ordered recovery; Elevation drawing; layer-cycle strip; heater ring; layer stack
   vs powder budget; jog pads labelled by physical motion; park macros.
@@ -77,6 +77,19 @@ Plans: `docs/superpowers/plans/2026-09-08-backend-core.md` (Plan 1), Plan 2 reci
 - User answers pending: current lab print scripts; Vention HMI question.
 - Verification: backend 181 passed; frontend 30; browser with real jobs: Job → preview slider →
   take control → dry run → Print shows layer 1 of 79 cross-section, progress, machine module.
+
+## Plan 3d — rename, wireframe overlay, resizable modules (2026-09-09)
+- Renamed recipe→print settings across backend, API, frontend, docs (module + symbol + route
+  renames; `/api/recipe*`→`/api/print-settings` + `/api/print/*`). Backend 181 tests green.
+- Machine module: overlays live carriage/piston/heater markers on `public/machine/printer.png`
+  (the lab wireframe) using `public/machine/calibration.json`; click-to-calibrate the 8 points,
+  copy JSON back into the file. Falls back to the schematic elevation when the PNG is absent.
+  USER TODO: drop the wireframe PNG in and calibrate against the real image.
+- Modules are now resizable by dragging the bottom-right handle (per-view size overrides,
+  reset control); greyscale cross-sections; quiet 'logging <run>' instead of a red REC badge;
+  narrower pistons in the schematic.
+- Verify: backend 181, frontend 35; browser: greyscale layer, resize applied (machine 720x500),
+  wording changed, schematic fallback when printer.png 404s.
 
 ## Blocked on the user (lab)
 - [ ] Step 0-1: network + `vpi-probe --ip 192.168.0.2` → `plan/probe_report.json`

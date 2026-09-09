@@ -38,11 +38,11 @@ function Axis({ a, status, ok, call, step }: { a: AxisNo; status: StatusPayload 
   );
 }
 
-export function ControlView({ status, gates, call, gantryStep, pistonStep, setGantryStep, setPistonStep, order, onOrder }: { status: StatusPayload | null; gates: Gates; call: Call; gantryStep: number; pistonStep: number; setGantryStep: (s: number) => void; setPistonStep: (s: number) => void; order?: string[]; onOrder: (ids: string[]) => void }) {
+export function ControlView({ status, gates, call, gantryStep, pistonStep, setGantryStep, setPistonStep, order, sizes, onOrder, onResize }: { status: StatusPayload | null; gates: Gates; call: Call; gantryStep: number; pistonStep: number; setGantryStep: (s: number) => void; setPistonStep: (s: number) => void; order?: string[]; sizes?: Record<string, import("../../lib/console.ts").ModuleSize>; onOrder: (ids: string[]) => void; onResize: (id: string, size: import("../../lib/console.ts").ModuleSize) => void }) {
   const c = status?.controller;
   const t = c?.telemetry;
-  const ok = gates.controllable && !gates.recipeActive;
-  const lock = !gates.controllable ? (gates.connected ? "read-only · take control from the connection pill" : "connect a controller to jog") : gates.recipeActive ? "a print is running · manual motion is locked" : null;
+  const ok = gates.controllable && !gates.printActive;
+  const lock = !gates.controllable ? (gates.connected ? "read-only · take control from the connection pill" : "connect a controller to jog") : gates.printActive ? "a print is running · manual motion is locked" : null;
   const stepper = (v: number, set: (s: number) => void) => <div className="stepper" style={{ marginBottom: 8 }}>step {JOG_STEPS.map((s) => <button key={s} className={s === v ? "on" : ""} onClick={() => set(s)}>{s} mm</button>)}</div>;
   const modules: Module[] = [
     { id: "gantries", title: "gantries", size: "m", node: <>{stepper(gantryStep, setGantryStep)}<Axis a={3} status={status} ok={ok} call={call} step={gantryStep} /><Axis a={4} status={status} ok={ok} call={call} step={gantryStep} />{lock && <div className="lock">{lock}</div>}</> },
@@ -76,5 +76,5 @@ export function ControlView({ status, gates, call, gantryStep, pistonStep, setGa
       </div>
     ) },
   ];
-  return <div className="view modules-view"><ModuleGrid modules={modules} order={order} onOrder={onOrder} /></div>;
+  return <div className="view modules-view"><ModuleGrid modules={modules} order={order} sizes={sizes} onOrder={onOrder} onResize={onResize} /></div>;
 }

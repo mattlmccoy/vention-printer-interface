@@ -90,7 +90,7 @@ def test_layer_png_renders_ink_and_is_cached(tmp_path: Path) -> None:
         layer_png(job, 3)
 
 
-def test_job_to_recipe_patch(tmp_path: Path) -> None:
+def test_job_to_print_settings_patch(tmp_path: Path) -> None:
     job = load_job(make_job(tmp_path, layers=50))
-    patch = job.recipe_patch()
+    patch = job.print_settings_patch()
     assert patch == {"printing": {"n_layers": 50, "layer_thickness_mm": 0.1}}

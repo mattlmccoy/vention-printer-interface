@@ -15,8 +15,8 @@ def client(tmp_path: Path) -> Iterator[TestClient]:
         backend="none",
         experiments_root=tmp_path,
         poll_interval_s=0.05,
-        recipe_min_wait_s=0.1,
-        recipe_step_timeout_s=5.0,
+        print_min_wait_s=0.1,
+        print_step_timeout_s=5.0,
     )
     with TestClient(app) as c:
         yield c
@@ -31,10 +31,10 @@ def connect_arm(c: TestClient) -> None:
     assert c.post("/api/arm").status_code == 200
 
 
-def wait_recipe(c: TestClient, state: str, timeout: float = 60.0) -> dict[str, Any]:
+def wait_print(c: TestClient, state: str, timeout: float = 60.0) -> dict[str, Any]:
     end = time.monotonic() + timeout
     while time.monotonic() < end:
-        s: dict[str, Any] = c.get("/api/status").json()["recipe"]
+        s: dict[str, Any] = c.get("/api/status").json()["print"]
         if s["state"] == state:
             return s
         time.sleep(0.05)
@@ -63,7 +63,7 @@ def test_macro_load_cart(client: TestClient) -> None:
     assert client.post("/api/macro/nope").status_code == 400
     r = client.post("/api/macro/load_cart")
     assert r.status_code == 200 and r.json()["macro"] == "load_cart"
-    wait_recipe(client, "done")
+    wait_print(client, "done")
     tel = client.get("/api/status").json()["controller"]["telemetry"]
     assert tel["positions"]["1"] == 10.0 and tel["positions"]["4"] == 0.0
 
@@ -76,6 +76,6 @@ def test_fault_is_logged_as_event(client: TestClient) -> None:
     assert "estop" in labels and "fault" in labels
 
 
-def test_recipe_payload_has_estimate(client: TestClient) -> None:
-    r = client.get("/api/recipe").json()
+def test_print_settings_payload_has_estimate(client: TestClient) -> None:
+    r = client.get("/api/print-settings").json()
     assert r["estimated_duration_s"] > 29

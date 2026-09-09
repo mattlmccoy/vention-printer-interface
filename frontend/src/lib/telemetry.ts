@@ -45,7 +45,7 @@ export interface ControllerSnap {
   telemetry: Telemetry | null;
 }
 
-export interface RecipeSnap {
+export interface PrintSnap {
   state: "idle" | "running" | "paused" | "done" | "aborted" | "fault";
   macro: string | null;
   part_zero_mm: number | null;
@@ -78,7 +78,7 @@ export interface StatusPayload {
   job: JobSnap | null;
   controller: ControllerSnap;
   axis_motion: Record<string, { max_speed: number | null; max_accel: number | null }>;
-  recipe: RecipeSnap;
+  print: PrintSnap;
   auto_log: boolean;
   recording: { active: boolean; run: string | null };
 }

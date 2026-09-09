@@ -1,4 +1,4 @@
-"""Park macros (spec §6) compiled to the same Step list the recipe uses.
+"""Park macros (spec §6) compiled to the same Step list a print uses.
 
 load_cart: home every axis, then drive both pistons to the bottom of their (possibly tightened)
 travel so the build cart can be loaded; the operator then jogs the pistons into place by hand.
@@ -7,7 +7,7 @@ clear_bed: home every axis.
 
 from __future__ import annotations
 
-from vention_printer_interface.control.recipe import FEED, PART, Step
+from vention_printer_interface.control.print_settings import FEED, PART, Step
 from vention_printer_interface.control.safety import SafetyLimits
 
 MACROS: dict[str, str] = {

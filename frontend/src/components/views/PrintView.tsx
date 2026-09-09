@@ -1,17 +1,17 @@
 import { api } from "../../lib/api.ts";
 import { fmtMm, fmtSecs, heightMismatch, tri, type Gates } from "../../lib/format.ts";
 import { AXES, type AxisNo, type StatusPayload } from "../../lib/telemetry.ts";
-import { compileRecipe, describeStep, type RecipePlan } from "../../lib/recipe.ts";
+import { compilePrint, describeStep, type PrintSettings } from "../../lib/print_settings.ts";
 import { estimateDurationS } from "../../lib/estimate.ts";
 import { CrossSection } from "../CrossSection.tsx";
-import { Elevation } from "../Elevation.tsx";
+import { MachineImage } from "../MachineImage.tsx";
 import { ModuleGrid, type Module } from "../Modules.tsx";
 import type { Call } from "./types.ts";
 
 const SHORT: Record<AxisNo, string> = { 1: "build", 2: "feed", 3: "printhead", 4: "recoater" };
 const SW: Record<AxisNo, string> = { 1: "sw-part", 2: "sw-feed", 3: "sw-ph", 4: "sw-rc" };
 
-export function phrase(step: ReturnType<typeof compileRecipe>[number] | null, plan: RecipePlan | null): string {
+export function phrase(step: ReturnType<typeof compilePrint>[number] | null, plan: PrintSettings | null): string {
   if (!step || !plan) return "";
   const v = step.value ?? 0;
   switch (step.kind) {
@@ -29,13 +29,13 @@ export function phrase(step: ReturnType<typeof compileRecipe>[number] | null, pl
   }
 }
 
-export function PrintView({ status, gates, call, order, onOrder, onJob }: { status: StatusPayload | null; gates: Gates; call: Call; order?: string[]; onOrder: (ids: string[]) => void; onJob: () => void }) {
+export function PrintView({ status, gates, call, order, sizes, onOrder, onResize, onJob }: { status: StatusPayload | null; gates: Gates; call: Call; order?: string[]; sizes?: Record<string, import("../../lib/console.ts").ModuleSize>; onOrder: (ids: string[]) => void; onResize: (id: string, size: import("../../lib/console.ts").ModuleSize) => void; onJob: () => void }) {
   const c = status?.controller;
-  const r = status?.recipe;
+  const r = status?.print;
   const t = c?.telemetry ?? null;
   const job = status?.job ?? null;
-  const plan = (r?.plan as unknown as RecipePlan | null) ?? null;
-  const steps = plan ? compileRecipe(plan) : [];
+  const plan = (r?.plan as unknown as PrintSettings | null) ?? null;
+  const steps = plan ? compilePrint(plan) : [];
   const cur = r?.current_step ? steps[r.current_step.index] ?? null : null;
   const curAction = cur && cur.kind === "wait" ? steps.slice(0, cur.index).reverse().find((s) => s.kind !== "wait" && s.kind !== "mark") ?? cur : cur;
   const next = cur ? steps.slice(cur.index + 1).find((s) => !["wait", "mark", "set_speed", "set_accel"].includes(s.kind)) ?? null : null;
@@ -79,23 +79,23 @@ export function PrintView({ status, gates, call, order, onOrder, onJob }: { stat
           <span>heater</span><span className={c?.heater.on ? "bad" : ""}>{tri(c?.heater.on, `ON ${fmtSecs(c?.heater.on_s)}`, "off", "unknown")}</span>
         </div>
         <div className="actions tight">
-          {r?.state === "running" && <button className="cta" disabled={!gates.connected} onClick={() => call("pause", api.recipePause)}>PAUSE</button>}
-          {r?.state === "paused" && <button className="cta primary" disabled={!gates.controllable} onClick={() => call(r.single_step ? "step" : "resume", r.single_step ? api.recipeStep : api.recipeResume)}>{r.single_step ? "NEXT STEP" : "RESUME"}</button>}
-          {active ? <button className="cta danger" disabled={!gates.connected} onClick={() => call("abort", api.recipeAbort)}>ABORT</button>
+          {r?.state === "running" && <button className="cta" disabled={!gates.connected} onClick={() => call("pause", api.printPause)}>PAUSE</button>}
+          {r?.state === "paused" && <button className="cta primary" disabled={!gates.controllable} onClick={() => call(r.single_step ? "step" : "resume", r.single_step ? api.printStep : api.printResume)}>{r.single_step ? "NEXT STEP" : "RESUME"}</button>}
+          {active ? <button className="cta danger" disabled={!gates.connected} onClick={() => call("abort", api.printAbort)}>ABORT</button>
             : <button className="cta primary" style={{ gridColumn: "1 / -1" }} onClick={onJob}>{job ? "START THIS JOB" : "CHOOSE A JOB"}</button>}
         </div>
       </>
     ) },
     { id: "machine", title: "machine", size: "m", node: (
       <>
-        <div className="mini-el"><Elevation status={status} partZeroMm={r?.part_zero_mm ?? null} /></div>
+        <MachineImage status={status} partZeroMm={r?.part_zero_mm ?? null} />
         <div className="readout">{AXES.map((a) => <div key={a}><i className={SW[a]} />{SHORT[a]}<b>{t ? `${(t.positions[String(a)] ?? 0).toFixed(1)} mm` : "—"}</b></div>)}</div>
         <div className="narr" style={{ marginTop: 14, fontSize: 14 }}>{narr}{active && next && <div className="next">next: {phrase(next, plan)}</div>}</div>
       </>
     ) },
     { id: "problems", title: "attention", size: "s", hidden: problems.length === 0 && !mismatch, node: (
-      <div className="chips" style={{ marginTop: 0 }}>{problems.map(([txt, cls]) => <span key={txt} className={`chip ${cls}`}>{txt}</span>)}{mismatch && <span className="chip warn">part height differs from the print settings ({fmtMm(r?.part_height_mm, 1)})</span>}</div>
+      <div className="chips" style={{ marginTop: 0 }}>{problems.map(([txt, cls]) => <span key={txt} className={`chip ${cls}`}>{txt}</span>)}{mismatch && <span className="chip warn">part height differs from the print_settings ({fmtMm(r?.part_height_mm, 1)})</span>}</div>
     ) },
   ];
-  return <div className="view modules-view"><ModuleGrid modules={modules} order={order} onOrder={onOrder} /></div>;
+  return <div className="view modules-view"><ModuleGrid modules={modules} order={order} sizes={sizes} onOrder={onOrder} onResize={onResize} /></div>;
 }

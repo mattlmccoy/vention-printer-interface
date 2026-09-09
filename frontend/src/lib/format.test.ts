@@ -3,7 +3,7 @@ import assert from "node:assert/strict";
 import { armHint, cycleIndex, fmtMm, fmtSecs, fmtSpeed, gates, heightMismatch, tri } from "./format.ts";
 import type { StatusPayload } from "./telemetry.ts";
 
-function status(state: StatusPayload["controller"]["state"], armed: boolean, recipe = "idle"): StatusPayload {
+function status(state: StatusPayload["controller"]["state"], armed: boolean, print_settings = "idle"): StatusPayload {
   return {
     device: {},
     events: [],
@@ -12,7 +12,7 @@ function status(state: StatusPayload["controller"]["state"], armed: boolean, rec
       limits: { max_speed: {}, max_accel: {}, travel_min: {}, travel_max: {}, heater_max_on_s: 120, telemetry_timeout_s: 2, near_limit_mm: 5 },
       heater: { on: null, commanded_on: false, on_s: 0, max_on_s: 120 }, telemetry: null },
     axis_motion: {},
-    recipe: { state: recipe as StatusPayload["recipe"]["state"], macro: null, part_zero_mm: null, part_height_measured_mm: null, step_index: 0, n_steps: 0, phase: "", layer: 0, n_layers: 0, part_height_mm: 0, elapsed_s: 0, dry_run: false, single_step: false, reason: "", current_step: null, plan: null },
+    print: { state: print_settings as StatusPayload["print"]["state"], macro: null, part_zero_mm: null, part_height_measured_mm: null, step_index: 0, n_steps: 0, phase: "", layer: 0, n_layers: 0, part_height_mm: 0, elapsed_s: 0, dry_run: false, single_step: false, reason: "", current_step: null, plan: null },
     auto_log: true,
     recording: { active: false, run: null },
   };
@@ -27,7 +27,7 @@ test("gates mirror the T&C rules", () => {
   const f = gates(status("fault", true), true);
   assert.deepEqual([f.connected, f.controllable, f.faulted], [true, true, true]);
   assert.equal(gates(status("connected", true), false).controllable, false);
-  assert.equal(gates(status("connected", true, "paused"), true).recipeActive, true);
+  assert.equal(gates(status("connected", true, "paused"), true).printActive, true);
 });
 
 test("formatters", () => {
