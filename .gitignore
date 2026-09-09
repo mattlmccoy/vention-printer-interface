@@ -1,0 +1,26 @@
+# secrets
+.env
+.env.*
+!.env.example
+# python
+__pycache__/
+*.pyc
+.venv/
+.mypy_cache/
+.pytest_cache/
+.ruff_cache/
+# uv.lock IS committed (reproducible operator installs)
+# experiment run data — keep out of git by default
+backend/experiments/
+backend/operator.log
+# probe captures may contain controller serials; commit only reviewed copies under plan/
+probe_output*/
+# frontend
+frontend/node_modules/
+frontend/dist/
+frontend/dist-site/
+# reference downloads (not our code)
+plan/reference/
+# not for a public repo
+.claude/
+.DS_Store

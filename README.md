@@ -1,0 +1,79 @@
+# Vention Printer Interface
+
+Operator backend + (planned) browser UI for the **Vention MachineMotion 2** four-drive controller
+that runs the binder-jet printer (part piston, feed piston, printhead gantry, recoater gantry with
+IR heater). Third sibling of the [FLIR Research Interface](../../../../FLIR) and the
+[T&C Power Interface](../TC-POWER); it mirrors their architecture and conventions so the three
+read as one family.
+
+**Status (2026-09-09): backend core working against a built-in simulator; NOT yet run against the
+physical controller.** Protocol layer, simulator, real HTTP+MQTT transport, supervisory controller
+(ARM gate, E-STOP, pure protection, heater watchdog), run recorder, FastAPI + `/ws/telemetry`, and
+three CLIs are implemented and tested (102 backend tests). The recipe engine (Plan 2) and the
+Studio UI (Plan 3) are next.
+
+| Piece | Location | State |
+|---|---|---|
+| Routes, topics, G-code (cited to the Vention SDK) | `backend/vention_printer_interface/protocol/routes.py` | tested |
+| Reply parsers | `backend/.../protocol/parsers.py` | tested with **SDK-derived** fixtures (not hardware captures) |
+| Transport ABC + registry (`simulated` / `machinemotion`) | `backend/.../device/` | tested |
+| Simulator (kinematics, homing, e-stop, IO, fault knobs) | `backend/.../device/simulated.py` | tested |
+| Real transport (httpx + paho-mqtt) | `backend/.../device/machinemotion.py` | unit-tested with a mock; **UNVERIFIED on hardware** |
+| `PrinterDevice` (one method per capability) | `backend/.../device/printer.py` | tested |
+| Pure protection evaluator + tighten-only limits | `backend/.../control/safety.py` | tested |
+| Supervisory `Controller` (poll, ARM, E-STOP, FAULT latch, listeners) | `backend/.../control/controller.py` | tested; simulator-verified live |
+| Run recorder (`metadata.json` at start; `manifest.json` only on clean stop) | `backend/.../recording/recorder.py` | tested |
+| FastAPI operator + `/ws/telemetry` + cross-origin policy | `backend/.../api/app.py` | tested; live-verified on :8020 |
+| CLIs `vpi-serve`, `vpi-probe` (read-only), `vpi-monitor` | `backend/.../api/server.py`, `probe.py`, `monitor.py` | run against the simulator |
+
+## Scientific / engineering stance
+
+Only the documented protocol. Every HTTP route, MQTT topic and G-code string is transcribed from
+Vention's own SDK (`MachineMotion.py` v4.7, copy under `plan/reference/`) with a line citation, or
+from Vention's public docs and marked UNVERIFIED. Reaching the controller does not prove the reply
+shapes; **run `vpi-probe` (read-only) first** and reconcile `plan/probe_report.json` against the
+SDK-derived fixtures before any powered operation. See `docs/protocol.md` and `plan/notes.md`.
+
+**Safety.** A connected controller is read-only until ARMed. The heater relay is treated like RF in
+the T&C tool: it turns on only by an explicit operator action while armed, and is forced off on
+any fault, disconnect, E-STOP, disarm, or when its on-time watchdog expires. Stop, heater-off,
+E-STOP and disarm are never gated. Hard bounds on speed, acceleration, travel and heater on-time are
+tighten-only; the UI and config files can narrow them, never widen them.
+
+## Quick start (no hardware)
+
+```bash
+cd backend
+uv sync --extra dev
+uv run pytest                                   # 102 tests
+uv run vpi-probe --simulated --samples 3        # read-only probe of the simulator
+uv run vpi-serve --backend simulated            # http://127.0.0.1:8020/api/status
+```
+
+## Talking to the real printer (read-only first)
+
+See `docs/commissioning.md`. In short:
+
+```bash
+ping -c 3 192.168.0.2                             # ETHERNET port; USB port is 192.168.7.2
+cd backend && uv run vpi-probe --ip 192.168.0.2 --output ../plan/probe_report.json
+```
+
+## Layout
+
+```
+backend/    Python package `vention_printer_interface` + tests (uv-managed)
+  protocol/   routes, parsers (pure)
+  device/     Transport ABC + registry, simulator, real transport, PrinterDevice
+  control/    safety (pure), controller, limits persistence
+  recording/  run recorder
+  api/        FastAPI create_app + vpi-serve
+docs/       architecture, protocol, commissioning, development
+plan/       task plan, research notes, data-contract status, SDK reference copy (git-ignored)
+frontend/   (Plan 3) Vite + React + TS Studio UI, ports 5175 (dev) / served by the operator on 8020
+```
+
+## License
+
+MIT for this repository's own code. Vention's SDK and firmware are not redistributed; the SDK
+copy under `plan/reference/` is git-ignored.

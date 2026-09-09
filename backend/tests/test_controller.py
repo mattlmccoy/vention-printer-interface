@@ -1,0 +1,179 @@
+import time
+from collections.abc import Callable
+from typing import Any
+
+import pytest
+
+from vention_printer_interface.control.controller import Controller, ControllerState
+from vention_printer_interface.control.safety import SafetyLimits
+from vention_printer_interface.device.printer import PrinterDevice
+from vention_printer_interface.device.simulated import SimulatedTransport
+from vention_printer_interface.protocol import routes as r
+
+HEATER = r.io_output_topic(1, 2)
+
+
+def make(**sim: Any) -> tuple[Controller, SimulatedTransport]:
+    t = SimulatedTransport(realtime=True, **sim)
+    c = Controller(poll_interval_s=0.05, limits=SafetyLimits())
+    c.attach_device(PrinterDevice(t, heater_io=(1, 2)), backend="simulated")
+    return c, t
+
+
+def wait(pred: Callable[[], bool], timeout: float = 3.0) -> bool:
+    end = time.monotonic() + timeout
+    while time.monotonic() < end:
+        if pred():
+            return True
+        time.sleep(0.01)
+    return False
+
+
+def test_attach_connects_and_polls() -> None:
+    c, _ = make()
+    try:
+        assert c.state == ControllerState.CONNECTED
+        assert wait(lambda: c.snapshot()["telemetry"] is not None)
+        assert c.snapshot()["armed"] is False
+        assert c.snapshot()["device"]["version"] == "2.14.1"
+    finally:
+        c.stop()
+
+
+def test_attach_failure_closes_device_and_raises() -> None:
+    c = Controller(poll_interval_s=0.05)
+    t = SimulatedTransport(realtime=True, unreachable=True)
+    with pytest.raises(Exception):  # noqa: B017 - any transport failure must propagate
+        c.attach_device(PrinterDevice(t), backend="simulated")
+    assert c.state == ControllerState.DISCONNECTED
+    c.stop()
+
+
+def test_commands_refused_until_armed() -> None:
+    c, _ = make()
+    try:
+        with pytest.raises(RuntimeError, match="not armed"):
+            c.home_all()
+        c.arm()
+        c.home_all()
+        assert c.snapshot()["armed"] is True
+    finally:
+        c.stop()
+
+
+def test_move_is_clamped_and_speed_bounded() -> None:
+    c, _ = make()
+    try:
+        c.arm()
+        c.home_all()
+        assert wait(lambda: (c.snapshot()["telemetry"] or {}).get("positions", {}).get("3") == 0)
+        assert c.set_max_speed(3, 99999) == SafetyLimits().max_speed[3]
+        assert c.set_max_accel(3, 1e9) == SafetyLimits().max_accel[3]
+        assert c.move_absolute(3, 5000) == 840.0
+        assert wait(lambda: (c.snapshot()["telemetry"] or {})["positions"]["3"] > 100)
+        assert c.move_relative(3, -99999) < 0
+    finally:
+        c.stop()
+
+
+def test_estop_bypasses_gate_and_kills_heater() -> None:
+    c, t = make()
+    try:
+        c.arm()
+        c.heater_on()
+        assert t.mqtt_latest(HEATER) == "1"
+        c.estop()
+        assert t.mqtt_latest(HEATER) == "0"
+        assert c.snapshot()["armed"] is False
+        assert wait(lambda: c.state == ControllerState.FAULT)
+        assert any("e-stop" in x for x in c.snapshot()["fault_reasons"])
+    finally:
+        c.stop()
+
+
+def test_estop_release_then_clear_fault() -> None:
+    c, t = make()
+    try:
+        c.estop()
+        assert wait(lambda: c.state == ControllerState.FAULT)
+        c.estop_release()
+        t.advance(3.1)
+        assert wait(lambda: (c.snapshot()["telemetry"] or {}).get("drives_ready") is True)
+        assert wait(lambda: not (c.snapshot()["telemetry"] or {}).get("estop_triggered", True))
+        c.clear_fault()
+        assert c.state == ControllerState.CONNECTED
+    finally:
+        c.stop()
+
+
+def test_unreachable_faults_and_clear_requires_clean() -> None:
+    c, t = make()
+    try:
+        c.arm()
+        c.heater_on()
+        t._unreachable = True
+        assert wait(lambda: c.state == ControllerState.FAULT)
+        with pytest.raises(RuntimeError):
+            c.clear_fault()
+        t._unreachable = False
+        assert wait(lambda: c.snapshot()["read_error"] is None)
+        assert wait(lambda: t.mqtt_latest(HEATER) == "0")  # re-enforced once the link returns
+        c.clear_fault()
+        assert c.state == ControllerState.CONNECTED
+        assert c.snapshot()["armed"] is False
+    finally:
+        c.stop()
+
+
+def test_heater_watchdog_trips() -> None:
+    c, t = make()
+    c.set_limits(SafetyLimits(heater_max_on_s=5.0))
+    try:
+        c.arm()
+        c.heater_on()
+        c._heater_on_since = time.monotonic() - 10  # fast-forward the watchdog
+        assert wait(lambda: c.state == ControllerState.FAULT)
+        assert t.mqtt_latest(HEATER) == "0"
+    finally:
+        c.stop()
+
+
+def test_listener_receives_snapshots_and_exceptions_are_swallowed() -> None:
+    c, _ = make()
+    seen: list[dict[str, Any]] = []
+    c.add_listener(seen.append)
+    c.add_listener(lambda s: 1 / 0)
+    try:
+        assert wait(lambda: len(seen) > 2)
+    finally:
+        c.stop()
+
+
+def test_detach_forces_heater_off_and_disconnects() -> None:
+    c, t = make()
+    c.arm()
+    c.heater_on()
+    c.detach_device()
+    assert t.mqtt_latest(HEATER) == "0"
+    assert c.state == ControllerState.DISCONNECTED
+    c.stop()
+    assert c.state == ControllerState.CLOSED
+
+
+def test_ungated_safe_direction_commands() -> None:
+    c, _ = make()
+    try:
+        c.stop_all()  # never gated
+        c.heater_off()
+        c.disarm()
+    finally:
+        c.stop()
+
+
+def test_no_device_behaviour() -> None:
+    c = Controller(poll_interval_s=0.05)
+    with pytest.raises(RuntimeError, match="no device"):
+        c.arm()
+    c.estop()  # safe with no device
+    c.heater_off()
+    assert c.snapshot()["state"] == "disconnected"
