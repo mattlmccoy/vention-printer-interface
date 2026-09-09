@@ -7,6 +7,7 @@ function status(state: StatusPayload["controller"]["state"], armed: boolean, rec
   return {
     device: {},
     events: [],
+    job: null,
     controller: { state, backend: "simulated", armed, fault_reasons: [], warnings: [], read_error: null,
       limits: { max_speed: {}, max_accel: {}, travel_min: {}, travel_max: {}, heater_max_on_s: 120, telemetry_timeout_s: 2, near_limit_mm: 5 },
       heater: { on: null, commanded_on: false, on_s: 0, max_on_s: 120 }, telemetry: null },

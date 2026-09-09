@@ -10,11 +10,12 @@ read as one family.
 NOT yet run against the physical controller.** Protocol layer, simulator, real HTTP+MQTT
 transport, supervisory controller (ARM gate, E-STOP, pure protection, heater watchdog), the V1.py
 recipe as a pausable step machine, run recorder with per-layer log, FastAPI + `/ws/telemetry`,
-three CLIs, and the **Binder Jet Console** UI (Print / Prepare / Control / Runs) are implemented
-and tested (173 backend tests, 27 frontend tests). An independent review pass fixed several safety
-gaps (see `plan/task_plan.md`). The console was browser-verified against the simulator: connect →
-ARM → jog → dry-run recipe from Prepare → live Print view with elevation drawing, layer cycle,
-heater ring, event log.
+three CLIs, sliced-job intake (Meteor RIP folders), and the **Binder Jet Console** UI (Print /
+Job / Control / Runs, draggable self-sized modules) are implemented and tested (181 backend tests,
+30 frontend tests). An independent review pass fixed several safety gaps (see `plan/task_plan.md`).
+The console was browser-verified against the simulator with real sliced jobs from the lab hot
+folder: select job → connect and take control → dry run → Print view shows the current layer's
+cross-section with progress.
 
 | Piece | Location | State |
 |---|---|---|
@@ -33,7 +34,8 @@ heater ring, event log.
 | Recipe API + auto-logged runs with `layers.csv` | `backend/.../api/app.py` | tested |
 | CLIs `vpi-serve`, `vpi-probe` (read-only), `vpi-monitor` | `backend/.../api/server.py`, `probe.py`, `monitor.py` | run against the simulator |
 | Park macros on the step machine (`load_cart`, `clear_bed`), event log, measured part height, duration estimate | `backend/.../control/{macros,events}.py`, `recipe_controller.py`, `api/app.py` | tested |
-| Binder Jet Console: Print (run card, front-elevation drawing, layer cycle, heater ring, I/O, event log), Prepare (layer stack vs powder budget, estimates, one start button), Control (jog pads, park macros, manual heater), Runs; ARM lock + E-STOP always on screen | `frontend/` (Vite + React + TS; FLIR design language, printer layout) | logic tested (`node --test`, 27); browser-verified against the simulator |
+| Sliced-job intake: Meteor RIP `job_info.json` folders + `_Page<N>_Clr1.tif` pages (real format captured), layer PNGs, job → recipe mapping | `backend/.../jobs/store.py`, `/api/jobs*` | tested with captured-shape fixtures; verified on real jobs |
+| Binder Jet Console: Print (current layer cross-section + progress, print card, machine), Job (pick a sliced job, preview any layer, powder stack, start), Control (jog pads, park macros, heater), Runs; draggable self-sized modules; connect takes control (read-only optional); E-STOP always on screen | `frontend/` (Vite + React + TS; FLIR design language, printer layout) | logic tested (`node --test`, 30); browser-verified with real jobs |
 
 ## Scientific / engineering stance
 
@@ -57,6 +59,8 @@ uv sync --extra dev
 uv run pytest                                   # 164 tests
 uv run vpi-probe --simulated --samples 3        # read-only probe of the simulator
 uv run vpi-serve --backend simulated            # http://127.0.0.1:8020/api/status
+# with your sliced jobs (the MetPrint hot folder; its _archive is scanned):
+uv run vpi-serve --backend simulated --jobs-root "/path/to/Hot Folder"
 ```
 
 Run the full app (UI + API) against the simulator:

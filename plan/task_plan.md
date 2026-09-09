@@ -63,6 +63,21 @@ Plans: `docs/superpowers/plans/2026-09-08-backend-core.md` (Plan 1), Plan 2 reci
   pads live, macros gated) → Prepare (stack, 11:39 estimate, 280 steps) → START DRY RUN → Print
   view live (layer 0/12 setup, feed piston moving, REC open, event log).
 
+## Plan 3c — calm pass, jobs, modules (2026-09-09, after user feedback)
+- Calm pass: one primary element per view, bigger type, disclosures for advanced controls.
+- Sliced jobs: real format captured from `code/rfam-web/Hot Folder/_archive/<ts>_<name>/`
+  (`job_info.json` + `<name>_Page<N>_Clr1.tif`, 2/4-bit WhiteIsZero; Pillow loads as 255 = paper,
+  0 = ink — verified on ir_heater_socket_mount_v1: margin corners 255, 12.8 % / 37.5 % ink on
+  pages 1 / 79). `jobs/store.py`, `/api/jobs`, `/api/jobs/select` (sets recipe print layers ×
+  thickness = height/layer_count), `/api/jobs/current/layers/N.png`, `status.job.current_layer`.
+  Finding: 4 of the 5 archived jobs are missing pages in the archive copy (surfaced as INCOMPLETE).
+- Console: draggable self-sized modules (order persisted per view); Print = cross-section first;
+  Job view replaces Prepare; ARM button removed — connect takes control unless "read-only" is
+  ticked; clear-fault re-takes control; lock icon on the connection pill when read-only.
+- User answers pending: current lab print scripts; Vention HMI question.
+- Verification: backend 181 passed; frontend 30; browser with real jobs: Job → preview slider →
+  take control → dry run → Print shows layer 1 of 79 cross-section, progress, machine module.
+
 ## Blocked on the user (lab)
 - [ ] Step 0-1: network + `vpi-probe --ip 192.168.0.2` → `plan/probe_report.json`
 - [ ] Step 2: reconcile parsers/fixtures; update `plan/notes.md`
@@ -76,4 +91,5 @@ Plans: `docs/superpowers/plans/2026-09-08-backend-core.md` (Plan 1), Plan 2 reci
 
 ## Next
 - Lab commissioning (docs/commissioning.md), then reconcile fixtures from plan/probe_report.json.
-- v2: MetPrint hot-folder sync per layer, FLIR/T&C links, deploy/ LaunchAgent, embed the wireframe.
+- v2: MetPrint hot-folder sync per layer (queue the job's TIFFs so MetPrint prints page N on
+  pass N), FLIR/T&C links, deploy/ LaunchAgent, embed the wireframe.

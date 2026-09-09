@@ -30,6 +30,14 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument("--poll-interval", type=float, default=0.2)
     ap.add_argument("--experiments-root", type=Path, default=None)
     ap.add_argument(
+        "--jobs-root",
+        type=Path,
+        action="append",
+        default=None,
+        help="folder to scan for Meteor RIP jobs (job_info.json); repeatable. "
+        "E.g. the MetPrint hot folder (its _archive is scanned too).",
+    )
+    ap.add_argument(
         "--site-origin",
         default="https://mattlmccoy.github.io",
         help="origin allowed to control this operator cross-origin; '' disables",
@@ -47,6 +55,7 @@ def main(argv: list[str] | None = None) -> int:
         ip=args.ip,
         poll_interval_s=args.poll_interval,
         experiments_root=args.experiments_root,
+        jobs_roots=args.jobs_root,
         site_origin=args.site_origin or None,
         heater_io=(dev, pin),
     )

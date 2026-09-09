@@ -66,9 +66,16 @@ export interface RecipeSnap {
 
 export interface EventItem { host_timestamp_ns: number; label: string; data: Record<string, unknown> }
 
+export interface JobSnap {
+  path: string; name: string; folder: string; layer_count: number; layer_height_mm: number; height_mm: number;
+  bbox_mm: { x: number; y: number; z: number }; dpi: number; bpp: number; timestamp: string; complete: boolean;
+  missing_pages: number[]; current_layer: number;
+}
+
 export interface StatusPayload {
   device: Record<string, unknown>;
   events: EventItem[];
+  job: JobSnap | null;
   controller: ControllerSnap;
   axis_motion: Record<string, { max_speed: number | null; max_accel: number | null }>;
   recipe: RecipeSnap;

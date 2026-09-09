@@ -3,20 +3,20 @@ import { api } from "../../lib/api.ts";
 import type { Gates } from "../../lib/format.ts";
 import type { StatusPayload } from "../../lib/telemetry.ts";
 import { EventLog } from "../EventLog.tsx";
+import { ModuleGrid, type Module } from "../Modules.tsx";
 import type { Call } from "./types.ts";
 
-export function RunsView({ status, gates, call }: { status: StatusPayload | null; gates: Gates; call: Call }) {
+export function RunsView({ status, gates, call, order, onOrder }: { status: StatusPayload | null; gates: Gates; call: Call; order?: string[]; onOrder: (ids: string[]) => void }) {
   const [runs, setRuns] = useState<Array<{ run: string; complete: boolean; size_bytes: number }>>([]);
   useEffect(() => { api.recordings().then((r) => setRuns(r.runs)).catch(() => undefined); }, [status?.recording.active, gates.reachable]);
   const rec = status?.recording;
-  return (
-    <section className="view runs">
-      <div>
-        <div className="h">Runs</div>
-        <div className="row" style={{ marginBottom: 18 }}>
+  const modules: Module[] = [
+    { id: "runs", title: "runs", size: "l", node: (
+      <>
+        <div className="row" style={{ marginBottom: 14 }}>
           {rec?.active ? <button className="small" onClick={() => call("stop recording", api.recordingStop)}>■ stop recording {rec.run}</button>
             : <button className="small" disabled={!gates.connected} onClick={() => call("record", () => api.recordingStart({ name: "manual", notes: "" }))}>● record now</button>}
-          <span className="hint">a run is recorded automatically for every print</span>
+          <span className="hint">every print is recorded automatically</span>
         </div>
         <div className="log">
           <table><tbody>{[...runs].reverse().map((r) => (
@@ -24,8 +24,9 @@ export function RunsView({ status, gates, call }: { status: StatusPayload | null
           ))}</tbody></table>
           {runs.length === 0 && <div className="hint">no runs yet</div>}
         </div>
-        <div style={{ marginTop: 32 }}><EventLog events={status?.events ?? []} title="Recent events" /></div>
-      </div>
-    </section>
-  );
+      </>
+    ) },
+    { id: "events", title: "events", size: "l", node: <EventLog events={status?.events ?? []} title="" /> },
+  ];
+  return <div className="view modules-view"><ModuleGrid modules={modules} order={order} onOrder={onOrder} /></div>;
 }
