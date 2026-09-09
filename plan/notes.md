@@ -131,3 +131,17 @@ and default `travel_min = -30` for every axis (covers the -22 home with margin);
 past -30 (or past the extent) still trips. TODO before powered print moves: measure each axis's true
 homed position and set per-axis travel_min precisely (recoater ~-22; pistons rest ~0; printhead not
 yet homed this session, was at 250).
+
+## Homing recovery fix (2026-09-09) — position limits must not block homing
+Symptom chain: our position-limit protection FAULTED on the transient negative travel during a
+home, issued M410 (stop), interrupted the home before it could complete and re-zero, leaving the
+recoater parked further and further negative (-22 → -51.8) across attempts. That out-of-range
+parked position then latched a FAULT on connect and blocked arming → couldn't home → deadlock.
+Fixes:
+1. Homing suspends position-limit checks (Controller `_homing_until`, HOMING_WINDOW_S=30 s, cleared
+   early once motion settles; evaluate(home_in_progress=True) skips the position loop). The drive's
+   own limit switches are the hard guard during a sensor-seeking home.
+2. Position-outside-window is now a WARNING ("axis N at X mm outside [...] — home it"), never a
+   latched fault. Commanded moves are still clamped to the window (clamp_position), so software
+   cannot drive out of range; a parked-out-of-range axis stays recoverable via homing.
+Verified on hardware: connect at -51.8 mm → CONNECTED with warning (not fault) → arm succeeds.
