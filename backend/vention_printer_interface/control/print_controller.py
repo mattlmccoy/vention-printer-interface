@@ -1,11 +1,11 @@
-"""Recipe step machine (spec §4): runs compiled steps through the guarded Controller.
+"""Print step machine (spec §4): runs compiled steps through the guarded Controller.
 
 Ticked from the Controller listener (poll thread). One step in flight at a time; non-blocking
 steps (speed, accel, move issue, heater, mark) are issued back to back until a ``wait`` or
 ``dwell`` step, which completes only when every axis reports motion complete AND at least
 ``min_wait_s`` has passed since the move was issued (the controller may not have registered the
 move on the very next poll — the V1.py sleep quirk). A wait that exceeds ``step_timeout_s`` is a
-protection event: stop all, heater off, FAULT. A controller FAULT or disarm aborts the recipe.
+protection event: stop all, heater off, FAULT. A controller FAULT or disarm aborts the print.
 The heater is switched only through ``Controller.heater_on/off`` (armed-gated) and never in a
 dry run.
 """
@@ -20,13 +20,18 @@ from collections.abc import Callable
 from typing import Any
 
 from vention_printer_interface.control.controller import Controller, ControllerState
-from vention_printer_interface.control.recipe import PART, RecipePlan, Step, compile_recipe
+from vention_printer_interface.control.print_settings import (
+    PART,
+    PrintSettings,
+    Step,
+    compile_print,
+)
 
 log = logging.getLogger(__name__)
 EventHook = Callable[[str, dict[str, Any]], None]
 
 
-class RecipeState(enum.StrEnum):
+class PrintState(enum.StrEnum):
     IDLE = "idle"
     RUNNING = "running"
     PAUSED = "paused"
@@ -35,7 +40,7 @@ class RecipeState(enum.StrEnum):
     FAULT = "fault"
 
 
-class RecipeController:
+class PrintController:
     def __init__(
         self,
         controller: Controller,
@@ -52,14 +57,14 @@ class RecipeController:
         self.on_event: EventHook | None = None
         self._reset(None)
 
-    def _reset(self, plan: RecipePlan | None, steps: tuple[Step, ...] | None = None) -> None:
+    def _reset(self, plan: PrintSettings | None, steps: tuple[Step, ...] | None = None) -> None:
         self.plan = plan
         self.macro: str | None = None
         self.steps: tuple[Step, ...] = (
-            steps if steps is not None else (compile_recipe(plan) if plan else ())
+            steps if steps is not None else (compile_print(plan) if plan else ())
         )
         self.part_zero_mm: float | None = None
-        self.state = RecipeState.IDLE
+        self.state = PrintState.IDLE
         self.step_index = 0  # next step to issue
         self.dry_run = False
         self.single_step = False
@@ -75,32 +80,32 @@ class RecipeController:
         self._height = 0.0
 
     # ---- operator actions -------------------------------------------------------------------
-    def start(self, plan: RecipePlan, dry_run: bool = False, single_step: bool = False) -> None:
+    def start(self, plan: PrintSettings, dry_run: bool = False, single_step: bool = False) -> None:
         with self._lock:
-            if self.state in (RecipeState.RUNNING, RecipeState.PAUSED):
-                raise RuntimeError("recipe already running")
+            if self.state in (PrintState.RUNNING, PrintState.PAUSED):
+                raise RuntimeError("a print is already running")
             reasons = plan.validate(self._c.limits)
             if reasons:
-                raise RuntimeError("recipe invalid: " + "; ".join(reasons))
+                raise RuntimeError("print settings invalid: " + "; ".join(reasons))
             self._c._require_armed()
             self._reset(plan)
             self.dry_run, self.single_step = dry_run, single_step
             self.part_zero_mm = self._part_position()
-            self.state = RecipeState.RUNNING
+            self.state = PrintState.RUNNING
             self._started_at = self._clock()
-        self._emit("recipe_started", {"n_steps": len(self.steps), "dry_run": dry_run})
+        self._emit("print_started", {"n_steps": len(self.steps), "dry_run": dry_run})
 
     def start_macro(self, name: str, steps: tuple[Step, ...]) -> None:
         """Run a park macro on the same machine (armed-gated, pausable, abortable)."""
         with self._lock:
-            if self.state in (RecipeState.RUNNING, RecipeState.PAUSED):
-                raise RuntimeError("recipe or macro already running")
+            if self.state in (PrintState.RUNNING, PrintState.PAUSED):
+                raise RuntimeError("a print or macro is already running")
             if not steps:
                 raise RuntimeError("macro has no steps")
             self._c._require_armed()
             self._reset(None, steps)
             self.macro = name
-            self.state = RecipeState.RUNNING
+            self.state = PrintState.RUNNING
             self._started_at = self._clock()
         self._emit("macro_started", {"macro": name, "n_steps": len(steps)})
 
@@ -113,66 +118,66 @@ class RecipeController:
 
     def pause(self) -> None:
         with self._lock:
-            if self.state == RecipeState.RUNNING:
+            if self.state == PrintState.RUNNING:
                 self._pause_requested = True
 
     def resume(self) -> None:
         with self._lock:
-            if self.state != RecipeState.PAUSED:
+            if self.state != PrintState.PAUSED:
                 return
             self._c._require_armed()
             self.single_step = False
             self._pause_requested = False
-            self.state = RecipeState.RUNNING
-        self._emit("recipe_resumed", {})
+            self.state = PrintState.RUNNING
+        self._emit("print_resumed", {})
 
     def step(self) -> None:
         """Single-step mode: allow the next step group to run, then pause again."""
         with self._lock:
-            if self.state != RecipeState.PAUSED:
+            if self.state != PrintState.PAUSED:
                 return
             self._c._require_armed()
             self._step_granted = True
-            self.state = RecipeState.RUNNING
+            self.state = PrintState.RUNNING
 
     def abort(self, reason: str = "operator abort") -> None:
         self._stop_safe()
         with self._lock:
-            if self.state not in (RecipeState.RUNNING, RecipeState.PAUSED):
+            if self.state not in (PrintState.RUNNING, PrintState.PAUSED):
                 return
-            self.state, self.reason = RecipeState.ABORTED, reason
+            self.state, self.reason = PrintState.ABORTED, reason
             self._finished_at = self._clock()
-        self._emit("recipe_aborted", {"reason": reason})
+        self._emit("print_aborted", {"reason": reason})
 
     def _fault(self, reason: str) -> None:
         self._stop_safe()
         with self._lock:
-            self.state, self.reason = RecipeState.FAULT, reason
+            self.state, self.reason = PrintState.FAULT, reason
             self._finished_at = self._clock()
-        self._emit("recipe_fault", {"reason": reason})
+        self._emit("print_fault", {"reason": reason})
 
     def _stop_safe(self) -> None:
         for fn in (self._c.stop_all, self._c.heater_off):
             try:
                 fn()
             except Exception as exc:  # noqa: BLE001 - best effort; keep going
-                log.warning("recipe stop step failed: %s", exc)
+                log.warning("print stop step failed: %s", exc)
 
     # ---- tick (poll thread) -----------------------------------------------------------------
     def tick(self, snapshot: dict[str, Any]) -> None:
         emit: tuple[str, dict[str, Any]] | None
         with self._lock:
-            if self.state != RecipeState.RUNNING:
+            if self.state != PrintState.RUNNING:
                 return
             if snapshot["state"] != ControllerState.CONNECTED.value or not snapshot["armed"]:
-                self.state = RecipeState.ABORTED
+                self.state = PrintState.ABORTED
                 self.reason = "controller " + (
                     "fault: " + "; ".join(snapshot["fault_reasons"])
                     if snapshot["state"] == ControllerState.FAULT.value
                     else "disarmed / disconnected"
                 )
                 self._finished_at = self._clock()
-                emit = ("recipe_aborted", {"reason": self.reason})
+                emit = ("print_aborted", {"reason": self.reason})
             else:
                 emit = self._advance(snapshot)
         if emit:
@@ -185,7 +190,7 @@ class RecipeController:
             if not self._blocking_done(inflight, snapshot, now):
                 if now - self._issued_at > self.step_timeout_s:
                     self.state, self.reason = (
-                        RecipeState.FAULT,
+                        PrintState.FAULT,
                         (
                             f"timeout: step {inflight.index} ({inflight.kind}) not complete after "
                             f"{self.step_timeout_s:.0f}s"
@@ -193,7 +198,7 @@ class RecipeController:
                     )
                     self._finished_at = now
                     self._stop_safe()
-                    return ("recipe_fault", {"reason": self.reason})
+                    return ("print_fault", {"reason": self.reason})
                 return None
             self._in_flight = None
             if inflight.phase == "setup" and inflight.index == 1 and self.macro is None:
@@ -202,10 +207,10 @@ class RecipeController:
                 )  # after home: the build piston's true zero
             if self._pause_requested or (self.single_step and not self._step_granted):
                 self._pause_requested, self._step_granted = False, False
-                self.state = RecipeState.PAUSED
-                return ("recipe_paused", {"step_index": self.step_index})
+                self.state = PrintState.PAUSED
+                return ("print_paused", {"step_index": self.step_index})
             self._step_granted = False
-        # Issue steps until a blocking one is in flight (or the recipe ends).
+        # Issue steps until a blocking one is in flight (or the print ends).
         while self.step_index < len(self.steps):
             step = self.steps[self.step_index]
             self.step_index += 1
@@ -215,11 +220,11 @@ class RecipeController:
                 return event
             if event:
                 return event
-        self.state = RecipeState.DONE
+        self.state = PrintState.DONE
         self._finished_at = now
         if self.macro:
             return ("macro_done", {"macro": self.macro})
-        return ("recipe_done", {"layers": self._layer, "part_height_mm": self._height})
+        return ("print_done", {"layers": self._layer, "part_height_mm": self._height})
 
     def _blocking_done(self, step: Step, snapshot: dict[str, Any], now: float) -> bool:
         if step.kind == "dwell":
@@ -260,11 +265,11 @@ class RecipeController:
                 }
                 label = "layer_started" if step.label == "layer_start" else "layer_completed"
                 return (label, data)
-        except Exception as exc:  # noqa: BLE001 - any issue failure is a recipe fault
-            self.state, self.reason = RecipeState.FAULT, f"step {step.index} failed: {exc}"
+        except Exception as exc:  # noqa: BLE001 - any issue failure is a print fault
+            self.state, self.reason = PrintState.FAULT, f"step {step.index} failed: {exc}"
             self._finished_at = now
             self._stop_safe()
-            return ("recipe_fault", {"reason": self.reason})
+            return ("print_fault", {"reason": self.reason})
         return None
 
     def _emit(self, label: str, data: dict[str, Any]) -> None:
@@ -273,8 +278,8 @@ class RecipeController:
             return
         try:
             hook(label, data)
-        except Exception as exc:  # noqa: BLE001 - an event sink must never break the recipe
-            log.warning("recipe event hook failed: %s", exc)
+        except Exception as exc:  # noqa: BLE001 - an event sink must never break the print
+            log.warning("print event hook failed: %s", exc)
 
     # ---- snapshot ---------------------------------------------------------------------------
     def snapshot(self) -> dict[str, Any]:

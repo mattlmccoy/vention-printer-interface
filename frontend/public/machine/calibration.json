@@ -1,0 +1,13 @@
+{
+  "_comment": "Overlay calibration for public/machine/printer.png (the lab wireframe, 1526x1017). Coordinates are image pixels. Each rail is the line the carriage centre travels from 0 mm (home) to its full travel; each piston is the vertical line its top surface descends along from 0 mm (up) to 145 mm (down). ESTIMATED from the drawing; use the console's calibrate mode to click the real points, then paste the exported JSON here.",
+  "image": { "w": 1526, "h": 1017 },
+  "rails": {
+    "printhead": { "x0": 470, "y0": 105, "x1": 1390, "y1": 190 },
+    "recoater": { "x0": 120, "y0": 205, "x1": 1400, "y1": 285 }
+  },
+  "pistons": {
+    "feed": { "x": 690, "y0": 400, "y1": 700 },
+    "build": { "x": 880, "y0": 385, "y1": 685 }
+  },
+  "heater_offset_px": { "dx": 60, "dy": 10 }
+}

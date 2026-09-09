@@ -43,8 +43,8 @@ class JobInfo:
     def complete(self) -> bool:
         return not self.missing_pages and len(self.pages) == self.layer_count
 
-    def recipe_patch(self) -> dict[str, Any]:
-        """What the job dictates for the recipe: the print phase's layer count and thickness."""
+    def print_settings_patch(self) -> dict[str, Any]:
+        """What the job dictates: the print phase's layer count and thickness."""
         return {
             "printing": {"n_layers": self.layer_count, "layer_thickness_mm": self.layer_height_mm}
         }

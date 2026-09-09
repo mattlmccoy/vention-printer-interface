@@ -6,8 +6,8 @@ from typing import Any
 import pytest
 
 from vention_printer_interface.control.controller import Controller, ControllerState
-from vention_printer_interface.control.recipe import PhasePlan, RecipePlan
-from vention_printer_interface.control.recipe_controller import RecipeController
+from vention_printer_interface.control.print_controller import PrintController
+from vention_printer_interface.control.print_settings import PhasePlan, PrintSettings
 from vention_printer_interface.control.safety import SafetyLimits
 from vention_printer_interface.device.printer import PrinterDevice
 from vention_printer_interface.device.simulated import SimulatedTransport
@@ -16,8 +16,8 @@ from vention_printer_interface.protocol import routes as r
 HEATER = r.io_output_topic(1, 2)
 
 
-def fast_plan(n_print: int = 1, heater: bool = True) -> RecipePlan:
-    """One tiny recipe the simulator finishes in a few seconds at the bounded speeds."""
+def fast_plan(n_print: int = 1, heater: bool = True) -> PrintSettings:
+    """One tiny print the simulator finishes in a few seconds at the bounded speeds."""
     fast = PhasePlan(
         layer_thickness_mm=1.0,
         n_layers=0,
@@ -30,7 +30,7 @@ def fast_plan(n_print: int = 1, heater: bool = True) -> RecipePlan:
         recoater_speed=300,
         recoater_accel=2000,
     )
-    return RecipePlan(
+    return PrintSettings(
         precoat=dataclasses.replace(fast, n_layers=0),
         printing=dataclasses.replace(fast, n_layers=n_print),
         postcoat=dataclasses.replace(fast, n_layers=0),
@@ -47,11 +47,11 @@ def fast_plan(n_print: int = 1, heater: bool = True) -> RecipePlan:
     )
 
 
-def make(**sim: Any) -> tuple[RecipeController, Controller, SimulatedTransport]:
+def make(**sim: Any) -> tuple[PrintController, Controller, SimulatedTransport]:
     t = SimulatedTransport(realtime=True, **sim)
     c = Controller(poll_interval_s=0.05, limits=SafetyLimits())
     c.attach_device(PrinterDevice(t, heater_io=(1, 2)), backend="simulated")
-    rc = RecipeController(c, min_wait_s=0.1, step_timeout_s=3.0)
+    rc = PrintController(c, min_wait_s=0.1, step_timeout_s=3.0)
     c.add_listener(rc.tick)
     return rc, c, t
 
@@ -91,7 +91,7 @@ def test_one_layer_runs_to_done_with_layer_events() -> None:
         assert rc.snapshot()["state"] == "running"
         assert wait(lambda: rc.snapshot()["state"] == "done")
         labels = [e[0] for e in events]
-        assert labels[0] == "recipe_started" and labels[-1] == "recipe_done"
+        assert labels[0] == "print_started" and labels[-1] == "print_done"
         assert "layer_started" in labels and "layer_completed" in labels
         done = next(d for lbl, d in events if lbl == "layer_completed")
         assert done["layer"] == 1 and done["phase"] == "printing" and done["part_height_mm"] == 1.0
@@ -148,7 +148,7 @@ def test_abort_stops_motion_and_heater() -> None:
         c.stop()
 
 
-def test_controller_fault_aborts_recipe() -> None:
+def test_controller_fault_aborts_printer() -> None:
     rc, c, t = make()
     try:
         c.arm()
@@ -178,7 +178,7 @@ def test_single_step_waits_for_step_calls() -> None:
         c.stop()
 
 
-def test_wait_timeout_faults_recipe() -> None:
+def test_wait_timeout_faults_printer() -> None:
     rc, c, t = make(stall_axis=4)  # recoater never moves
     try:
         c.arm()
@@ -191,7 +191,7 @@ def test_wait_timeout_faults_recipe() -> None:
 
 
 def test_snapshot_shape_idle() -> None:
-    rc = RecipeController(Controller(poll_interval_s=0.05))
+    rc = PrintController(Controller(poll_interval_s=0.05))
     s = rc.snapshot()
     assert s["state"] == "idle" and s["n_steps"] == 0 and s["current_step"] is None
     assert set(s) >= {

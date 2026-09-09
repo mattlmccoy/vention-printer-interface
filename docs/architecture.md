@@ -28,7 +28,7 @@ Three data concerns are kept apart, as in the FLIR and T&C tools:
    watchdog. A trip stops all motion (`M410`), writes the heater output low, latches FAULT and
    disarms. While faulted, every successful poll re-enforces stop + heater-off (a fault action may
    have failed while the link was down). `clear_fault` needs a fresh clean sample.
-2. **ARM gate** — guarded: home, move, speed, accel, heater on, recipe start (Plan 2).
+2. **ARM gate** — guarded: home, move, speed, accel, heater on, print settings start (Plan 2).
    Never gated: stop, heater off, E-STOP, disarm.
 3. **E-STOP** — best-effort in any state: `M410`, heater off, MQTT `estop/trigger/request`,
    disarm. Release is a separate explicit action (`estop/release` then `estop/systemreset`, wait
@@ -41,4 +41,4 @@ Three data concerns are kept apart, as in the FLIR and T&C tools:
 Every reply shape and topic payload is transcribed from the SDK, not captured from our unit. The
 staged order in `docs/commissioning.md` is: read-only probe → reconcile fixtures → ARM and home one
 gantry → identify the heater IO pin with the relay coil disconnected → two-layer dry run → full
-recipe.
+print settings.

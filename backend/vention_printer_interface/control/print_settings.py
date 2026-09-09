@@ -1,8 +1,8 @@
-"""Recipe plan and pure compiler (spec §4).
+"""Print settings and pure compiler (spec §4).
 
-``RecipePlan`` is seeded from the constants in ``vention/python/V1.py`` (the lab's print script).
-``compile_recipe`` turns a plan into a deterministic step list in exactly V1.py's order so the
-step machine (``recipe_controller.py``) never has to know about phases. No IO here.
+``PrintSettings`` is seeded from the constants in ``vention/python/V1.py`` (the lab's print script).
+``compile_print`` turns a plan into a deterministic step list in exactly V1.py's order so the
+step machine (``print_controller.py``) never has to know about phases. No IO here.
 """
 
 from __future__ import annotations
@@ -80,7 +80,7 @@ class PhasePlan:
 
 
 @dataclass(frozen=True)
-class RecipePlan:
+class PrintSettings:
     """The whole print (V1.py lines 12-66). Heater is opt-in; V1.py never switched it."""
 
     precoat: PhasePlan = field(
@@ -145,14 +145,14 @@ class RecipePlan:
             if not lo <= value <= hi:
                 reasons.append(f"{label}={value} outside axis {axis} travel [{lo}, {hi}]")
         if self.total_layers == 0:
-            reasons.append("recipe has no layers")
+            reasons.append("no layers to print")
         return reasons
 
     def to_dict(self) -> dict[str, Any]:
         return dataclasses.asdict(self)
 
     @classmethod
-    def from_dict(cls, data: dict[str, Any]) -> RecipePlan:
+    def from_dict(cls, data: dict[str, Any]) -> PrintSettings:
         d = dict(data)
         base = cls()
         precoat = PhasePlan(**d.pop("precoat")) if "precoat" in d else base.precoat
@@ -161,7 +161,7 @@ class RecipePlan:
         return cls(precoat=precoat, printing=printing, postcoat=postcoat, **d)
 
     @classmethod
-    def bounded(cls, data: dict[str, Any] | None, limits: SafetyLimits) -> RecipePlan:
+    def bounded(cls, data: dict[str, Any] | None, limits: SafetyLimits) -> PrintSettings:
         """Build a plan from untrusted input, clamping every field into limits (tighten-only)."""
         base = cls()
         d = dict(data or {})
@@ -218,7 +218,7 @@ class Step:
     part_height_mm: float = 0.0
 
 
-def compile_recipe(plan: RecipePlan) -> tuple[Step, ...]:
+def compile_print(plan: PrintSettings) -> tuple[Step, ...]:
     """V1.py lines 80-190, phase by phase. Deterministic; unit-tested against the script."""
     out: list[Step] = []
     height = 0.0
@@ -299,14 +299,14 @@ _HOMING = {PART: 68.8, FEED: 68.8, PRINTHEAD: 66.3, RECOATER: 66.3}
 _TRAVEL = {PART: 145.0, FEED: 145.0, PRINTHEAD: 840.0, RECOATER: 930.0}
 
 
-def estimate_duration_s(plan: RecipePlan, min_wait_s: float = 0.5) -> float:
+def estimate_duration_s(plan: PrintSettings, min_wait_s: float = 0.5) -> float:
     """Rough wall-clock estimate: constant-velocity moves at the commanded speed, dwells, and
     homing at the configured homing speed; acceleration is ignored (mirrored in the UI)."""
     speed = {PART: 5.0, FEED: 5.0, PRINTHEAD: 100.0, RECOATER: 100.0}
     pos = dict.fromkeys(speed, 0.0)
     total = 0.0
     pending = 0.0
-    for step in compile_recipe(plan):
+    for step in compile_print(plan):
         if step.kind == "home_all":
             pending = max(_TRAVEL[a] / _HOMING[a] for a in speed) * 0.5  # typically half travel
         elif step.kind == "set_speed" and step.axis is not None:

@@ -2,7 +2,7 @@ import { useEffect, useState } from "react";
 import { api } from "../../lib/api.ts";
 import { estimateDurationS } from "../../lib/estimate.ts";
 import { fmtSecs, type Gates } from "../../lib/format.ts";
-import { totalLayers, totalThickness, validate, type RecipePlan } from "../../lib/recipe.ts";
+import { totalLayers, totalThickness, validate, type PrintSettings } from "../../lib/print_settings.ts";
 import type { JobSnap, StatusPayload } from "../../lib/telemetry.ts";
 import { CrossSection } from "../CrossSection.tsx";
 import { ModuleGrid, type Module } from "../Modules.tsx";
@@ -12,22 +12,22 @@ type JobRow = Omit<JobSnap, "current_layer">;
 const BUDGET = 145;
 function num(v: string, fb: number): number { const n = Number(v); return v !== "" && Number.isFinite(n) ? n : fb; }
 
-export function JobView({ status, gates, call, order, onOrder, onStarted }: { status: StatusPayload | null; gates: Gates; call: Call; order?: string[]; onOrder: (ids: string[]) => void; onStarted: () => void }) {
+export function JobView({ status, gates, call, order, sizes, onOrder, onResize, onStarted }: { status: StatusPayload | null; gates: Gates; call: Call; order?: string[]; sizes?: Record<string, import("../../lib/console.ts").ModuleSize>; onOrder: (ids: string[]) => void; onResize: (id: string, size: import("../../lib/console.ts").ModuleSize) => void; onStarted: () => void }) {
   const [jobs, setJobs] = useState<JobRow[]>([]);
   const [roots, setRoots] = useState<string[]>([]);
-  const [plan, setPlan] = useState<RecipePlan | null>(null);
+  const [plan, setPlan] = useState<PrintSettings | null>(null);
   const [dirty, setDirty] = useState(false);
   const [preview, setPreview] = useState(1);
   const [dry, setDry] = useState(true);
   const [single, setSingle] = useState(false);
   const [name, setName] = useState("");
   const job = status?.job ?? null;
-  const running = gates.recipeActive;
-  const refresh = () => { api.jobs().then((r) => { setJobs(r.jobs as JobRow[]); setRoots(r.roots); }).catch(() => undefined); api.recipe().then((r) => { setPlan(r.plan as unknown as RecipePlan); setDirty(false); }).catch(() => undefined); };
+  const running = gates.printActive;
+  const refresh = () => { api.jobs().then((r) => { setJobs(r.jobs as JobRow[]); setRoots(r.roots); }).catch(() => undefined); api.printSettings().then((r) => { setPlan(r.plan as unknown as PrintSettings); setDirty(false); }).catch(() => undefined); };
   useEffect(() => { refresh(); }, [gates.reachable, job?.path]);
-  const edit = (patch: Partial<RecipePlan>) => plan && (setPlan({ ...plan, ...patch }), setDirty(true));
-  const editPh = (ph: "precoat" | "printing" | "postcoat", patch: Partial<RecipePlan["precoat"]>) => plan && edit({ [ph]: { ...plan[ph], ...patch } } as Partial<RecipePlan>);
-  const save = async () => { if (!plan) return; await call("save print settings", () => api.setRecipe(plan as unknown as Record<string, unknown>).then((r) => { setPlan(r.plan as unknown as RecipePlan); setDirty(false); })); };
+  const edit = (patch: Partial<PrintSettings>) => plan && (setPlan({ ...plan, ...patch }), setDirty(true));
+  const editPh = (ph: "precoat" | "printing" | "postcoat", patch: Partial<PrintSettings["precoat"]>) => plan && edit({ [ph]: { ...plan[ph], ...patch } } as Partial<PrintSettings>);
+  const save = async () => { if (!plan) return; await call("save print_settings", () => api.setPrintSettings(plan as unknown as Record<string, unknown>).then((r) => { setPlan(r.plan as unknown as PrintSettings); setDirty(false); })); };
   const reasons = plan ? validate(plan) : [];
   const total = plan ? totalThickness(plan) : 0;
   const layers = plan ? totalLayers(plan) : 0;
@@ -38,7 +38,7 @@ export function JobView({ status, gates, call, order, onOrder, onStarted }: { st
     if (!plan) return;
     if (dirty) await save();
     if (!dry && !window.confirm(`Start ${job ? job.name : "the manual print"} on the machine?\n${layers} layers · ${total.toFixed(1)} mm · heater ${plan.heater_enabled ? "ENABLED" : "off"} · about ${fmtSecs(estimateDurationS(plan))}`)) return;
-    await call("start", () => api.recipeStart({ dry_run: dry, single_step: single, name: name || job?.name || "print" }).then(onStarted));
+    await call("start", () => api.printStart({ dry_run: dry, single_step: single, name: name || job?.name || "print" }).then(onStarted));
   };
   const modules: Module[] = [
     { id: "pick", title: "sliced jobs", size: "m", node: (
@@ -68,7 +68,7 @@ export function JobView({ status, gates, call, order, onOrder, onStarted }: { st
         <span>layer thickness</span><span className={mismatch ? "warnv" : ""}>{job.layer_height_mm} mm</span>
         <span>part height</span><span>{job.height_mm} mm</span>
         <span>footprint</span><span>{job.bbox_mm.x} × {job.bbox_mm.y} mm</span>
-        <span>print settings</span><span className={mismatch ? "warnv" : ""}>{plan.printing.n_layers} × {plan.printing.layer_thickness_mm} mm{mismatch ? " ≠ job" : ""}</span>
+        <span>print_settings</span><span className={mismatch ? "warnv" : ""}>{plan.printing.n_layers} × {plan.printing.layer_thickness_mm} mm{mismatch ? " ≠ job" : ""}</span>
         <span>MetPrint</span><span className="warnv">queue the job's TIFFs in the hot folder (v2 automates this)</span>
       </div>
     ) : null },
@@ -92,7 +92,7 @@ export function JobView({ status, gates, call, order, onOrder, onStarted }: { st
         </div>
         {reasons.length > 0 ? <div className="errline">{reasons.join(" · ")}</div> : <div className="okline">printable</div>}
       </>
-    ) : <div className="hint">loading print settings…</div> },
+    ) : <div className="hint">loading print_settings…</div> },
     { id: "start", title: "start", size: "s", node: plan ? (
       <>
         <div className="est" style={{ gridTemplateColumns: "1fr 1fr" }}><div><div className="l">about</div><div className="v" style={{ fontSize: 26 }}>{fmtSecs(estimateDurationS(plan))}</div></div><div><div className="l">layers</div><div className="v" style={{ fontSize: 26 }}>{layers}</div></div></div>
@@ -109,9 +109,9 @@ export function JobView({ status, gates, call, order, onOrder, onStarted }: { st
         {!gates.controllable && <div className="lock">{gates.connected ? "read-only · take control from the connection pill" : "connect a controller to start"}</div>}
       </>
     ) : null },
-    { id: "advanced", title: "print settings · speeds and positions", size: "m", node: plan ? (
+    { id: "advanced", title: "print_settings · speeds and positions", size: "m", node: plan ? (
       <div className="fields adv" style={{ marginTop: 0 }}>
-        <span>piston speed</span><span className="row"><input type="number" step="0.1" value={plan.printing.part_speed} disabled={running} onChange={(e) => { const s = num(e.target.value, plan.printing.part_speed); const u = (p: RecipePlan["precoat"]) => ({ ...p, part_speed: s, feed_speed: s }); edit({ precoat: u(plan.precoat), printing: u(plan.printing), postcoat: u(plan.postcoat) }); }} /> mm/s</span>
+        <span>piston speed</span><span className="row"><input type="number" step="0.1" value={plan.printing.part_speed} disabled={running} onChange={(e) => { const s = num(e.target.value, plan.printing.part_speed); const u = (p: PrintSettings["precoat"]) => ({ ...p, part_speed: s, feed_speed: s }); edit({ precoat: u(plan.precoat), printing: u(plan.printing), postcoat: u(plan.postcoat) }); }} /> mm/s</span>
         <span>recoater speed</span><span className="row"><input type="number" value={plan.printing.recoater_speed} disabled={running} onChange={(e) => { const s = num(e.target.value, plan.printing.recoater_speed); edit({ precoat: { ...plan.precoat, recoater_speed: s }, printing: { ...plan.printing, recoater_speed: s }, postcoat: { ...plan.postcoat, recoater_speed: s } }); }} /> mm/s</span>
         <span>printhead speed</span><span className="row"><input type="number" value={plan.printing.printhead_speed} disabled={running} onChange={(e) => editPh("printing", { printhead_speed: num(e.target.value, plan.printing.printhead_speed) })} /> mm/s</span>
         <span>heater speed</span><span className="row"><input type="number" value={plan.heater_speed} disabled={running} onChange={(e) => edit({ heater_speed: num(e.target.value, plan.heater_speed) })} /> mm/s</span>
@@ -122,5 +122,5 @@ export function JobView({ status, gates, call, order, onOrder, onStarted }: { st
       </div>
     ) : null },
   ];
-  return <div className="view modules-view"><ModuleGrid modules={modules} order={order} onOrder={onOrder} /></div>;
+  return <div className="view modules-view"><ModuleGrid modules={modules} order={order} sizes={sizes} onOrder={onOrder} onResize={onResize} /></div>;
 }

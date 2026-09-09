@@ -189,13 +189,21 @@ button.small { height: 34px; padding: 0 12px; border: 1px solid var(--line-contr
 
 /* ---- modules ---- */
 .modules { display: flex; flex-wrap: wrap; align-items: flex-start; align-content: flex-start; gap: 16px; padding: 20px 24px; overflow: auto; min-height: 0; }
-.module { background: var(--panel); border: 1px solid var(--line); border-radius: 4px; display: flex; flex-direction: column; min-width: 0; }
+.module { background: var(--panel); border: 1px solid var(--line); border-radius: 4px; display: flex; flex-direction: column; flex: none; position: relative; }
 .module.s { width: 320px; } .module.m { width: 460px; } .module.l { width: 640px; } .module.xl { width: 940px; max-width: 100%; }
+.module.sized { max-width: 100%; overflow: hidden; }
+.module.sized .mb { overflow: auto; flex: 1; }
 .module .mh { display: flex; justify-content: space-between; align-items: center; padding: 10px 14px; border-bottom: 1px solid var(--line); font: 12px var(--font-mono); letter-spacing: .12em; text-transform: uppercase; color: var(--muted); cursor: grab; user-select: none; }
 .module .mh .grip { opacity: .5; }
+.module .mh-r { display: inline-flex; align-items: center; gap: 8px; }
+.module .mh-reset { background: none; border: 0; color: var(--muted); cursor: pointer; font-size: 13px; padding: 0; line-height: 1; }
+.module .mh-reset:hover { color: var(--accent); }
 .module .mb { padding: 16px; }
 .module.over { outline: 2px solid var(--accent); outline-offset: -1px; }
 .module.dragging { opacity: .4; }
+.mresize { position: absolute; right: 0; bottom: 0; width: 16px; height: 16px; cursor: nwse-resize; touch-action: none; }
+.mresize::after { content: ""; position: absolute; right: 3px; bottom: 3px; width: 7px; height: 7px; border-right: 2px solid var(--line-control); border-bottom: 2px solid var(--line-control); }
+.mresize:hover::after { border-color: var(--accent); }
 .view.modules-view { display: block; overflow: auto; }
 .kv:first-child, .fields:first-child { margin-top: 0; }
 .xsec.tall { height: 520px; }
@@ -204,3 +212,8 @@ button.small { height: 34px; padding: 0 12px; border: 1px solid var(--line-contr
 .stack.compact .col { width: 150px; }
 .actions.tight { margin-top: 14px; }
 .pill .lock { width: 12px; height: 12px; }
+
+/* ---- machine image overlay ---- */
+.mimg svg { width: 100%; height: auto; display: block; background: var(--danger-ink); border-radius: var(--radius); }
+.mk-rail { stroke: var(--trace-rc); stroke-width: 2; stroke-dasharray: 6 6; opacity: .45; }
+.mk-hint { fill: var(--err); font: 700 26px var(--font-mono); }

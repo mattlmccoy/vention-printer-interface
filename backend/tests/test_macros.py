@@ -1,5 +1,5 @@
 from vention_printer_interface.control.macros import MACROS, macro_steps
-from vention_printer_interface.control.recipe import FEED, PART
+from vention_printer_interface.control.print_settings import FEED, PART
 from vention_printer_interface.control.safety import SafetyLimits
 
 

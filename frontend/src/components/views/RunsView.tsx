@@ -6,7 +6,7 @@ import { EventLog } from "../EventLog.tsx";
 import { ModuleGrid, type Module } from "../Modules.tsx";
 import type { Call } from "./types.ts";
 
-export function RunsView({ status, gates, call, order, onOrder }: { status: StatusPayload | null; gates: Gates; call: Call; order?: string[]; onOrder: (ids: string[]) => void }) {
+export function RunsView({ status, gates, call, order, sizes, onOrder, onResize }: { status: StatusPayload | null; gates: Gates; call: Call; order?: string[]; sizes?: Record<string, import("../../lib/console.ts").ModuleSize>; onOrder: (ids: string[]) => void; onResize: (id: string, size: import("../../lib/console.ts").ModuleSize) => void }) {
   const [runs, setRuns] = useState<Array<{ run: string; complete: boolean; size_bytes: number }>>([]);
   useEffect(() => { api.recordings().then((r) => setRuns(r.runs)).catch(() => undefined); }, [status?.recording.active, gates.reachable]);
   const rec = status?.recording;
@@ -28,5 +28,5 @@ export function RunsView({ status, gates, call, order, onOrder }: { status: Stat
     ) },
     { id: "events", title: "events", size: "l", node: <EventLog events={status?.events ?? []} title="" /> },
   ];
-  return <div className="view modules-view"><ModuleGrid modules={modules} order={order} onOrder={onOrder} /></div>;
+  return <div className="view modules-view"><ModuleGrid modules={modules} order={order} sizes={sizes} onOrder={onOrder} onResize={onResize} /></div>;
 }

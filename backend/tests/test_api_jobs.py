@@ -17,8 +17,8 @@ def client(tmp_path: Path) -> Iterator[TestClient]:
         experiments_root=tmp_path / "exp",
         poll_interval_s=0.05,
         jobs_roots=[tmp_path / "jobs"],
-        recipe_min_wait_s=0.1,
-        recipe_step_timeout_s=5.0,
+        print_min_wait_s=0.1,
+        print_step_timeout_s=5.0,
     )
     with TestClient(app) as c:
         yield c
@@ -36,8 +36,11 @@ def test_list_select_and_preview(client: TestClient) -> None:
     assert r.status_code == 200
     job = client.get("/api/status").json()["job"]
     assert job["layer_count"] == 4 and job["layer_height_mm"] == 0.1 and job["complete"] is True
-    recipe = client.get("/api/recipe").json()["plan"]
-    assert recipe["printing"]["n_layers"] == 4 and recipe["printing"]["layer_thickness_mm"] == 0.1
+    print_settings = client.get("/api/print-settings").json()["plan"]
+    assert (
+        print_settings["printing"]["n_layers"] == 4
+        and print_settings["printing"]["layer_thickness_mm"] == 0.1
+    )
     png = client.get("/api/jobs/current/layers/2.png")
     assert png.status_code == 200 and png.headers["content-type"] == "image/png"
     assert client.get("/api/jobs/current/layers/9.png").status_code == 404
@@ -54,7 +57,7 @@ def test_status_job_tracks_current_layer_during_print(client: TestClient) -> Non
     jobs = client.get("/api/jobs").json()["jobs"]
     client.post("/api/jobs/select", json={"path": jobs[0]["path"]})
     client.put(
-        "/api/recipe",
+        "/api/print-settings",
         json={
             "precoat": {"n_layers": 0},
             "postcoat": {"n_layers": 0},
@@ -83,12 +86,12 @@ def test_status_job_tracks_current_layer_during_print(client: TestClient) -> Non
             break
         time.sleep(0.02)
     client.post("/api/arm")
-    assert client.post("/api/recipe/start", json={"dry_run": True}).status_code == 200
+    assert client.post("/api/print/start", json={"dry_run": True}).status_code == 200
     seen = set()
     for _ in range(600):
         s = client.get("/api/status").json()
         seen.add(s["job"]["current_layer"])
-        if s["recipe"]["state"] == "done":
+        if s["print"]["state"] == "done":
             break
         time.sleep(0.05)
-    assert 4 in seen and s["recipe"]["state"] == "done"
+    assert 4 in seen and s["print"]["state"] == "done"

@@ -43,7 +43,7 @@ curl -s -X POST localhost:8020/api/motion/stop -H 'content-type: application/jso
 ```
 
 Watch for the V1.py quirk: if `motion_complete` stays false after the axis has visibly stopped,
-note the delay; the recipe engine (Plan 2) can use `drive/<n>/motionComplete` instead if the probe
+note the delay; the print settings engine (Plan 2) can use `drive/<n>/motionComplete` instead if the probe
 showed it.
 
 ## 4. Heater IO pin (relay coil disconnected)
@@ -60,4 +60,4 @@ Repeat for `1,1`, `1,2`, `1,3` (and other module ids the probe listed). Record t
 
 ## 5. Two-layer dry run, heater disabled (Plan 2)
 
-## 6. Full recipe with heater (Plan 2)
+## 6. Full print settings with heater (Plan 2)

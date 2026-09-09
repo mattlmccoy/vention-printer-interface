@@ -26,9 +26,16 @@ from vention_printer_interface.control.controller import Controller
 from vention_printer_interface.control.events import EventLog
 from vention_printer_interface.control.limits_store import load_limits, save_limits
 from vention_printer_interface.control.macros import MACROS, macro_steps
-from vention_printer_interface.control.recipe import RecipePlan, compile_recipe, estimate_duration_s
-from vention_printer_interface.control.recipe_controller import RecipeController, RecipeState
-from vention_printer_interface.control.recipe_store import load_recipe, save_recipe
+from vention_printer_interface.control.print_controller import PrintController, PrintState
+from vention_printer_interface.control.print_settings import (
+    PrintSettings,
+    compile_print,
+    estimate_duration_s,
+)
+from vention_printer_interface.control.print_settings_store import (
+    load_print_settings,
+    save_print_settings,
+)
 from vention_printer_interface.control.safety import HARD_BOUNDS, SafetyLimits
 from vention_printer_interface.device import create_transport, registered_transports
 from vention_printer_interface.device.printer import PrinterDevice
@@ -120,7 +127,7 @@ class RecordingStartBody(BaseModel):
     notes: str = ""
 
 
-class RecipeStartBody(BaseModel):
+class PrintStartBody(BaseModel):
     dry_run: bool = False
     single_step: bool = False
     name: str = ""
@@ -168,8 +175,8 @@ def create_app(
     frontend_dist: Path | None = None,
     site_origin: str | None = None,
     heater_io: tuple[int, int] | None = None,
-    recipe_min_wait_s: float = 0.5,
-    recipe_step_timeout_s: float = 120.0,
+    print_min_wait_s: float = 0.5,
+    print_step_timeout_s: float = 120.0,
     jobs_roots: list[Path] | None = None,
 ) -> FastAPI:
     root = experiments_root or Path.cwd() / "experiments"
@@ -179,26 +186,23 @@ def create_app(
     async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         controller = Controller(poll_interval_s=poll_interval_s, limits=limits or load_limits(root))
         recorder = Recorder(root)
-        recipe = RecipeController(
-            controller, min_wait_s=recipe_min_wait_s, step_timeout_s=recipe_step_timeout_s
+        printer = PrintController(
+            controller, min_wait_s=print_min_wait_s, step_timeout_s=print_step_timeout_s
         )
         app.state.auto_log = True
         app.state.auto_run_open = False
         events = EventLog()
         events.add_sink(recorder.event)  # every event also lands in the durable run record
 
-        def on_recipe_event(label: str, data: dict[str, Any]) -> None:
+        def on_print_event(label: str, data: dict[str, Any]) -> None:
             events.append(label, data)
             if label == "layer_completed":
                 recorder.record_layer(data)
-            if (
-                label in ("recipe_done", "recipe_aborted", "recipe_fault")
-                and app.state.auto_run_open
-            ):
+            if label in ("print_done", "print_aborted", "print_fault") and app.state.auto_run_open:
                 app.state.auto_run_open = False
                 recorder.stop()
 
-        recipe.on_event = on_recipe_event
+        printer.on_event = on_print_event
         last_state = {"v": "disconnected"}
 
         def on_controller_state(snap: dict[str, Any]) -> None:
@@ -207,13 +211,13 @@ def create_app(
                 if snap["state"] == "fault":
                     events.append("fault", {"reasons": snap["fault_reasons"]})
 
-        # Order matters: the recipe ticks first so the recorder logs the row that reflects it.
-        controller.add_listener(recipe.tick)
+        # Order matters: the print controller ticks first so the recorder logs it.
+        controller.add_listener(printer.tick)
         controller.add_listener(on_controller_state)
         controller.add_listener(recorder.record)
         app.state.events = events
-        app.state.controller, app.state.recorder, app.state.recipe = controller, recorder, recipe
-        app.state.recipe_plan = load_recipe(root, controller.limits)
+        app.state.controller, app.state.recorder, app.state.printer = controller, recorder, printer
+        app.state.print_settings = load_print_settings(root, controller.limits)
         app.state.job = None
         app.state.backend = "none"
         app.state.default_heater_io = heater_io or DEFAULT_HEATER_IO
@@ -245,8 +249,8 @@ def create_app(
     def rec() -> Recorder:
         return app.state.recorder  # type: ignore[no-any-return]
 
-    def recipe() -> RecipeController:
-        return app.state.recipe  # type: ignore[no-any-return]
+    def printer() -> PrintController:
+        return app.state.printer  # type: ignore[no-any-return]
 
     def ev(label: str, data: dict[str, Any] | None = None) -> None:
         app.state.events.append(label, data)
@@ -255,17 +259,17 @@ def create_app(
         job: JobInfo | None = app.state.job
         if job is None:
             return None
-        snap = recipe().snapshot()
+        snap = printer().snapshot()
         current = snap["layer"] if snap["state"] != "idle" and snap["phase"] == "printing" else 0
         return {**job.to_dict(), "current_layer": current}
 
-    def recipe_payload() -> dict[str, Any]:
-        plan: RecipePlan = app.state.recipe_plan
+    def print_settings_payload() -> dict[str, Any]:
+        plan: PrintSettings = app.state.print_settings
         return {
             "plan": plan.to_dict(),
             "validation": plan.validate(ctrl().limits),
-            "n_steps": len(compile_recipe(plan)),
-            "estimated_duration_s": estimate_duration_s(plan, recipe_min_wait_s),
+            "n_steps": len(compile_print(plan)),
+            "estimated_duration_s": estimate_duration_s(plan, print_min_wait_s),
             "total_layers": plan.total_layers,
             "total_thickness_mm": plan.total_thickness_mm,
             "bounds": HARD_BOUNDS,
@@ -279,7 +283,7 @@ def create_app(
             "device": snap.pop("device"),
             "controller": snap,
             "axis_motion": {str(k): v for k, v in app.state.axis_motion.items()},
-            "recipe": recipe().snapshot(),
+            "print": printer().snapshot(),
             "job": job_payload(),
             "auto_log": app.state.auto_log,
             "events": app.state.events.recent(50),
@@ -345,7 +349,7 @@ def create_app(
 
     @app.post("/api/disconnect")
     def disconnect() -> dict[str, Any]:
-        recipe().abort("disconnect")
+        printer().abort("disconnect")
         ev("disconnected")
         rec().stop()
         ctrl().detach_device()
@@ -360,7 +364,7 @@ def create_app(
 
     @app.post("/api/disarm")
     def disarm() -> dict[str, Any]:
-        recipe().abort("disarm")
+        printer().abort("disarm")
         ctrl().disarm()
         ev("disarmed")
         return status_payload()
@@ -470,39 +474,39 @@ def create_app(
         ev("heater_off")
         return status_payload()
 
-    # ---- recipe -----------------------------------------------------------------------------
-    @app.get("/api/recipe")
-    def get_recipe() -> dict[str, Any]:
-        return recipe_payload()
+    # ---- print settings + print control ----------------------------------------------
+    @app.get("/api/print-settings")
+    def get_printer() -> dict[str, Any]:
+        return print_settings_payload()
 
-    @app.put("/api/recipe")
-    def put_recipe(body: dict[str, Any]) -> dict[str, Any]:
-        if recipe().state in (RecipeState.RUNNING, RecipeState.PAUSED):
-            raise HTTPException(409, "recipe is running; abort it before editing")
-        current = app.state.recipe_plan.to_dict()
+    @app.put("/api/print-settings")
+    def put_print_settings(body: dict[str, Any]) -> dict[str, Any]:
+        if printer().state in (PrintState.RUNNING, PrintState.PAUSED):
+            raise HTTPException(409, "a print is running; abort it before editing")
+        current = app.state.print_settings.to_dict()
         for key, value in body.items():
             if isinstance(value, dict) and isinstance(current.get(key), dict):
                 current[key] = {**current[key], **value}
             else:
                 current[key] = value
-        plan = RecipePlan.bounded(current, ctrl().limits)
-        app.state.recipe_plan = plan
-        save_recipe(root, plan)
-        return recipe_payload()
+        plan = PrintSettings.bounded(current, ctrl().limits)
+        app.state.print_settings = plan
+        save_print_settings(root, plan)
+        return print_settings_payload()
 
-    @app.post("/api/recipe/start")
-    def recipe_start(body: RecipeStartBody) -> dict[str, Any]:
-        plan: RecipePlan = app.state.recipe_plan
-        # Open the auto-log run BEFORE starting so the recipe's own start event lands in it.
+    @app.post("/api/print/start")
+    def print_start(body: PrintStartBody) -> dict[str, Any]:
+        plan: PrintSettings = app.state.print_settings
+        # Open the auto-log run BEFORE starting so the print's own start event lands in it.
         opened = False
         if app.state.auto_log and rec().active is None:
-            if recipe().state in (RecipeState.RUNNING, RecipeState.PAUSED):
-                raise HTTPException(409, "recipe already running")
+            if printer().state in (PrintState.RUNNING, PrintState.PAUSED):
+                raise HTTPException(409, "a print is already running")
             if not ctrl().armed:
                 raise HTTPException(409, "not armed — press ARM to take control of the printer")
             reasons = plan.validate(ctrl().limits)
             if reasons:
-                raise HTTPException(409, "recipe invalid: " + "; ".join(reasons))
+                raise HTTPException(409, "print settings invalid: " + "; ".join(reasons))
             name = body.name or ("dry-run" if body.dry_run else "print")
             rec().start(
                 name,
@@ -511,40 +515,40 @@ def create_app(
                     "backend": app.state.backend,
                     "device": ctrl().snapshot()["device"],
                     "limits": ctrl().limits.to_dict(),
-                    "recipe": plan.to_dict(),
+                    "print_settings": plan.to_dict(),
                     "dry_run": body.dry_run,
                 },
             )
             app.state.auto_run_open = True
             opened = True
         try:
-            guarded(recipe().start, plan, body.dry_run, body.single_step)
+            guarded(printer().start, plan, body.dry_run, body.single_step)
         except HTTPException:
             if opened:
                 app.state.auto_run_open = False
                 rec().stop()
             raise
-        return recipe().snapshot()
+        return printer().snapshot()
 
-    @app.post("/api/recipe/pause")
-    def recipe_pause() -> dict[str, Any]:
-        recipe().pause()
-        return recipe().snapshot()
+    @app.post("/api/print/pause")
+    def print_pause() -> dict[str, Any]:
+        printer().pause()
+        return printer().snapshot()
 
-    @app.post("/api/recipe/resume")
-    def recipe_resume() -> dict[str, Any]:
-        guarded(recipe().resume)
-        return recipe().snapshot()
+    @app.post("/api/print/resume")
+    def print_resume() -> dict[str, Any]:
+        guarded(printer().resume)
+        return printer().snapshot()
 
-    @app.post("/api/recipe/step")
-    def recipe_step() -> dict[str, Any]:
-        guarded(recipe().step)
-        return recipe().snapshot()
+    @app.post("/api/print/step")
+    def print_step() -> dict[str, Any]:
+        guarded(printer().step)
+        return printer().snapshot()
 
-    @app.post("/api/recipe/abort")
-    def recipe_abort() -> dict[str, Any]:
-        recipe().abort()
-        return recipe().snapshot()
+    @app.post("/api/print/abort")
+    def print_abort() -> dict[str, Any]:
+        printer().abort()
+        return printer().snapshot()
 
     # ---- sliced jobs (Meteor RIP folders) --------------------------------------------------
     @app.get("/api/jobs")
@@ -558,23 +562,23 @@ def create_app(
             raise HTTPException(
                 400, "job must be a job_info.json folder under a configured jobs root"
             )
-        if recipe().state in (RecipeState.RUNNING, RecipeState.PAUSED):
+        if printer().state in (PrintState.RUNNING, PrintState.PAUSED):
             raise HTTPException(409, "a print is running; abort it before changing the job")
         try:
             job = load_job(path)
         except (OSError, ValueError, KeyError) as exc:
             raise HTTPException(400, f"could not read job: {exc}") from exc
         app.state.job = job
-        current = app.state.recipe_plan.to_dict()
-        current["printing"] = {**current["printing"], **job.recipe_patch()["printing"]}
-        plan = RecipePlan.bounded(current, ctrl().limits)
-        app.state.recipe_plan = plan
-        save_recipe(root, plan)
+        current = app.state.print_settings.to_dict()
+        current["printing"] = {**current["printing"], **job.print_settings_patch()["printing"]}
+        plan = PrintSettings.bounded(current, ctrl().limits)
+        app.state.print_settings = plan
+        save_print_settings(root, plan)
         ev(
             "job_selected",
             {"job": job.name, "layers": job.layer_count, "layer_mm": job.layer_height_mm},
         )
-        return {"job": job_payload(), "recipe": recipe_payload()}
+        return {"job": job_payload(), "print_settings": print_settings_payload()}
 
     @app.post("/api/jobs/clear")
     def clear_job() -> dict[str, Any]:
@@ -600,8 +604,8 @@ def create_app(
     def run_macro(name: str) -> dict[str, Any]:
         if name not in MACROS:
             raise HTTPException(400, f"unknown macro {name!r}; known: {sorted(MACROS)}")
-        guarded(recipe().start_macro, name, macro_steps(name, ctrl().limits))
-        return recipe().snapshot()
+        guarded(printer().start_macro, name, macro_steps(name, ctrl().limits))
+        return printer().snapshot()
 
     @app.get("/api/macros")
     def list_macros() -> dict[str, Any]:

@@ -6,10 +6,10 @@ IR heater). Third sibling of the [FLIR Research Interface](../../../../FLIR) and
 [T&C Power Interface](../TC-POWER); it mirrors their architecture and conventions so the three
 read as one family.
 
-**Status (2026-09-09): backend, recipe engine and Studio UI working against a built-in simulator;
+**Status (2026-09-09): backend, print settings engine and Studio UI working against a built-in simulator;
 NOT yet run against the physical controller.** Protocol layer, simulator, real HTTP+MQTT
 transport, supervisory controller (ARM gate, E-STOP, pure protection, heater watchdog), the V1.py
-recipe as a pausable step machine, run recorder with per-layer log, FastAPI + `/ws/telemetry`,
+print settings as a pausable step machine, run recorder with per-layer log, FastAPI + `/ws/telemetry`,
 three CLIs, sliced-job intake (Meteor RIP folders), and the **Binder Jet Console** UI (Print /
 Job / Control / Runs, draggable self-sized modules) are implemented and tested (181 backend tests,
 30 frontend tests). An independent review pass fixed several safety gaps (see `plan/task_plan.md`).
@@ -29,12 +29,12 @@ cross-section with progress.
 | Supervisory `Controller` (poll, ARM, E-STOP, FAULT latch, listeners) | `backend/.../control/controller.py` | tested; simulator-verified live |
 | Run recorder (`metadata.json` at start; `manifest.json` only on clean stop) | `backend/.../recording/recorder.py` | tested |
 | FastAPI operator + `/ws/telemetry` + cross-origin policy | `backend/.../api/app.py` | tested; live-verified on :8020 |
-| Recipe plan (V1.py constants) + pure compiler asserted against the script order | `backend/.../control/recipe.py` | tested |
-| Recipe step machine (pause/resume/abort, dry-run, single-step, timeouts) | `backend/.../control/recipe_controller.py` | tested; simulator-verified |
+| Recipe plan (V1.py constants) + pure compiler asserted against the script order | `backend/.../control/print_settings.py` | tested |
+| Recipe step machine (pause/resume/abort, dry-run, single-step, timeouts) | `backend/.../control/print_controller.py` | tested; simulator-verified |
 | Recipe API + auto-logged runs with `layers.csv` | `backend/.../api/app.py` | tested |
 | CLIs `vpi-serve`, `vpi-probe` (read-only), `vpi-monitor` | `backend/.../api/server.py`, `probe.py`, `monitor.py` | run against the simulator |
-| Park macros on the step machine (`load_cart`, `clear_bed`), event log, measured part height, duration estimate | `backend/.../control/{macros,events}.py`, `recipe_controller.py`, `api/app.py` | tested |
-| Sliced-job intake: Meteor RIP `job_info.json` folders + `_Page<N>_Clr1.tif` pages (real format captured), layer PNGs, job → recipe mapping | `backend/.../jobs/store.py`, `/api/jobs*` | tested with captured-shape fixtures; verified on real jobs |
+| Park macros on the step machine (`load_cart`, `clear_bed`), event log, measured part height, duration estimate | `backend/.../control/{macros,events}.py`, `print_controller.py`, `api/app.py` | tested |
+| Sliced-job intake: Meteor RIP `job_info.json` folders + `_Page<N>_Clr1.tif` pages (real format captured), layer PNGs, job → print settings mapping | `backend/.../jobs/store.py`, `/api/jobs*` | tested with captured-shape fixtures; verified on real jobs |
 | Binder Jet Console: Print (current layer cross-section + progress, print card, machine), Job (pick a sliced job, preview any layer, powder stack, start), Control (jog pads, park macros, heater), Runs; draggable self-sized modules; connect takes control (read-only optional); E-STOP always on screen | `frontend/` (Vite + React + TS; FLIR design language, printer layout) | logic tested (`node --test`, 30); browser-verified with real jobs |
 
 ## Scientific / engineering stance
@@ -90,10 +90,10 @@ backend/    Python package `vention_printer_interface` + tests (uv-managed)
   control/    safety (pure), controller, limits persistence
   recording/  run recorder
   api/        FastAPI create_app + vpi-serve
-docs/       architecture, protocol, recipe, commissioning, development
+docs/       architecture, protocol, print settings, commissioning, development
 plan/       task plan, research notes, data-contract status, SDK reference copy (git-ignored)
 frontend/   Vite + React + TS console (built into frontend/dist, served by vpi-serve); dev on 5175
-  src/lib/     pure logic with node --test: console state, operator, api (routes locked), telemetry, recipe mirror, duration estimate, elevation geometry, format/gates
+  src/lib/     pure logic with node --test: console state, operator, api (routes locked), telemetry, print settings mirror, duration estimate, elevation geometry, format/gates
   src/components/views/   PrintView, PrepareView, ControlView, RunsView
   src/components/         Elevation (front-elevation drawing), HeaterRing, IoGrid, EventLog, StatusBar, ErrorBoundary
 ```
@@ -102,3 +102,11 @@ frontend/   Vite + React + TS console (built into frontend/dist, served by vpi-s
 
 MIT for this repository's own code. Vention's SDK and firmware are not redistributed; the SDK
 copy under `plan/reference/` is git-ignored.
+
+## Machine drawing
+
+Drop the lab wireframe at `frontend/public/machine/printer.png` (1526 × 1017) and the Print view's
+machine module overlays live carriage, piston and heater markers on it. Marker positions come from
+`frontend/public/machine/calibration.json` (estimated from the drawing); press **calibrate
+markers** in the module and click the eight prompted points on the real image, then **copy
+calibration JSON** into that file. Without the image the module shows the schematic elevation.

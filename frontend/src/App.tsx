@@ -2,7 +2,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { api, operatorBase, setOperatorBase, SITE_MODE } from "./lib/api.ts";
 import { formatError, gates as computeGates } from "./lib/format.ts";
 import { checkHandshake, saveOperatorBase, UI_API_VERSION, wsUrl } from "./lib/operator.ts";
-import { loadConsole, saveConsole, VIEWS, type View } from "./lib/console.ts";
+import { clampSize, loadConsole, saveConsole, VIEWS, type ModuleSize, type View } from "./lib/console.ts";
 import type { StatusPayload } from "./lib/telemetry.ts";
 import { ErrorBoundary } from "./components/ErrorBoundary.tsx";
 import { StatusBar } from "./components/StatusBar.tsx";
@@ -58,9 +58,15 @@ export function App() {
   const n = samples.current.length;
   const pollHz = n > 2 ? ((n - 1) * 1e9) / (samples.current[n - 1] - samples.current[0]) : null;
   const c = status?.controller;
-  const r = status?.recipe;
+  const r = status?.print;
   const setView = (view: View) => setUi((u) => ({ ...u, view }));
   const setOrder = (view: View) => (ids: string[]) => setUi((u) => ({ ...u, order: { ...u.order, [view]: ids } }));
+  const setResize = (view: View) => (id: string, size: ModuleSize) => setUi((u) => {
+    const forView = { ...(u.sizes[view] ?? {}) };
+    if (size.w === 0 && size.h === 0) delete forView[id]; // reset to the class default
+    else forView[id] = clampSize(size.w, size.h);
+    return { ...u, sizes: { ...u.sizes, [view]: forView } };
+  });
   const applyBase = () => { saveOperatorBase(storage, baseInput); setOperatorBase(baseInput.trim().replace(/\/+$/, "")); setBase(operatorBase()); };
   const [dev, pin] = heaterIo.split(",").map((s) => parseInt(s.trim(), 10));
   const heaterOk = Number.isInteger(dev) && Number.isInteger(pin) && dev >= 1 && dev <= 8 && pin >= 0 && pin <= 3;
@@ -117,13 +123,13 @@ export function App() {
             </div>
           )}
         </div>
-        {ui.view === "print" && <PrintView status={status} gates={g} call={call} order={ui.order.print} onOrder={setOrder("print")} onJob={() => setView("job")} />}
-        {ui.view === "job" && <JobView status={status} gates={g} call={call} order={ui.order.job} onOrder={setOrder("job")} onStarted={() => setView("print")} />}
-        {ui.view === "control" && <ControlView status={status} gates={g} call={call} gantryStep={ui.gantryStep} pistonStep={ui.pistonStep} setGantryStep={(s) => setUi((u) => ({ ...u, gantryStep: s }))} setPistonStep={(s) => setUi((u) => ({ ...u, pistonStep: s }))} order={ui.order.control} onOrder={setOrder("control")} />}
-        {ui.view === "runs" && <RunsView status={status} gates={g} call={call} order={ui.order.runs} onOrder={setOrder("runs")} />}
+        {ui.view === "print" && <PrintView status={status} gates={g} call={call} order={ui.order.print} sizes={ui.sizes.print} onOrder={setOrder("print")} onResize={setResize("print")} onJob={() => setView("job")} />}
+        {ui.view === "job" && <JobView status={status} gates={g} call={call} order={ui.order.job} sizes={ui.sizes.job} onOrder={setOrder("job")} onResize={setResize("job")} onStarted={() => setView("print")} />}
+        {ui.view === "control" && <ControlView status={status} gates={g} call={call} gantryStep={ui.gantryStep} pistonStep={ui.pistonStep} setGantryStep={(s) => setUi((u) => ({ ...u, gantryStep: s }))} setPistonStep={(s) => setUi((u) => ({ ...u, pistonStep: s }))} order={ui.order.control} sizes={ui.sizes.control} onOrder={setOrder("control")} onResize={setResize("control")} />}
+        {ui.view === "runs" && <RunsView status={status} gates={g} call={call} order={ui.order.runs} sizes={ui.sizes.runs} onOrder={setOrder("runs")} onResize={setResize("runs")} />}
         <StatusBar state={c?.state ?? "disconnected"} backend={c?.backend ?? "none"} pollHz={pollHz} reachable={reachable}
           estop={c?.telemetry?.estop_triggered ?? null} drivesReady={c?.telemetry?.drives_ready ?? null} heaterOn={c?.heater.on ?? null} heaterOnS={c?.heater.on_s ?? 0} heaterMaxS={c?.heater.max_on_s ?? 0}
-          recActive={status?.recording.active ?? false} recRun={status?.recording.run ?? null} recipeState={r?.state ?? "idle"} version={version} />
+          recActive={status?.recording.active ?? false} recRun={status?.recording.run ?? null} printState={r?.state ?? "idle"} version={version} />
       </div>
     </ErrorBoundary>
   );
