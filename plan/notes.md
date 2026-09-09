@@ -122,3 +122,12 @@ CRITICAL FINDING — **`/health` blocks ~5.1 s** (TTFB 5.13 s; confirmed with cu
 - **`/health` blocks ~5.1 s** (io-expander-hub subscribe_failed). Fixed: long timeout + not polled
   in the protection loop (health_refresh_s default 0; fetched once at connect).
 - Reached via USB 192.168.7.2 (Ethernet 192.168.0.2 unplugged). Connect with `--ip 192.168.7.2`.
+
+## Homing finding (2026-09-09) — axes home to NEGATIVE positions
+Homed the recoater (drive 4): moved the correct direction, came to rest at **-22.0 mm**, not 0.
+So the controller's post-home coordinate is below our assumed 0, and the old soft floor [0, extent]
+faulted (`axis 4 at -22 mm outside [0.0, 930.0]`) and blocked clear_fault. Fix: `TRAVEL_FLOOR = -50`
+and default `travel_min = -30` for every axis (covers the -22 home with margin); a real overshoot
+past -30 (or past the extent) still trips. TODO before powered print moves: measure each axis's true
+homed position and set per-axis travel_min precisely (recoater ~-22; pistons rest ~0; printhead not
+yet homed this session, was at 250).
