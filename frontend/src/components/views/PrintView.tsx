@@ -3,13 +3,15 @@ import { fmtMm, fmtSecs, heightMismatch, tri, type Gates } from "../../lib/forma
 import { AXES, type AxisNo, type StatusPayload } from "../../lib/telemetry.ts";
 import { compileRecipe, describeStep, type RecipePlan } from "../../lib/recipe.ts";
 import { estimateDurationS } from "../../lib/estimate.ts";
+import { CrossSection } from "../CrossSection.tsx";
 import { Elevation } from "../Elevation.tsx";
+import { ModuleGrid, type Module } from "../Modules.tsx";
 import type { Call } from "./types.ts";
 
 const SHORT: Record<AxisNo, string> = { 1: "build", 2: "feed", 3: "printhead", 4: "recoater" };
 const SW: Record<AxisNo, string> = { 1: "sw-part", 2: "sw-feed", 3: "sw-ph", 4: "sw-rc" };
 
-function phrase(step: ReturnType<typeof compileRecipe>[number] | null, plan: RecipePlan | null): string {
+export function phrase(step: ReturnType<typeof compileRecipe>[number] | null, plan: RecipePlan | null): string {
   if (!step || !plan) return "";
   const v = step.value ?? 0;
   switch (step.kind) {
@@ -27,28 +29,25 @@ function phrase(step: ReturnType<typeof compileRecipe>[number] | null, plan: Rec
   }
 }
 
-export function PrintView({ status, gates, call, onPrepare }: { status: StatusPayload | null; gates: Gates; call: Call; onPrepare: () => void }) {
+export function PrintView({ status, gates, call, order, onOrder, onJob }: { status: StatusPayload | null; gates: Gates; call: Call; order?: string[]; onOrder: (ids: string[]) => void; onJob: () => void }) {
   const c = status?.controller;
   const r = status?.recipe;
   const t = c?.telemetry ?? null;
+  const job = status?.job ?? null;
   const plan = (r?.plan as unknown as RecipePlan | null) ?? null;
   const steps = plan ? compileRecipe(plan) : [];
   const cur = r?.current_step ? steps[r.current_step.index] ?? null : null;
   const curAction = cur && cur.kind === "wait" ? steps.slice(0, cur.index).reverse().find((s) => s.kind !== "wait" && s.kind !== "mark") ?? cur : cur;
-  const next = cur ? steps.slice(cur.index + 1).find((s) => s.kind !== "wait" && s.kind !== "mark" && s.kind !== "set_speed" && s.kind !== "set_accel") ?? null : null;
+  const next = cur ? steps.slice(cur.index + 1).find((s) => !["wait", "mark", "set_speed", "set_accel"].includes(s.kind)) ?? null : null;
   const active = !!r && (r.state === "running" || r.state === "paused");
   const isMacro = !!r?.macro;
   const total = plan ? estimateDurationS(plan) : 0;
   const remaining = r && total ? Math.max(0, total * (1 - r.step_index / Math.max(r.n_steps, 1))) : null;
   const thickness = plan && r ? (plan[r.phase as "precoat" | "printing" | "postcoat"]?.layer_thickness_mm ?? 2) : 2;
   const mismatch = r ? heightMismatch(r.part_height_measured_mm, r.part_height_mm, thickness) : false;
-  const layerFrac = (() => {
-    if (!cur || !r) return 0;
-    let s0 = -1; for (let i = cur.index; i >= 0; i--) if (steps[i].label === "layer_start") { s0 = i; break; }
-    if (s0 < 0) return 0;
-    const end = steps.findIndex((s, i) => i > s0 && s.label === "layer_end");
-    return end > s0 ? (cur.index - s0) / (end - s0) : 0;
-  })();
+  const printLayer = r && r.phase === "printing" ? r.layer - (plan?.precoat.n_layers ?? 0) : 0;
+  const shownLayer = active && printLayer > 0 ? printLayer : (job ? 1 : 0);
+  const pct = r && r.n_steps ? Math.round((100 * r.step_index) / r.n_steps) : 0;
   const label = !status ? "OFFLINE" : isMacro && active ? r!.macro!.replace("_", " ").toUpperCase() : r?.state === "running" ? (r.dry_run ? "DRY RUN" : "PRINTING") : r?.state === "paused" ? "PAUSED" : (r?.state ?? "idle").toUpperCase();
   const problems: Array<[string, "bad" | "warn"]> = [];
   if (t?.estop_triggered) problems.push(["e-stop asserted", "bad"]);
@@ -56,42 +55,47 @@ export function PrintView({ status, gates, call, onPrepare }: { status: StatusPa
   if (t?.drives_ready === false) problems.push(["drives not ready", "bad"]);
   if (t && !t.health_ok) problems.push(["controller health bad", "bad"]);
   if (c?.read_error) problems.push(["telemetry read error", "bad"]);
-  if (c?.heater.on) problems.push([`heater on ${fmtSecs(c.heater.on_s)} / ${fmtSecs(c.heater.max_on_s)}`, "warn"]);
-  return (
-    <section className="view print">
-      <div className="run">
-        <div className="h">Current print{status?.recording.run ? ` · ${status.recording.run.replace(/^\d{8}_\d{6}_/, "")}` : ""}</div>
-        <div className="state"><span className={`big ${r?.state === "fault" ? "fault" : ""}`}>{label}</span>{r?.reason && <span className="sub">{r.reason}</span>}</div>
-        {!isMacro && <div className="layer-no">{r?.layer ?? 0}<small> / {r?.n_layers || plan?.printing.n_layers || 0}</small></div>}
-        {!isMacro && <div className="layer-cap">{active ? `layer · ${r!.phase}` : "layers"}</div>}
-        <div className="bar"><i className="layer" style={{ width: `${Math.round(layerFrac * 100)}%` }} /></div>
-        <div className="bar-lbl">this layer {Math.round(layerFrac * 100)}%</div>
-        <div className="bar"><i style={{ width: `${r && r.n_steps ? Math.round((100 * r.step_index) / r.n_steps) : 0}%` }} /></div>
-        <div className="bar-lbl">{isMacro ? "macro" : "whole print"} {r && r.n_steps ? Math.round((100 * r.step_index) / r.n_steps) : 0}%</div>
+  if (job && !job.complete) problems.push([`job missing pages ${job.missing_pages.slice(0, 5).join(", ")}`, "bad"]);
+  const narr = active ? `${isMacro ? r!.macro!.replace("_", " ") : `layer ${r!.layer} of ${r!.n_layers}`} · ${phrase(curAction, plan)}` : c?.state === "fault" ? "faulted — follow the steps in the banner" : gates.armed ? "in control · idle" : gates.connected ? "read-only" : "not connected";
+
+  const modules: Module[] = [
+    { id: "layer", title: job ? `${job.name} · layer ${shownLayer} of ${job.layer_count}` : "layer", size: "l", node: (
+      <>
+        <CrossSection job={job} layer={shownLayer} />
+        <div className="bar"><i className="layer" style={{ width: `${job && job.layer_count ? Math.round((100 * (active ? Math.max(printLayer - 1, 0) : 0)) / job.layer_count) : 0}%` }} /></div>
+        <div className="bar-lbl">{job ? `${active ? Math.max(printLayer - 1, 0) : 0} of ${job.layer_count} layers printed` : "no job"}</div>
+      </>
+    ) },
+    { id: "run", title: "print", size: "s", node: (
+      <>
+        <div className="state" style={{ margin: "0 0 14px" }}><span className={`big ${r?.state === "fault" ? "fault" : ""}`}>{label}</span></div>
+        {r?.reason && <div className="hint">{r.reason}</div>}
+        <div className="bar" style={{ marginTop: 10 }}><i style={{ width: `${pct}%` }} /></div>
+        <div className="bar-lbl">{pct}% · step {r?.step_index ?? 0} of {r?.n_steps ?? 0}</div>
         <div className="kv">
           <span>elapsed</span><span>{fmtSecs(r?.elapsed_s)}</span>
           <span>remaining</span><span>{active && remaining !== null ? `~${fmtSecs(remaining)}` : "—"}</span>
-          <span>part height</span><span className={mismatch ? "warnv" : ""}>{fmtMm(r?.part_height_measured_mm, 1)}{mismatch ? ` (recipe ${fmtMm(r?.part_height_mm, 1)})` : ""}</span>
-          <span>heater</span><span className={c?.heater.on ? "bad" : ""}>{tri(c?.heater.on, "ON", "off", "unknown")}</span>
+          <span>part height</span><span className={mismatch ? "warnv" : ""}>{fmtMm(r?.part_height_measured_mm, 1)}</span>
+          <span>heater</span><span className={c?.heater.on ? "bad" : ""}>{tri(c?.heater.on, `ON ${fmtSecs(c?.heater.on_s)}`, "off", "unknown")}</span>
         </div>
-        {mismatch && <div className="warnline">The build piston was moved outside the recipe.</div>}
-        <div className="actions">
+        <div className="actions tight">
           {r?.state === "running" && <button className="cta" disabled={!gates.connected} onClick={() => call("pause", api.recipePause)}>PAUSE</button>}
           {r?.state === "paused" && <button className="cta primary" disabled={!gates.controllable} onClick={() => call(r.single_step ? "step" : "resume", r.single_step ? api.recipeStep : api.recipeResume)}>{r.single_step ? "NEXT STEP" : "RESUME"}</button>}
           {active ? <button className="cta danger" disabled={!gates.connected} onClick={() => call("abort", api.recipeAbort)}>ABORT</button>
-            : <button className="cta primary" onClick={onPrepare}>PREPARE A PRINT</button>}
+            : <button className="cta primary" style={{ gridColumn: "1 / -1" }} onClick={onJob}>{job ? "START THIS JOB" : "CHOOSE A JOB"}</button>}
         </div>
-        {active && r?.single_step && r.state === "paused" && <div className="lock">single-step: press NEXT STEP for each move, or RESUME to run on</div>}
-      </div>
-      <div className="machine">
-        <Elevation status={status} partZeroMm={r?.part_zero_mm ?? null} />
+      </>
+    ) },
+    { id: "machine", title: "machine", size: "m", node: (
+      <>
+        <div className="mini-el"><Elevation status={status} partZeroMm={r?.part_zero_mm ?? null} /></div>
         <div className="readout">{AXES.map((a) => <div key={a}><i className={SW[a]} />{SHORT[a]}<b>{t ? `${(t.positions[String(a)] ?? 0).toFixed(1)} mm` : "—"}</b></div>)}</div>
-        <div className="narr">
-          {active ? `${isMacro ? r!.macro!.replace("_", " ") : `Layer ${r!.layer}`} · ${phrase(curAction, plan)}` : c?.state === "fault" ? "Faulted. Follow the steps in the banner." : gates.armed ? "Armed and idle." : gates.connected ? "Connected, read-only. ARM to take control." : "Not connected."}
-          {active && next && <div className="next">next: {phrase(next, plan)}</div>}
-        </div>
-        {problems.length > 0 && <div className="chips">{problems.map(([txt, cls]) => <span key={txt} className={`chip ${cls}`}>{txt}</span>)}</div>}
-      </div>
-    </section>
-  );
+        <div className="narr" style={{ marginTop: 14, fontSize: 14 }}>{narr}{active && next && <div className="next">next: {phrase(next, plan)}</div>}</div>
+      </>
+    ) },
+    { id: "problems", title: "attention", size: "s", hidden: problems.length === 0 && !mismatch, node: (
+      <div className="chips" style={{ marginTop: 0 }}>{problems.map(([txt, cls]) => <span key={txt} className={`chip ${cls}`}>{txt}</span>)}{mismatch && <span className="chip warn">part height differs from recipe ({fmtMm(r?.part_height_mm, 1)})</span>}</div>
+    ) },
+  ];
+  return <div className="view modules-view"><ModuleGrid modules={modules} order={order} onOrder={onOrder} /></div>;
 }

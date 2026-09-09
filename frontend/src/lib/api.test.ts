@@ -45,6 +45,9 @@ test("every route: method + path + body locked", async () => {
     [() => api.recordingStart({ name: "a", notes: "" }), "POST", "/api/recording/start", { name: "a", notes: "" }],
     [() => api.recordingStop(), "POST", "/api/recording/stop", undefined],
     [() => api.recordings(), "GET", "/api/recordings", undefined],
+    [() => api.jobs(), "GET", "/api/jobs", undefined],
+    [() => api.selectJob("/x/y"), "POST", "/api/jobs/select", { path: "/x/y" }],
+    [() => api.clearJob(), "POST", "/api/jobs/clear", undefined],
     [() => api.macro("load_cart"), "POST", "/api/macro/load_cart", undefined],
     [() => api.events(), "GET", "/api/events", undefined],
     [() => api.autoLog(), "GET", "/api/auto-log", undefined],
@@ -63,4 +66,9 @@ test("every route: method + path + body locked", async () => {
 test("errors carry status and FastAPI detail", async () => {
   (globalThis as unknown as { fetch: typeof fetch }).fetch = (async () => new Response(JSON.stringify({ detail: "not armed" }), { status: 409 })) as typeof fetch;
   await assert.rejects(api.arm(), (e: Error) => /409 not armed/.test(e.message));
+});
+
+test("layer url", async () => {
+  const { api: a } = await import("./api.ts");
+  assert.equal(a.jobLayerUrl(7), "/api/jobs/current/layers/7.png");
 });

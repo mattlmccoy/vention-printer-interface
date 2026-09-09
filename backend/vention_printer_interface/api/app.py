@@ -17,7 +17,7 @@ from typing import Any
 
 from fastapi import FastAPI, HTTPException, Request, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import FileResponse, JSONResponse
+from fastapi.responses import FileResponse, JSONResponse, Response
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 
@@ -32,6 +32,7 @@ from vention_printer_interface.control.recipe_store import load_recipe, save_rec
 from vention_printer_interface.control.safety import HARD_BOUNDS, SafetyLimits
 from vention_printer_interface.device import create_transport, registered_transports
 from vention_printer_interface.device.printer import PrinterDevice
+from vention_printer_interface.jobs.store import JobInfo, JobStore, layer_png, load_job
 from vention_printer_interface.protocol import routes as r
 from vention_printer_interface.recording.recorder import Recorder
 
@@ -130,6 +131,10 @@ class AutoLogBody(BaseModel):
     enabled: bool
 
 
+class JobSelectBody(BaseModel):
+    path: str
+
+
 def _tcp_open(ip: str, port: int, timeout_s: float = 0.5) -> bool:
     try:
         with socket.create_connection((ip, port), timeout=timeout_s):
@@ -165,8 +170,10 @@ def create_app(
     heater_io: tuple[int, int] | None = None,
     recipe_min_wait_s: float = 0.5,
     recipe_step_timeout_s: float = 120.0,
+    jobs_roots: list[Path] | None = None,
 ) -> FastAPI:
     root = experiments_root or Path.cwd() / "experiments"
+    jobs = JobStore(jobs_roots or [root.parent / "jobs"])
 
     @asynccontextmanager
     async def lifespan(app: FastAPI) -> AsyncIterator[None]:
@@ -207,6 +214,7 @@ def create_app(
         app.state.events = events
         app.state.controller, app.state.recorder, app.state.recipe = controller, recorder, recipe
         app.state.recipe_plan = load_recipe(root, controller.limits)
+        app.state.job = None
         app.state.backend = "none"
         app.state.default_heater_io = heater_io or DEFAULT_HEATER_IO
         app.state.axis_motion = _fresh_axis_motion()
@@ -243,6 +251,14 @@ def create_app(
     def ev(label: str, data: dict[str, Any] | None = None) -> None:
         app.state.events.append(label, data)
 
+    def job_payload() -> dict[str, Any] | None:
+        job: JobInfo | None = app.state.job
+        if job is None:
+            return None
+        snap = recipe().snapshot()
+        current = snap["layer"] if snap["state"] != "idle" and snap["phase"] == "printing" else 0
+        return {**job.to_dict(), "current_layer": current}
+
     def recipe_payload() -> dict[str, Any]:
         plan: RecipePlan = app.state.recipe_plan
         return {
@@ -264,6 +280,7 @@ def create_app(
             "controller": snap,
             "axis_motion": {str(k): v for k, v in app.state.axis_motion.items()},
             "recipe": recipe().snapshot(),
+            "job": job_payload(),
             "auto_log": app.state.auto_log,
             "events": app.state.events.recent(50),
             "recording": {
@@ -528,6 +545,54 @@ def create_app(
     def recipe_abort() -> dict[str, Any]:
         recipe().abort()
         return recipe().snapshot()
+
+    # ---- sliced jobs (Meteor RIP folders) --------------------------------------------------
+    @app.get("/api/jobs")
+    def list_jobs() -> dict[str, Any]:
+        return {"jobs": [j.to_dict() for j in jobs.scan()], "roots": [str(r) for r in jobs.roots]}
+
+    @app.post("/api/jobs/select")
+    def select_job(body: JobSelectBody) -> dict[str, Any]:
+        path = Path(body.path)
+        if not jobs.within_roots(path) or not (path / "job_info.json").is_file():
+            raise HTTPException(
+                400, "job must be a job_info.json folder under a configured jobs root"
+            )
+        if recipe().state in (RecipeState.RUNNING, RecipeState.PAUSED):
+            raise HTTPException(409, "a print is running; abort it before changing the job")
+        try:
+            job = load_job(path)
+        except (OSError, ValueError, KeyError) as exc:
+            raise HTTPException(400, f"could not read job: {exc}") from exc
+        app.state.job = job
+        current = app.state.recipe_plan.to_dict()
+        current["printing"] = {**current["printing"], **job.recipe_patch()["printing"]}
+        plan = RecipePlan.bounded(current, ctrl().limits)
+        app.state.recipe_plan = plan
+        save_recipe(root, plan)
+        ev(
+            "job_selected",
+            {"job": job.name, "layers": job.layer_count, "layer_mm": job.layer_height_mm},
+        )
+        return {"job": job_payload(), "recipe": recipe_payload()}
+
+    @app.post("/api/jobs/clear")
+    def clear_job() -> dict[str, Any]:
+        app.state.job = None
+        return {"job": None}
+
+    @app.get("/api/jobs/current/layers/{layer}.png")
+    def job_layer_png(layer: int) -> Response:
+        job: JobInfo | None = app.state.job
+        if job is None:
+            raise HTTPException(404, "no job selected")
+        try:
+            data = layer_png(job, layer)
+        except IndexError as exc:
+            raise HTTPException(404, str(exc)) from exc
+        return Response(
+            content=data, media_type="image/png", headers={"Cache-Control": "max-age=3600"}
+        )
 
     @app.post("/api/macro/{name}")
     def run_macro(name: str) -> dict[str, Any]:
