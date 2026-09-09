@@ -70,5 +70,5 @@ test("errors carry status and FastAPI detail", async () => {
 
 test("layer url", async () => {
   const { api: a } = await import("./api.ts");
-  assert.equal(a.jobLayerUrl(7), "/api/jobs/current/layers/7.png");
+  assert.equal(a.jobLayerUrl(7, "20260505_x"), "/api/jobs/current/layers/7.png?job=20260505_x");
 });

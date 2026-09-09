@@ -7,7 +7,7 @@ export function CrossSection({ job, layer, caption }: { job: JobSnap | null; lay
   const n = Math.min(Math.max(layer, 1), job.layer_count);
   return (
     <div className="xsec">
-      <img src={api.jobLayerUrl(n)} alt={`layer ${n} cross-section`} />
+      <img src={api.jobLayerUrl(n, job.folder)} alt={`layer ${n} cross-section`} />
       <div className="cap">{caption ?? <><b>{job.name}</b> · layer {n} of {job.layer_count} · {job.bbox_mm.x} × {job.bbox_mm.y} mm at {job.dpi} dpi</>}</div>
     </div>
   );
