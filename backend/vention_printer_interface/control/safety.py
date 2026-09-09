@@ -33,6 +33,7 @@ MAX_ACCEL_BOUNDS: dict[int, Bound] = {
 HEATER_MAX_ON_BOUNDS: Bound = (5.0, 600.0)
 TELEMETRY_TIMEOUT_BOUNDS: Bound = (0.5, 5.0)
 NEAR_LIMIT_BOUNDS: Bound = (0.0, 20.0)
+TRAVEL_TOLERANCE_BOUNDS: Bound = (0.0, 5.0)  # encoder drift at the ends (real: ~0.1 mm)
 
 HARD_BOUNDS: dict[str, Any] = {
     "max_speed": MAX_SPEED_BOUNDS,  # mm/s
@@ -41,6 +42,7 @@ HARD_BOUNDS: dict[str, Any] = {
     "heater_max_on_s": HEATER_MAX_ON_BOUNDS,
     "telemetry_timeout_s": TELEMETRY_TIMEOUT_BOUNDS,
     "near_limit_mm": NEAR_LIMIT_BOUNDS,
+    "travel_tolerance_mm": TRAVEL_TOLERANCE_BOUNDS,
 }
 
 
@@ -75,6 +77,7 @@ class SafetyLimits:
     heater_max_on_s: float = 120.0
     telemetry_timeout_s: float = 2.0
     near_limit_mm: float = 5.0  # warning band
+    travel_tolerance_mm: float = 2.0  # a hard fault only past the ends by more than this
 
     @classmethod
     def bounded(cls, **kw: Any) -> SafetyLimits:
@@ -100,6 +103,7 @@ class SafetyLimits:
             heater_max_on_s=scalar("heater_max_on_s", HEATER_MAX_ON_BOUNDS),
             telemetry_timeout_s=scalar("telemetry_timeout_s", TELEMETRY_TIMEOUT_BOUNDS),
             near_limit_mm=scalar("near_limit_mm", NEAR_LIMIT_BOUNDS),
+            travel_tolerance_mm=scalar("travel_tolerance_mm", TRAVEL_TOLERANCE_BOUNDS),
         )
 
     def _axis(self, table: dict[int, float], axis: int) -> float:
@@ -125,6 +129,7 @@ class SafetyLimits:
             "heater_max_on_s": self.heater_max_on_s,
             "telemetry_timeout_s": self.telemetry_timeout_s,
             "near_limit_mm": self.near_limit_mm,
+            "travel_tolerance_mm": self.travel_tolerance_mm,
         }
 
 
@@ -158,7 +163,8 @@ def evaluate(
     for axis, pos in telemetry.positions.items():
         lo = limits.travel_min.get(axis, 0.0)
         hi = limits.travel_max.get(axis, TRAVEL_MM.get(axis, 0.0))
-        if pos < lo - 0.01 or pos > hi + 0.01:
+        tol = limits.travel_tolerance_mm
+        if pos < lo - tol or pos > hi + tol:
             reasons.append(f"axis {axis} at {pos:.2f} mm outside [{lo:.1f}, {hi:.1f}]")
         elif (lo > 0.0 and pos - lo < limits.near_limit_mm) or hi - pos < limits.near_limit_mm:
             # the home end (0) is where every axis parks; only a raised travel_min is a limit

@@ -89,3 +89,36 @@ VERIFIED from files: hardware V2 four-drive, firmware 2.14.x, controller IP 192.
 VERIFIED from vendor docs: SDK is meant to run on an external PC; MQTT broker open; HTTP methods supported.
 UNVERIFIED (need live probe): reachability from this Mac (needs Mac adapter on 192.168.0.x or USB 192.168.7.x); exact JSON response shapes; MQTT accepts external clients on 1883 with no auth; `drive/+/motionComplete` payload; IO module id/pin for heater relay; `/health` keys; waitForMotionCompletion quirk root cause.
 Rule: no recipe-engine code runs against hardware until `vmm-probe` captures these and the fixtures are replaced with captured samples.
+
+## Source 7: LIVE PROBE of the real controller (2026-09-09, via USB 192.168.7.2)
+Connected via the DEFAULT/USB port (192.168.7.2), NOT Ethernet (192.168.0.2 unreachable — the
+Ethernet port is unconfigured/unplugged). Mac has two interfaces on 192.168.7.x (en13 .1, en16 .108).
+HTTP :8000, MQTT :1883 both open; MQTT CONNACK ok, 10 topics subscribed.
+
+VERIFIED reply shapes (all fast, ~20-30 ms) — our parsers handle them:
+- `/health` → `{"time_server_started_at","mqtt_services_running":{"services/mm-io-expander-hub/version":"\"subscribe_failed\"","services/mm-vention-control/version":"v2.14.1"},"devices":{"devices/io-expander/1/available":"true","io-expander/2":"false","3":"false"},"motion_controller_reachable":true,"estop_triggered":false,...}`. Version parses to (2,14,1), async_supported=True. **IO module 1 is present (2,3 absent) → heater IO is almost certainly module 1.**
+- `/smartDrives/position` → `{"X":-0.1,"Y":0.1,"Z":250,"W":-0.1}` (Z=250, not homed). Parses.
+- `/smartDrives/complete/X` → `{"complete":true}`. Parses.
+- `/smartDrives/maxSpeed/1` → `{"maxSpeed":100}`; `/maxAcceleration/1` → `{"maxAcceleration":100}`. Parse.
+- `/smartDrives/get/actualSpeed` → `{"actual speed":{"1":0,"2":0,"3":0,"4":0}}` (note key "actual speed" with a space).
+- `V0` → `echo: Motion Status = COMPLETED ok, {"1": true, "2": true, "3": true, "4": true}` — has "echo"+"ok"+"COMPLETED"; parse_motion_status/parse_echo_ok OK. (Trailing JSON per-axis is extra; we only check "COMPLETED".)
+- `M119` → `echo ok:\n x_min: open \n x_max: open ...` for x/y/z/w min+max. parse_endstops regex OK.
+- `/smartDrives/configuration?drive=1` → `{"axisType":"enclosed_ball_screw","gain":16,"gearRatio":1,"motorCurrent":10,"loop":"closed","tuningProfile":"default","direction":"negative","brake":true,"motorSize":"Large Servo","parent":1}`. **DISCREPANCY vs the Control Center export (configuration.json): the live route uses `gain`/`loop`/`direction`, has NO `friendlyName` and NO `homingSpeed`.** `identify()` tolerates this (keeps our name/homingSpeed defaults); axis names come from our KNOWN_AXES, not the controller.
+
+CRITICAL FINDING — **`/health` blocks ~5.1 s** (TTFB 5.13 s; confirmed with curl AND a raw socket, so it is the controller, not httpx). Cause: the health handler waits on the failing `mm-io-expander-hub` subscribe (`"subscribe_failed"`). Every other route is instant. Fix: give `/health` a long timeout and DO NOT poll it in the protection loop (was every 10 ticks → would hold the io-lock 5 s and trip the 2 s stale-telemetry fault). Health is now fetched once at connect; ongoing protection uses position reads (fail→fault) + MQTT estop/drives.
+
+## Probe reconciliation (2026-09-09) — data-contract items now VERIFIED
+- MQTT fully works. **`drive/N/motionComplete` and `drive/N/error` ARE published** (were UNVERIFIED
+  from Vention docs): motionComplete="1" idle, error="[]". A push alternative to polling V0.
+- estop/status="false", smartDrives/areReady="true", devices/io-expander/1/available="true"
+  (2-8 false). **Heater IO is on module 1** — pin still to identify with the coil disconnected.
+- Axis ROLE map UNCHANGED and correct: drive 1 Part Piston, 2 Feed Piston (both Large Servo +
+  brake, now enclosed_ball_screw gain 16 — re-fitted from the belts in configuration.json), 3
+  Printhead Gantry, 4 Recoater Gantry (Medium Servo, no brake, axisType "custom"). Our KNOWN_AXES
+  names/roles hold; TRAVEL extents (145/145/840/930 mm from V1.py) must be re-measured before
+  powered moves since the pistons are now ball-screws.
+- Live drive config route has NO friendlyName/homingSpeed (uses gain/loop/direction); identify()
+  tolerates this. Positions at probe: X=-0.1 Y=0.1 Z=250 W=-0.1 (Z/printhead not homed).
+- **`/health` blocks ~5.1 s** (io-expander-hub subscribe_failed). Fixed: long timeout + not polled
+  in the protection loop (health_refresh_s default 0; fetched once at connect).
+- Reached via USB 192.168.7.2 (Ethernet 192.168.0.2 unplugged). Connect with `--ip 192.168.7.2`.

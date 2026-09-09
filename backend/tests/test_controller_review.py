@@ -213,8 +213,11 @@ def test_reattach_does_not_inherit_a_stuck_poll_thread_fault() -> None:
 
 
 # M2 ---------------------------------------------------------------------------------------------
-def test_health_is_refreshed_periodically() -> None:
-    c, t = make()
+def test_health_is_refreshed_when_enabled() -> None:
+    # /health is slow on the real controller, so periodic refresh is opt-in (health_refresh_s).
+    t = SimulatedTransport(realtime=True)
+    c = Controller(poll_interval_s=0.05, limits=SafetyLimits(), health_refresh_s=0.1)
+    c.attach_device(PrinterDevice(t, heater_io=(1, 2)), backend="simulated")
     try:
         tel(c)
         t.health_reachable = False

@@ -29,7 +29,8 @@ from vention_printer_interface.device.printer import PrinterDevice, Telemetry
 
 log = logging.getLogger(__name__)
 Listener = Callable[[dict[str, Any]], None]
-HEALTH_EVERY_N_TICKS = 10
+# /health is slow on the real controller, so it is NOT polled in the protection loop by default
+# (health_refresh_s=0). It is fetched once at connect; a slow refresh can be enabled explicitly.
 ESTOP_READY_WAIT_S = 10.0  # SDK resetSystem waits for areSmartDrivesReady (MachineMotion.py:2459)
 
 
@@ -41,8 +42,16 @@ class ControllerState(enum.StrEnum):
 
 
 class Controller:
-    def __init__(self, *, poll_interval_s: float = 0.2, limits: SafetyLimits | None = None) -> None:
+    def __init__(
+        self,
+        *,
+        poll_interval_s: float = 0.2,
+        limits: SafetyLimits | None = None,
+        health_refresh_s: float = 0.0,
+    ) -> None:
         self.poll_interval_s = poll_interval_s
+        self.health_refresh_s = health_refresh_s
+        self._last_health = 0.0
         self.limits = limits or SafetyLimits()
         self._device: PrinterDevice | None = None
         self.backend = "none"
@@ -81,7 +90,7 @@ class Controller:
             self._fault_reasons, self._telemetry, self._read_error = (), None, None
             self._heater_on_since = self._heater_cmd_on_since = None
             self._move_pending, self._ticks = False, 0
-            self._last_read_done = time.monotonic()
+            self._last_read_done = self._last_health = time.monotonic()
             self._stop = stop
         self._thread = threading.Thread(
             target=self._loop, args=(device, stop), name="vpi-poll", daemon=True
@@ -127,9 +136,13 @@ class Controller:
             return
         previous_read = self._last_read_done
         self._ticks += 1
+        refresh = (
+            self.health_refresh_s > 0
+            and time.monotonic() - self._last_health >= self.health_refresh_s
+        )
         try:
             with self._io_lock:
-                tel = dev.read_telemetry(refresh_health=self._ticks % HEALTH_EVERY_N_TICKS == 1)
+                tel = dev.read_telemetry(refresh_health=refresh)
         except Exception as exc:  # noqa: BLE001 - any read error is a protection event
             if stop.is_set() or dev is not self._device:
                 return  # orphaned thread: its device is gone, its result is meaningless
@@ -142,8 +155,12 @@ class Controller:
         if stop.is_set() or dev is not self._device:
             return
         now = time.monotonic()
-        age = now - previous_read  # measured AFTER the read: a slow reply is a late sample (H6)
+        # A health refresh includes a slow /health call; don't judge that tick stale on its own
+        # duration. Normal ticks measure age after the read (review H6).
+        age = self.poll_interval_s if refresh else now - previous_read
         self._last_read_done = now
+        if refresh:
+            self._last_health = now
         with self._lock:
             self._read_error = None
             self._telemetry = tel

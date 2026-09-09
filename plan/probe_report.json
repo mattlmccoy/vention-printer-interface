@@ -1,0 +1,219 @@
+{
+  "backend": "machinemotion",
+  "ip": "192.168.7.2",
+  "writes_performed": [],
+  "captured_utc": "2026-09-09T17:22:07Z",
+  "health": {
+    "version": "2.14.1",
+    "async_supported": true,
+    "estop_triggered": false,
+    "raw": {
+      "time_server_started_at": "2026-09-09T15:32:41.045Z",
+      "mqtt_services_running": {
+        "services/mm-io-expander-hub/version": "\"subscribe_failed\"",
+        "services/mm-vention-control/version": "v2.14.1"
+      },
+      "devices": {
+        "devices/io-expander/1/available": "true",
+        "devices/io-expander/2/available": "false",
+        "devices/io-expander/3/available": "false"
+      },
+      "ip": [],
+      "motion_controller_reachable": true,
+      "io_expander_hub_running": "io_expander_hub",
+      "estop_triggered": false,
+      "time_now": "2026-09-09T17:24:38.853Z"
+    }
+  },
+  "drive_configs": {
+    "1": {
+      "axisType": "enclosed_ball_screw",
+      "gain": 16,
+      "gearRatio": 1,
+      "motorCurrent": 10,
+      "loop": "closed",
+      "tuningProfile": "default",
+      "direction": "negative",
+      "brake": true,
+      "motorSize": "Large Servo",
+      "parent": 1
+    },
+    "2": {
+      "axisType": "enclosed_ball_screw",
+      "gain": 16,
+      "gearRatio": 1,
+      "motorCurrent": 10,
+      "loop": "closed",
+      "tuningProfile": "default",
+      "direction": "negative",
+      "brake": true,
+      "motorSize": "Large Servo",
+      "parent": 2
+    },
+    "3": {
+      "axisType": "custom",
+      "gain": 16,
+      "gearRatio": 1,
+      "motorCurrent": 10,
+      "loop": "closed",
+      "tuningProfile": "default",
+      "direction": "positive",
+      "brake": false,
+      "motorSize": "Medium Servo",
+      "parent": 3
+    },
+    "4": {
+      "axisType": "custom",
+      "gain": 16,
+      "gearRatio": 1,
+      "motorCurrent": 10,
+      "loop": "closed",
+      "tuningProfile": "default",
+      "direction": "positive",
+      "brake": false,
+      "motorSize": "Medium Servo",
+      "parent": 4
+    }
+  },
+  "max_speed": {
+    "1": {
+      "maxSpeed": 100
+    },
+    "2": {
+      "maxSpeed": 100
+    },
+    "3": {
+      "maxSpeed": 100
+    },
+    "4": {
+      "maxSpeed": 100
+    }
+  },
+  "max_accel": {
+    "1": {
+      "maxAcceleration": 100
+    },
+    "2": {
+      "maxAcceleration": 100
+    },
+    "3": {
+      "maxAcceleration": 100
+    },
+    "4": {
+      "maxAcceleration": 100
+    }
+  },
+  "endstops": {
+    "x_min": "open",
+    "x_max": "open",
+    "y_min": "open",
+    "y_max": "open",
+    "z_min": "open",
+    "z_max": "open",
+    "w_min": "open",
+    "w_max": "open"
+  },
+  "motion_status_raw": "echo: Motion Status = COMPLETED ok, {\"1\": true, \"2\": true, \"3\": true, \"4\": true}",
+  "samples": [
+    {
+      "host_timestamp_ns": 1788974533142690000,
+      "positions_raw": "{\"X\":-0.1,\"Y\":0.1,\"Z\":250,\"W\":-0.1}",
+      "positions": {
+        "1": -0.1,
+        "2": 0.1,
+        "3": 250.0,
+        "4": -0.1
+      },
+      "complete_raw": {
+        "1": "{\"complete\":true}",
+        "2": "{\"complete\":true}",
+        "3": "{\"complete\":true}",
+        "4": "{\"complete\":true}"
+      }
+    },
+    {
+      "host_timestamp_ns": 1788974533734076000,
+      "positions_raw": "{\"X\":-0.1,\"Y\":0.1,\"Z\":250,\"W\":-0.1}",
+      "positions": {
+        "1": -0.1,
+        "2": 0.1,
+        "3": 250.0,
+        "4": -0.1
+      },
+      "complete_raw": {
+        "1": "{\"complete\":true}",
+        "2": "{\"complete\":true}",
+        "3": "{\"complete\":true}",
+        "4": "{\"complete\":true}"
+      }
+    },
+    {
+      "host_timestamp_ns": 1788974534310727000,
+      "positions_raw": "{\"X\":-0.1,\"Y\":0.1,\"Z\":250,\"W\":-0.1}",
+      "positions": {
+        "1": -0.1,
+        "2": 0.1,
+        "3": 250.0,
+        "4": -0.1
+      },
+      "complete_raw": {
+        "1": "{\"complete\":true}",
+        "2": "{\"complete\":true}",
+        "3": "{\"complete\":true}",
+        "4": "{\"complete\":true}"
+      }
+    },
+    {
+      "host_timestamp_ns": 1788974534896833000,
+      "positions_raw": "{\"X\":-0.1,\"Y\":0.1,\"Z\":250,\"W\":-0.1}",
+      "positions": {
+        "1": -0.1,
+        "2": 0.1,
+        "3": 250.0,
+        "4": -0.1
+      },
+      "complete_raw": {
+        "1": "{\"complete\":true}",
+        "2": "{\"complete\":true}",
+        "3": "{\"complete\":true}",
+        "4": "{\"complete\":true}"
+      }
+    },
+    {
+      "host_timestamp_ns": 1788974535478727000,
+      "positions_raw": "{\"X\":-0.1,\"Y\":0.1,\"Z\":250,\"W\":-0.1}",
+      "positions": {
+        "1": -0.1,
+        "2": 0.1,
+        "3": 250.0,
+        "4": -0.1
+      },
+      "complete_raw": {
+        "1": "{\"complete\":true}",
+        "2": "{\"complete\":true}",
+        "3": "{\"complete\":true}",
+        "4": "{\"complete\":true}"
+      }
+    }
+  ],
+  "mqtt": {
+    "estop/status": "false",
+    "smartDrives/areReady": "true",
+    "devices/io-expander/1/available": "true",
+    "devices/io-expander/2/available": "false",
+    "devices/io-expander/3/available": "false",
+    "devices/io-expander/4/available": "false",
+    "devices/io-expander/5/available": "false",
+    "devices/io-expander/6/available": "false",
+    "devices/io-expander/7/available": "false",
+    "devices/io-expander/8/available": "false",
+    "drive/1/motionComplete": "1",
+    "drive/1/error": "[]",
+    "drive/2/motionComplete": "1",
+    "drive/2/error": "[]",
+    "drive/3/motionComplete": "1",
+    "drive/3/error": "[]",
+    "drive/4/motionComplete": "1",
+    "drive/4/error": "[]"
+  }
+}

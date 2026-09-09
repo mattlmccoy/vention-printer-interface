@@ -41,9 +41,18 @@ def test_drives_not_ready_trips_only_when_move_pending() -> None:
     assert evaluate(tel(drives_ready=False), SafetyLimits(), 0.1, 0, True).trip is True
 
 
+def test_encoder_drift_at_ends_does_not_fault() -> None:
+    # real controller rests at ~-0.1 mm near home; a small tolerance must not fault (2026-09-09)
+    lim = SafetyLimits()
+    assert not evaluate(tel(positions={1: -0.1, 2: 0.1, 3: 250, 4: -0.1}), lim, 0.1, 0, False).trip
+    # but a real overshoot past the tolerance still trips
+    assert evaluate(tel(positions={1: -3.0, 2: 10, 3: 10, 4: 10}), lim, 0.1, 0, False).trip
+    assert evaluate(tel(positions={1: 10, 2: 10, 3: 10, 4: 933}), lim, 0.1, 0, False).trip
+
+
 def test_soft_travel_limit_trips_and_warns() -> None:
     lim = SafetyLimits()
-    assert evaluate(tel(positions={1: 10, 2: 10, 3: 10, 4: 931}), lim, 0.1, 0, False).trip
+    assert evaluate(tel(positions={1: 10, 2: 10, 3: 10, 4: 934}), lim, 0.1, 0, False).trip
     w = evaluate(tel(positions={1: 10, 2: 10, 3: 10, 4: 927}), lim, 0.1, 0, False)
     assert not w.trip and any("near" in x for x in w.warnings)
     # sitting at home (0) is normal, not a warning; a raised travel_min is warned about
