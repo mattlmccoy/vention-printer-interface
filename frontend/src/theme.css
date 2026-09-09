@@ -1,0 +1,63 @@
+/* Vention Printer Interface — design tokens. Reused verbatim from the FLIR Research Interface so
+   the tools read as one family. The ONLY place colours are defined. */
+@font-face { font-family: "IBM Plex Sans"; font-weight: 400; font-display: swap; src: url("/fonts/IBMPlexSans-400.woff2") format("woff2"); }
+@font-face { font-family: "IBM Plex Sans"; font-weight: 500; font-display: swap; src: url("/fonts/IBMPlexSans-500.woff2") format("woff2"); }
+@font-face { font-family: "IBM Plex Sans"; font-weight: 600; font-display: swap; src: url("/fonts/IBMPlexSans-600.woff2") format("woff2"); }
+@font-face { font-family: "IBM Plex Mono"; font-weight: 400; font-display: swap; src: url("/fonts/IBMPlexMono-400.woff2") format("woff2"); }
+@font-face { font-family: "IBM Plex Mono"; font-weight: 500; font-display: swap; src: url("/fonts/IBMPlexMono-500.woff2") format("woff2"); }
+@font-face { font-family: "IBM Plex Mono"; font-weight: 600; font-display: swap; src: url("/fonts/IBMPlexMono-600.woff2") format("woff2"); }
+/* Space Mono (OFL) — the monospace face; weights 400 + 700 (500/600 map to the nearest). */
+@font-face { font-family: "Space Mono"; font-weight: 400; font-display: swap; src: url("/fonts/SpaceMono-400.woff2") format("woff2"); }
+@font-face { font-family: "Space Mono"; font-weight: 700; font-display: swap; src: url("/fonts/SpaceMono-700.woff2") format("woff2"); }
+
+:root {
+  color-scheme: dark;
+  --bg: #101418;
+  --bg-deep: #0b0e12;
+  --panel: #141920;
+  --line: #232a33;
+  --line-strong: #2f3843;
+  --line-control: #4a5561;
+  --fg: #d7dde5;
+  --fg-strong: #f5f7fa;
+  --muted: #8b97a5;
+  --accent: #ffb454;
+  --accent-ink: var(--bg);
+  --focus: var(--accent);
+  --live: #5cff8a;
+  --live-glow: 0 0 8px rgba(92, 255, 138, 0.7);
+  --live-glow-dim: 0 0 3px rgba(92, 255, 138, 0.4);
+  --live-bg: rgba(92, 255, 138, 0.12);
+  --warn: var(--accent);
+  --warn-bg: rgba(255, 180, 84, 0.10);
+  --err: #ff5f56;
+  --err-bg: rgba(255, 95, 86, 0.12);
+  /* A deeper red so WHITE text clears WCAG AA on danger buttons (from the T&C tool). */
+  --err-btn: #cf3b2e;
+  --rec: var(--err-btn);
+  /* Axis traces: the axisColor names in the Vention config (green/yellow/red/blue). */
+  --trace-part: #5cff8a;
+  --trace-feed: #ffb454;
+  --trace-ph: #ff5f56;
+  --trace-rc: #6ec3ff;
+  --image-bg: #000;
+  --scrim: rgba(11, 14, 18, 0.85);
+  --danger-ink: #ffffff;
+  --font-ui: "IBM Plex Sans", system-ui, sans-serif;
+  --font-mono: "Space Mono", "IBM Plex Mono", ui-monospace, SFMono-Regular, Menlo, monospace;
+  /* A clean neutral sans for readability-critical identifiers (long run names) where the mono
+     face reads poorly bold-white-on-dark. Helvetica Neue on macOS, IBM Plex Sans / Arial elsewhere. */
+  --font-read: "Helvetica Neue", Helvetica, "IBM Plex Sans", Arial, system-ui, sans-serif;
+  --fs: 13px;
+  --space: 4px;
+  --radius: 3px;
+  --strip-w: 40px;
+  --rail-w: 400px;
+  --shadow: 0 12px 40px rgba(0, 0, 0, 0.55);
+  --dock-h: 260px;
+  --topbar-h: 40px;
+  --statusbar-h: 28px;
+}
+
+@keyframes vpi-glow { 0%, 100% { box-shadow: var(--live-glow); } 50% { box-shadow: var(--live-glow-dim); } }
+@keyframes vpi-blink { 0%, 60% { opacity: 1; } 61%, 100% { opacity: 0.25; } }

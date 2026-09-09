@@ -1,0 +1,51 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Vention Printer Interface — offline</title>
+<style>
+  :root { --bg:#101418; --panel:#161b22; --line:#232a33; --fg:#e6edf3; --muted:#8b98a5;
+          --accent:#f2a541; --live:#4ade80; }
+  * { box-sizing: border-box; }
+  html, body { margin: 0; height: 100%; }
+  body { background: var(--bg); color: var(--fg);
+         font: 14px/1.6 "IBM Plex Sans", system-ui, -apple-system, sans-serif;
+         display: flex; align-items: center; justify-content: center; padding: 24px; }
+  .card { width: 100%; max-width: 560px; background: var(--panel);
+          border: 1px solid var(--line); border-radius: 10px; padding: 28px 30px; }
+  h1 { font: 600 12px/1 ui-monospace, "IBM Plex Mono", monospace; letter-spacing: .14em;
+       text-transform: uppercase; color: var(--muted); margin: 0 0 18px; }
+  .dot { display: inline-block; width: 8px; height: 8px; border-radius: 50%;
+         background: var(--accent); margin-right: 8px; vertical-align: middle; }
+  h2 { font-size: 20px; margin: 0 0 10px; font-weight: 600; }
+  p { color: var(--muted); margin: 0 0 16px; }
+  a.op { display: block; text-align: center; margin: 20px 0 8px; padding: 14px 16px;
+         background: var(--accent); color: #1a1206; font-weight: 600; text-decoration: none;
+         border-radius: 8px; font-size: 15px; }
+  a.op:hover { filter: brightness(1.05); }
+  code { background: #0b0e12; border: 1px solid var(--line); border-radius: 5px;
+         padding: 2px 6px; font: 13px ui-monospace, "IBM Plex Mono", monospace; color: var(--fg); }
+  .hint { font-size: 12.5px; }
+  .row { border-top: 1px solid var(--line); margin-top: 18px; padding-top: 16px; }
+  button.retry { background: transparent; color: var(--muted); border: 1px solid var(--line);
+                 border-radius: 7px; padding: 8px 14px; font: inherit; cursor: pointer; }
+  button.retry:hover { color: var(--fg); border-color: var(--muted); }
+</style>
+</head>
+<body>
+  <div class="card">
+    <h1><span class="dot"></span>Vention Printer Interface</h1>
+    <h2>You're offline — but the tool runs locally.</h2>
+    <p>This page is served over the internet, which is currently unreachable. The printer interface
+       itself runs on the printer computer and does not need the internet: open it directly
+       from the operator.</p>
+    <a class="op" id="op" href="http://127.0.0.1:8020/">Open the local printer interface →</a>
+    <p class="hint">That link goes to the operator on this machine (<code>127.0.0.1:8020</code>). If
+       the operator runs on a different port or host, use that address instead.</p>
+    <div class="row">
+      <button class="retry" onclick="location.reload()">Retry this page</button>
+    </div>
+  </div>
+</body>
+</html>
