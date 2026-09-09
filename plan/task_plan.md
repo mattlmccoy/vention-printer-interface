@@ -35,6 +35,16 @@ Plans: `docs/superpowers/plans/2026-09-08-backend-core.md` (Plan 1), Plan 2 reci
 - [x] T1 RecipePlan + compile_recipe · T2 RecipeController · T3 store + layers.csv · T4 API · T5 docs
 - Verification: 164 backend tests; ruff + mypy strict clean.
 
+## Plan 3 — Studio UI (2026-09-09)
+- [x] Shell ported from FLIR (theme verbatim + vpi keyframes + axis trace tokens; styles; studio components)
+- [x] lib: layout (vpi.layout.v1), operator (vpi.operator.v1, :8020), api (31 routes locked by test), telemetry, recipe mirror (same 37/280 steps as backend), machineview geometry, format/gates
+- [x] MachineView (gantries + pistons to scale, limit bands, heater glyph, recipe cursor, click-to-jog), TimePlot (% of travel), sections (connection/arm/axes/heater/recipe/recording), StatusBar (never green, unknown = amber)
+- [x] Gating as T&C: controllable = connected && armed; STOP / heater OFF / E-STOP / DISARM / pause / abort on connected only; confirm on START PRINT and heater ON
+- Verification: `npm test` 28 passed; `npm run build` green; browser against `vpi-serve --backend simulated`:
+  connect → ARM → home all (positions → 0, plot shows it) → start dry run (step 6/280, REC auto-log) →
+  pause → E-STOP (FAULT latched, recipe aborted, run closed with manifest) → release → clear fault → read-only.
+- Not done: screenshots on disk (browser pane only); the lab wireframe is not embedded (schematic drawn in its style).
+
 ## Blocked on the user (lab)
 - [ ] Step 0-1: network + `vpi-probe --ip 192.168.0.2` → `plan/probe_report.json`
 - [ ] Step 2: reconcile parsers/fixtures; update `plan/notes.md`
@@ -47,5 +57,5 @@ Plans: `docs/superpowers/plans/2026-09-08-backend-core.md` (Plan 1), Plan 2 reci
 - Whether the controller's MQTT broker accepts external clients without auth (docs say yes).
 
 ## Next
-- Plan 3: Studio UI (user is supplying a black-and-white wireframe of the printer for the
-  machine view).
+- Lab commissioning (docs/commissioning.md), then reconcile fixtures from plan/probe_report.json.
+- v2: MetPrint hot-folder sync per layer, FLIR/T&C links, deploy/ LaunchAgent, embed the wireframe.
