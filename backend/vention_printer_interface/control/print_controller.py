@@ -240,6 +240,8 @@ class PrintController:
         try:
             if step.kind == "home_all":
                 self._c.home_all()
+            elif step.kind == "home":
+                self._c.home(step.axis or 0)
             elif step.kind == "set_speed":
                 self._c.set_max_speed(step.axis or 0, float(step.value or 0.0))
             elif step.kind == "set_accel":
