@@ -147,6 +147,7 @@ def evaluate(
     telemetry_age_s: float,
     heater_on_s: float,
     move_pending: bool,
+    home_in_progress: bool = False,
 ) -> SafetyDecision:
     reasons: list[str] = []
     warnings: list[str] = []
@@ -161,15 +162,22 @@ def evaluate(
     if move_pending and not telemetry.drives_ready:
         state = "unknown" if telemetry.drives_ready is None else "not ready"
         reasons.append(f"drives {state} while a move is pending")
-    for axis, pos in telemetry.positions.items():
-        lo = limits.travel_min.get(axis, 0.0)
-        hi = limits.travel_max.get(axis, TRAVEL_MM.get(axis, 0.0))
-        tol = limits.travel_tolerance_mm
-        if pos < lo - tol or pos > hi + tol:
-            reasons.append(f"axis {axis} at {pos:.2f} mm outside [{lo:.1f}, {hi:.1f}]")
-        elif (lo > 0.0 and pos - lo < limits.near_limit_mm) or hi - pos < limits.near_limit_mm:
-            # the home end (0) is where every axis parks; only a raised travel_min is a limit
-            warnings.append(f"axis {axis} near travel limit ({pos:.1f} mm)")
+    # Position out of the soft window is a WARNING, not a latched fault: commanded moves are
+    # already clamped to the window (clamp_position) and the drive's own limit switches are the
+    # hard guard, so an axis parked out of range (drift, an interrupted home) must NOT block the
+    # operator from arming and HOMING to re-zero. Homing suspends even the warning (position is
+    # being re-established).
+    if not home_in_progress:
+        for axis, pos in telemetry.positions.items():
+            lo = limits.travel_min.get(axis, 0.0)
+            hi = limits.travel_max.get(axis, TRAVEL_MM.get(axis, 0.0))
+            tol = limits.travel_tolerance_mm
+            if pos < lo - tol or pos > hi + tol:
+                warnings.append(
+                    f"axis {axis} at {pos:.1f} mm outside [{lo:.1f}, {hi:.1f}] — home it"
+                )
+            elif (lo > 0.0 and pos - lo < limits.near_limit_mm) or hi - pos < limits.near_limit_mm:
+                warnings.append(f"axis {axis} near travel limit ({pos:.1f} mm)")
     # heater_on_s is measured from the earlier of "commanded on" and "observed on", so the
     # watchdog works even when the relay state is never echoed back (review C1).
     if heater_on_s > limits.heater_max_on_s:

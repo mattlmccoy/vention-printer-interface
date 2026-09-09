@@ -41,12 +41,29 @@ def test_drives_not_ready_trips_only_when_move_pending() -> None:
     assert evaluate(tel(drives_ready=False), SafetyLimits(), 0.1, 0, True).trip is True
 
 
+def test_home_in_progress_suspends_position_trip_only() -> None:
+    # while homing, position is being re-established, so position limits are suspended; every
+    # other protection (e-stop, stale, health, heater) still applies.
+    lim = SafetyLimits()
+    far = tel(positions={1: -200, 2: 300, 3: -99, 4: 9999})
+    # position out of range is a warning, not a trip, even normally
+    d = evaluate(far, lim, 0.1, 0, False)
+    assert not d.trip and any("outside" in w for w in d.warnings)
+    # homing suppresses even the warning
+    assert evaluate(far, lim, 0.1, 0, False, home_in_progress=True).warnings == ()
+    # but e-stop still trips during homing
+    assert evaluate(tel(estop_triggered=True), lim, 0.1, 0, False, home_in_progress=True).trip
+    assert evaluate(far, lim, 10.0, 0, False, home_in_progress=True).trip  # stale still trips
+
+
 def test_homed_negative_position_is_within_limits() -> None:
     # real recoater homes to ~-22 mm; the soft floor must accommodate that (2026-09-09)
     lim = SafetyLimits()
     assert lim.travel_min[4] <= -22.0
     assert not evaluate(tel(positions={1: -0.1, 2: 0.1, 3: 250, 4: -22.0}), lim, 0.1, 0, False).trip
-    assert evaluate(tel(positions={1: 10, 2: 10, 3: 10, 4: -40.0}), lim, 0.1, 0, False).trip
+    # even beyond the floor it warns, never faults (must stay recoverable via homing)
+    beyond = evaluate(tel(positions={1: 10, 2: 10, 3: 10, 4: -40.0}), lim, 0.1, 0, False)
+    assert not beyond.trip and any("outside" in w for w in beyond.warnings)
 
 
 def test_bounded_allows_negative_travel_min() -> None:
@@ -57,19 +74,16 @@ def test_bounded_allows_negative_travel_min() -> None:
 
 
 def test_encoder_drift_at_ends_does_not_fault() -> None:
-    # real controller rests at ~-0.1 mm near home; a small tolerance must not fault (2026-09-09)
     lim = SafetyLimits()
     assert not evaluate(tel(positions={1: -0.1, 2: 0.1, 3: 250, 4: -0.1}), lim, 0.1, 0, False).trip
-    # but a real overshoot past the floor/ceiling still trips
-    assert evaluate(tel(positions={1: -40.0, 2: 10, 3: 10, 4: 10}), lim, 0.1, 0, False).trip
-    assert evaluate(tel(positions={1: 10, 2: 10, 3: 10, 4: 933}), lim, 0.1, 0, False).trip
 
 
-def test_soft_travel_limit_trips_and_warns() -> None:
+def test_soft_travel_limit_warns() -> None:
     lim = SafetyLimits()
-    assert evaluate(tel(positions={1: 10, 2: 10, 3: 10, 4: 934}), lim, 0.1, 0, False).trip
-    w = evaluate(tel(positions={1: 10, 2: 10, 3: 10, 4: 927}), lim, 0.1, 0, False)
-    assert not w.trip and any("near" in x for x in w.warnings)
+    over = evaluate(tel(positions={1: 10, 2: 10, 3: 10, 4: 934}), lim, 0.1, 0, False)
+    assert not over.trip and any("outside" in x for x in over.warnings)
+    near = evaluate(tel(positions={1: 10, 2: 10, 3: 10, 4: 927}), lim, 0.1, 0, False)
+    assert not near.trip and any("near" in x for x in near.warnings)
     # sitting at home (0) is normal, not a warning; a raised travel_min is warned about
     home = evaluate(tel(positions={1: 0, 2: 0, 3: 0, 4: 0}), lim, 0.1, 0, False)
     assert home.warnings == ()

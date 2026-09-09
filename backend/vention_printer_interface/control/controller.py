@@ -32,6 +32,7 @@ Listener = Callable[[dict[str, Any]], None]
 # /health is slow on the real controller, so it is NOT polled in the protection loop by default
 # (health_refresh_s=0). It is fetched once at connect; a slow refresh can be enabled explicitly.
 ESTOP_READY_WAIT_S = 10.0  # SDK resetSystem waits for areSmartDrivesReady (MachineMotion.py:2459)
+HOMING_WINDOW_S = 30.0  # position limits are suspended for this long after a home is issued
 
 
 class ControllerState(enum.StrEnum):
@@ -52,6 +53,8 @@ class Controller:
         self.poll_interval_s = poll_interval_s
         self.health_refresh_s = health_refresh_s
         self._last_health = 0.0
+        self._homing_until = 0.0
+        self._home_issued_at = 0.0
         self.limits = limits or SafetyLimits()
         self._device: PrinterDevice | None = None
         self.backend = "none"
@@ -91,6 +94,7 @@ class Controller:
             self._heater_on_since = self._heater_cmd_on_since = None
             self._move_pending, self._ticks = False, 0
             self._last_read_done = self._last_health = time.monotonic()
+            self._homing_until = self._home_issued_at = 0.0
             self._stop = stop
         self._thread = threading.Thread(
             target=self._loop, args=(device, stop), name="vpi-poll", daemon=True
@@ -171,10 +175,16 @@ class Controller:
                 if not self._heater_cmd_on_since or now - self._heater_cmd_on_since > 1.0:
                     self._heater_cmd_on_since = None  # observed off after the command settled
             heater_on_s = self._heater_on_s(now)
-            if all(tel.motion_complete.values()):
+            done = all(tel.motion_complete.values())
+            if done:
                 self._move_pending = False
+            homing = now < self._homing_until
+            # end the homing window early once motion has settled after the home was issued
+            if homing and done and now - self._home_issued_at > 1.5:
+                self._homing_until = 0.0
+                homing = False
             decision: SafetyDecision = evaluate(
-                tel, self.limits, age, heater_on_s, self._move_pending
+                tel, self.limits, age, heater_on_s, self._move_pending, home_in_progress=homing
             )
             self._warnings = decision.warnings
             faulted = self.state == ControllerState.FAULT
@@ -220,6 +230,7 @@ class Controller:
             self.state, self.armed = ControllerState.FAULT, False
             self._fault_reasons = reasons
             self._move_pending = False
+            self._homing_until = 0.0
             dev = self._device
         if dev is not None:
             self._safe_actions(dev, "fault")
@@ -294,16 +305,21 @@ class Controller:
         self.limits = limits
 
     # ---- guarded actions --------------------------------------------------------------------
-    def home_all(self) -> None:
-        dev = self._require_armed()
+    def _begin_homing(self) -> None:
+        now = time.monotonic()
         with self._lock:
             self._move_pending = True
+            self._homing_until = now + HOMING_WINDOW_S
+            self._home_issued_at = now
+
+    def home_all(self) -> None:
+        dev = self._require_armed()
+        self._begin_homing()  # suspend position limits so the home can finish and re-zero
         dev.home_all()  # not under _io_lock: the reply may block until homed (see module doc)
 
     def home(self, axis: int) -> None:
         dev = self._require_armed()
-        with self._lock:
-            self._move_pending = True
+        self._begin_homing()
         dev.home(axis)
 
     def set_max_speed(self, axis: int, mm_s: float) -> float:
@@ -407,6 +423,7 @@ class Controller:
                 "state": self.state.value,
                 "backend": self.backend,
                 "armed": self.armed,
+                "homing": time.monotonic() < self._homing_until,
                 "fault_reasons": list(self._fault_reasons),
                 "warnings": list(self._warnings),
                 "read_error": self._read_error,

@@ -278,8 +278,29 @@ def test_telemetry_is_tristate() -> None:
     assert "None" in str(fields["estop_triggered"].type)
 
 
+# homing suspends position protection ------------------------------------------------------------
+def test_homing_suspends_position_protection() -> None:
+    # a home whose sensor is at a NEGATIVE position must not fault mid-move (real machine)
+    c, t = make()
+    c.set_limits(SafetyLimits(travel_min={n: 0.0 for n in (1, 2, 3, 4)}))  # strict floor 0
+    try:
+        tel(c)
+        c.arm()
+        # move axis 3 to a negative resting spot to mimic a home that ends below 0
+        t.machine.axes[3].position = 0.0
+        c.home_all()  # sets homing window
+        assert c.snapshot()["homing"] is True
+        t.machine.axes[3].position = -18.0  # would trip [0, ...] but homing suspends it
+        time.sleep(0.4)
+        assert c.state == ControllerState.CONNECTED  # not faulted during homing
+    finally:
+        c.stop()
+
+
 # M4 ---------------------------------------------------------------------------------------------
-def test_soft_limit_trip_through_simulator() -> None:
+def test_soft_limit_out_of_range_warns_not_faults() -> None:
+    # position out of the window is a WARNING (commanded moves are clamped; homing must stay
+    # possible from out of range), never a latched fault.
     c, t = make()
     c.set_limits(SafetyLimits.bounded(travel_max={"3": 100}))
     try:
@@ -289,8 +310,8 @@ def test_soft_limit_trip_through_simulator() -> None:
         assert wait(lambda: c.snapshot()["telemetry"]["positions"]["3"] == 0)
         t.http_post_json(r.max_speed_path(3), r.max_speed_body(300))
         t.http_post_json(*r.move_absolute({3: 200}))  # bypass the clamp, like a stray command
-        assert wait(lambda: c.state == ControllerState.FAULT)
-        assert any("outside" in x for x in c.snapshot()["fault_reasons"])
+        assert wait(lambda: any("outside" in x for x in c.snapshot()["warnings"]))
+        assert c.state == ControllerState.CONNECTED
     finally:
         c.stop()
 
