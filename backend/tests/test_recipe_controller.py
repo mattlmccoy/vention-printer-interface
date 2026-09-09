@@ -1,0 +1,211 @@
+import dataclasses
+import time
+from collections.abc import Callable
+from typing import Any
+
+import pytest
+
+from vention_printer_interface.control.controller import Controller, ControllerState
+from vention_printer_interface.control.recipe import PhasePlan, RecipePlan
+from vention_printer_interface.control.recipe_controller import RecipeController
+from vention_printer_interface.control.safety import SafetyLimits
+from vention_printer_interface.device.printer import PrinterDevice
+from vention_printer_interface.device.simulated import SimulatedTransport
+from vention_printer_interface.protocol import routes as r
+
+HEATER = r.io_output_topic(1, 2)
+
+
+def fast_plan(n_print: int = 1, heater: bool = True) -> RecipePlan:
+    """One tiny recipe the simulator finishes in a few seconds at the bounded speeds."""
+    fast = PhasePlan(
+        layer_thickness_mm=1.0,
+        n_layers=0,
+        part_speed=20,
+        part_accel=100,
+        feed_speed=20,
+        feed_accel=100,
+        printhead_speed=300,
+        printhead_accel=2000,
+        recoater_speed=300,
+        recoater_accel=2000,
+    )
+    return RecipePlan(
+        precoat=dataclasses.replace(fast, n_layers=0),
+        printing=dataclasses.replace(fast, n_layers=n_print),
+        postcoat=dataclasses.replace(fast, n_layers=0),
+        feed_end_mm=10,
+        recoater_end_mm=30,
+        heater_end_mm=20,
+        printhead_end_mm=30,
+        heater_speed=300,
+        heater_accel=2000,
+        heater_enabled=heater,
+        settle_s=0.05,
+        feed_fast_speed=20,
+        feed_fast_accel=100,
+    )
+
+
+def make(**sim: Any) -> tuple[RecipeController, Controller, SimulatedTransport]:
+    t = SimulatedTransport(realtime=True, **sim)
+    c = Controller(poll_interval_s=0.05, limits=SafetyLimits())
+    c.attach_device(PrinterDevice(t, heater_io=(1, 2)), backend="simulated")
+    rc = RecipeController(c, min_wait_s=0.1, step_timeout_s=3.0)
+    c.add_listener(rc.tick)
+    return rc, c, t
+
+
+def wait(pred: Callable[[], bool], timeout: float = 30.0) -> bool:
+    end = time.monotonic() + timeout
+    while time.monotonic() < end:
+        if pred():
+            return True
+        time.sleep(0.02)
+    return False
+
+
+def test_start_requires_armed_and_valid() -> None:
+    rc, c, _ = make()
+    try:
+        with pytest.raises(RuntimeError, match="not armed"):
+            rc.start(fast_plan())
+        c.arm()
+        bad = dataclasses.replace(
+            fast_plan(), printing=PhasePlan(layer_thickness_mm=2, n_layers=99)
+        )
+        with pytest.raises(RuntimeError, match="thickness"):
+            rc.start(bad)
+        assert rc.snapshot()["state"] == "idle"
+    finally:
+        c.stop()
+
+
+def test_one_layer_runs_to_done_with_layer_events() -> None:
+    rc, c, t = make()
+    events: list[tuple[str, dict[str, Any]]] = []
+    rc.on_event = lambda label, data: events.append((label, data))
+    try:
+        c.arm()
+        rc.start(fast_plan())
+        assert rc.snapshot()["state"] == "running"
+        assert wait(lambda: rc.snapshot()["state"] == "done")
+        labels = [e[0] for e in events]
+        assert labels[0] == "recipe_started" and labels[-1] == "recipe_done"
+        assert "layer_started" in labels and "layer_completed" in labels
+        done = next(d for lbl, d in events if lbl == "layer_completed")
+        assert done["layer"] == 1 and done["phase"] == "printing" and done["part_height_mm"] == 1.0
+        assert t.mqtt_latest(HEATER) == "0"  # heater ended off
+        assert any(lbl == "heater_on" for lbl, _ in events)
+        snap = rc.snapshot()
+        assert snap["step_index"] == snap["n_steps"] and snap["layer"] == 1
+    finally:
+        c.stop()
+
+
+def test_dry_run_never_touches_heater() -> None:
+    rc, c, t = make()
+    seen: list[str] = []
+    rc.on_event = lambda label, data: seen.append(label)
+    try:
+        c.arm()
+        rc.start(fast_plan(), dry_run=True)
+        assert wait(lambda: rc.snapshot()["state"] == "done")
+        assert "heater_on" not in seen and t.mqtt_latest(HEATER) != "1"
+        assert rc.snapshot()["dry_run"] is True
+    finally:
+        c.stop()
+
+
+def test_pause_and_resume() -> None:
+    rc, c, _ = make()
+    try:
+        c.arm()
+        rc.start(fast_plan(n_print=2))
+        assert wait(lambda: rc.snapshot()["step_index"] > 6)
+        rc.pause()
+        assert wait(lambda: rc.snapshot()["state"] == "paused")
+        idx = rc.snapshot()["step_index"]
+        time.sleep(0.3)
+        assert rc.snapshot()["step_index"] == idx  # no progress while paused
+        rc.resume()
+        assert wait(lambda: rc.snapshot()["state"] == "done")
+    finally:
+        c.stop()
+
+
+def test_abort_stops_motion_and_heater() -> None:
+    rc, c, t = make()
+    try:
+        c.arm()
+        rc.start(fast_plan())
+        assert wait(lambda: t.mqtt_latest(HEATER) == "1")
+        rc.abort()
+        assert rc.snapshot()["state"] == "aborted"
+        assert t.mqtt_latest(HEATER) == "0"
+        assert wait(lambda: all(t.machine.axes[n].target is None for n in t.machine.axes))
+    finally:
+        c.stop()
+
+
+def test_controller_fault_aborts_recipe() -> None:
+    rc, c, t = make()
+    try:
+        c.arm()
+        rc.start(fast_plan(n_print=3))
+        assert wait(lambda: rc.snapshot()["step_index"] > 3)
+        c.estop()
+        assert wait(lambda: rc.snapshot()["state"] == "aborted")
+        assert "fault" in rc.snapshot()["reason"] or "disarm" in rc.snapshot()["reason"]
+        assert c.state == ControllerState.FAULT
+    finally:
+        c.stop()
+
+
+def test_single_step_waits_for_step_calls() -> None:
+    rc, c, _ = make()
+    try:
+        c.arm()
+        rc.start(fast_plan(), single_step=True)
+        assert wait(lambda: rc.snapshot()["state"] == "paused")
+        idx = rc.snapshot()["step_index"]
+        rc.step()
+        assert wait(lambda: rc.snapshot()["step_index"] > idx)
+        assert wait(lambda: rc.snapshot()["state"] == "paused")
+        rc.resume()  # leave single-step mode
+        assert wait(lambda: rc.snapshot()["state"] == "done")
+    finally:
+        c.stop()
+
+
+def test_wait_timeout_faults_recipe() -> None:
+    rc, c, t = make(stall_axis=4)  # recoater never moves
+    try:
+        c.arm()
+        rc.start(fast_plan())
+        assert wait(lambda: rc.snapshot()["state"] == "fault", timeout=15)
+        assert "timeout" in rc.snapshot()["reason"]
+        assert t.mqtt_latest(HEATER) == "0"
+    finally:
+        c.stop()
+
+
+def test_snapshot_shape_idle() -> None:
+    rc = RecipeController(Controller(poll_interval_s=0.05))
+    s = rc.snapshot()
+    assert s["state"] == "idle" and s["n_steps"] == 0 and s["current_step"] is None
+    assert set(s) >= {
+        "state",
+        "step_index",
+        "n_steps",
+        "phase",
+        "layer",
+        "n_layers",
+        "part_height_mm",
+        "elapsed_s",
+        "dry_run",
+        "single_step",
+        "reason",
+        "current_step",
+        "plan",
+    }
