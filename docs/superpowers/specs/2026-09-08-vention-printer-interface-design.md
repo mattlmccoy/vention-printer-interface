@@ -97,10 +97,43 @@ Recorder: `experiments/<YYYYMMDD_HHMMSS>_<slug>/` with `metadata.json` (plan, ax
 `create_app(*, backend="none", poll_interval_s=0.2, experiments_root=None, limits=None, transport_kwargs=None, frontend_dist=None, site_origin=None)`. `GET /api/status` ≡ `/ws/telemetry` (JSON push every 100 ms): `{device, controller{state, armed, fault_reasons, telemetry, warnings, limits}, heater, recipe, recording, auto_log}`.
 Routes: `GET /api/health`; `GET /api/discovery` (TCP-connect probe of 192.168.0.2:8000 and 192.168.7.2:8000 with 0.5 s timeout + `simulated`); `POST /api/connect {backend, ip?}`; `POST /api/disconnect`; `POST /api/arm|disarm|estop|estop/release`; `POST /api/motion/home {axes}`; `POST /api/motion/move {axis, mode: abs|rel, mm}`; `POST /api/motion/stop {axes?}`; `GET/PUT /api/axes/{n}/motion {max_speed, max_accel}` (+bounds); `GET/PUT /api/safety-limits` (+bounds); `POST /api/heater/on|off`; `GET/PUT /api/recipe` (+bounds, +validation); `POST /api/recipe/start {dry_run, single_step}|pause|resume|abort|step`; `POST /api/recording/start|stop`, `GET /api/recording/status`, `GET /api/recordings`, `GET /api/recordings/{run}/telemetry.csv|layers.csv` (path-traversal guard); `GET/PUT /api/auto-log`. Refusals 409 with reason. `install_cross_origin_policy` + `X-VPI-Client` copied from siblings; `Cache-Control: no-store` on HTML.
 
-## 6. Studio UI
-Copied from FLIR: `theme.css` (verbatim, keyframes `vpi-*`, add `--err-btn`, traces `--trace-part/--trace-feed/--trace-ph/--trace-rc` = axisColor green/yellow/red/blue from configuration.json mapped to family hues), `styles.css` Studio grid, `components/studio/*`, `lib/layout.ts` (`vpi.layout.v1`), `lib/operator.ts` (`vpi.operator.v1`, default `http://localhost:8020`), `lib/api.ts` (method+URL locked by tests).
-Pages: live, experiments. Strip tools: jog, home, recipe, measure. Center `MachineView.tsx` (SVG, to scale: two pistons as vertical bars with travel 0–145, two gantries as horizontal rails 0–840/0–930, live markers, soft-limit bands, homed state, heater glyph on the recoater, recipe cursor + current step label). Dock `TimePlot` of position (and speed) per axis. Rail sections: connection (discovery list, operator address in SITE_MODE, version handshake), arm/E-STOP (ARM toggle, E-STOP, release), axes (per axis: position, speed/accel with bound hints, home, jog ±1/±10/±custom, move-to), heater (on/off, on-time, watchdog), recipe (plan editor grouped by phase, validation verdict, start/dry-run/pause/resume/abort/step, layer progress), recording (name, notes, start/stop, run list). StatusBar (never green): state, poll Hz, E-STOP, drives ready, heater on-time, recorder counters, disk free.
-Gating: `connected = reachable && state in {connected, fault}`; `armed`; `controllable = connected && armed`; all motion/heater/recipe-start controls `disabled={!controllable}`; STOP / HEATER OFF / E-STOP / DISARM / PAUSE / ABORT on `connected` only; `window.confirm` on recipe start (non-dry) and heater on; server re-checks (409). `ErrorBoundary` keyed by page. Pure `lib/recipe.ts` mirrors `compile_recipe` for step preview and printability; `lib/machineview.ts` maps mm→px.
+## 6. Console UI (revised 2026-09-09 after user review)
+The first UI ported the FLIR *layout* (tool strip / rail / plot dock). That is the wrong shape for a
+machine console; only the **design language** is shared (dark instrument palette, IBM Plex +
+Space Mono, amber accent, live green, the never-green status bar, badges, pills). Mockup approved:
+claude.ai artifact "Binder Jet Console".
+
+Persistent chrome: top bar with wordmark, view tabs, controller pill, **ARM lock toggle** and the
+**E-STOP** at top right on every view; a fault banner listing reasons and the recovery actions in
+order (release e-stop → clear fault); the family status bar at the bottom.
+
+Views (task-oriented):
+- **Print** (default): run card (state, big layer N/M, this-layer and whole-print bars, elapsed,
+  estimated remaining, part height measured vs expected, recording), machine front elevation
+  (rails with printhead/recoater carriages, heater bar on the recoater, feed and build pistons
+  with powder level and the growing part), "now / next" narration, six-step layer-cycle strip,
+  heater ring (observed/commanded/on-time/watchdog), I/O grid, event log; PAUSE / ABORT.
+- **Prepare**: layer stack drawn against the 145 mm feed budget (printability visible), per-phase
+  speeds, heater passes, estimated duration/steps/powder/heater on-time from the plan, dry-run /
+  single-step / record toggles, run name + notes, one START PRINT button, presets (v2), sliced job
+  import (v2).
+- **Control**: jog panels labelled by physical motion (gantry ◀ ▶ with home/far-end; pistons ▲ up
+  ▼ down), step chips 0.1/1/10/100 mm, move-to, speed/accel with limit shown, HOME ALL, STOP,
+  park macros (**load cart** = home gantries then both pistons to the bottom of travel; the
+  operator then jogs the pistons into place), manual heater with watchdog ring, I/O + endstops.
+- **Runs**: history with complete/incomplete, files.
+
+Part height: the **measured** value (build piston position − its position captured at recipe
+start) is the truth; the recipe's expected value (layers × thickness) is shown beside it and
+flagged amber when they differ by more than half a layer.
+
+Backend additions for this UI: `RecipeController.start_macro(name, steps)` (park macros reuse
+the step machine), `part_zero_mm` captured at recipe start and `part_height_measured_mm` in the
+recipe snapshot, an in-memory event log (`/api/events`, last 200; the last 50 in status), and a
+pure duration estimator mirrored in the frontend.
+
+Open: the Vention HMI pendant cannot host our UI (to check with Vention); the console runs in a
+browser on the lab laptop.
 
 ## 7. Testing and commissioning
 Backend (`uv run pytest`): `test_routes.py` (builders/parsers vs fixtures labelled SDK-derived), `test_simulated.py`, `test_safety.py`, `test_controller.py` (with simulator + fault injection), `test_recipe_compiler.py` (asserts V1.py order/length; 10 print layers), `test_recipe_controller.py`, `test_heater.py` (watchdog), `test_recorder.py` (manifest only on clean stop), `test_api*.py` (TestClient), `test_cors.py`; `--hardware` gates `test_machinemotion_hw.py`. Frontend: `node --test` on `lib/*.test.ts`. CI as siblings.
