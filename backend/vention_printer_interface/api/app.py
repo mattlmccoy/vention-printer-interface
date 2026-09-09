@@ -476,8 +476,16 @@ def create_app(
     @app.post("/api/recipe/start")
     def recipe_start(body: RecipeStartBody) -> dict[str, Any]:
         plan: RecipePlan = app.state.recipe_plan
-        guarded(recipe().start, plan, body.dry_run, body.single_step)
+        # Open the auto-log run BEFORE starting so the recipe's own start event lands in it.
+        opened = False
         if app.state.auto_log and rec().active is None:
+            if recipe().state in (RecipeState.RUNNING, RecipeState.PAUSED):
+                raise HTTPException(409, "recipe already running")
+            if not ctrl().armed:
+                raise HTTPException(409, "not armed — press ARM to take control of the printer")
+            reasons = plan.validate(ctrl().limits)
+            if reasons:
+                raise HTTPException(409, "recipe invalid: " + "; ".join(reasons))
             name = body.name or ("dry-run" if body.dry_run else "print")
             rec().start(
                 name,
@@ -491,8 +499,14 @@ def create_app(
                 },
             )
             app.state.auto_run_open = True
-            # the recipe's own start event fired before the run opened; record it here
-            ev("recipe_started", {"n_steps": len(compile_recipe(plan)), "dry_run": body.dry_run})
+            opened = True
+        try:
+            guarded(recipe().start, plan, body.dry_run, body.single_step)
+        except HTTPException:
+            if opened:
+                app.state.auto_run_open = False
+                rec().stop()
+            raise
         return recipe().snapshot()
 
     @app.post("/api/recipe/pause")

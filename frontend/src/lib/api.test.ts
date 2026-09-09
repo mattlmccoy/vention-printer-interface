@@ -45,6 +45,8 @@ test("every route: method + path + body locked", async () => {
     [() => api.recordingStart({ name: "a", notes: "" }), "POST", "/api/recording/start", { name: "a", notes: "" }],
     [() => api.recordingStop(), "POST", "/api/recording/stop", undefined],
     [() => api.recordings(), "GET", "/api/recordings", undefined],
+    [() => api.macro("load_cart"), "POST", "/api/macro/load_cart", undefined],
+    [() => api.events(), "GET", "/api/events", undefined],
     [() => api.autoLog(), "GET", "/api/auto-log", undefined],
     [() => api.setAutoLog(false), "PUT", "/api/auto-log", { enabled: false }],
   ];

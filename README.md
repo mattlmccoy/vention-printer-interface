@@ -10,10 +10,11 @@ read as one family.
 NOT yet run against the physical controller.** Protocol layer, simulator, real HTTP+MQTT
 transport, supervisory controller (ARM gate, E-STOP, pure protection, heater watchdog), the V1.py
 recipe as a pausable step machine, run recorder with per-layer log, FastAPI + `/ws/telemetry`,
-three CLIs, and the React operator UI are implemented and tested (164 backend tests, 28 frontend
-tests). An independent review pass fixed several safety gaps (see `plan/task_plan.md`). The UI
-was browser-verified against the simulator: connect → ARM → home → dry-run recipe → pause →
-E-STOP → release → clear fault.
+three CLIs, and the **Binder Jet Console** UI (Print / Prepare / Control / Runs) are implemented
+and tested (173 backend tests, 27 frontend tests). An independent review pass fixed several safety
+gaps (see `plan/task_plan.md`). The console was browser-verified against the simulator: connect →
+ARM → jog → dry-run recipe from Prepare → live Print view with elevation drawing, layer cycle,
+heater ring, event log.
 
 | Piece | Location | State |
 |---|---|---|
@@ -31,7 +32,8 @@ E-STOP → release → clear fault.
 | Recipe step machine (pause/resume/abort, dry-run, single-step, timeouts) | `backend/.../control/recipe_controller.py` | tested; simulator-verified |
 | Recipe API + auto-logged runs with `layers.csv` | `backend/.../api/app.py` | tested |
 | CLIs `vpi-serve`, `vpi-probe` (read-only), `vpi-monitor` | `backend/.../api/server.py`, `probe.py`, `monitor.py` | run against the simulator |
-| Studio UI: theme/layout ported from FLIR, to-scale machine view, position plot, rail sections, gated controls, status bar | `frontend/` (Vite + React + TS) | logic tested (`node --test`, 28); browser-verified against the simulator |
+| Park macros on the step machine (`load_cart`, `clear_bed`), event log, measured part height, duration estimate | `backend/.../control/{macros,events}.py`, `recipe_controller.py`, `api/app.py` | tested |
+| Binder Jet Console: Print (run card, front-elevation drawing, layer cycle, heater ring, I/O, event log), Prepare (layer stack vs powder budget, estimates, one start button), Control (jog pads, park macros, manual heater), Runs; ARM lock + E-STOP always on screen | `frontend/` (Vite + React + TS; FLIR design language, printer layout) | logic tested (`node --test`, 27); browser-verified against the simulator |
 
 ## Scientific / engineering stance
 
@@ -86,10 +88,10 @@ backend/    Python package `vention_printer_interface` + tests (uv-managed)
   api/        FastAPI create_app + vpi-serve
 docs/       architecture, protocol, recipe, commissioning, development
 plan/       task plan, research notes, data-contract status, SDK reference copy (git-ignored)
-frontend/   Vite + React + TS Studio UI (built into frontend/dist, served by vpi-serve); dev on 5175
-  src/lib/     pure logic with node --test: layout, operator, api (routes locked), telemetry, recipe mirror, machine geometry, format/gates
-  src/components/studio/  StudioFrame, ToolStrip, Rail, RailSection, PlotDock, StatusBar, floating panels (from FLIR)
-  src/components/         MachineView (to-scale schematic), TimePlot, rail Sections, ErrorBoundary
+frontend/   Vite + React + TS console (built into frontend/dist, served by vpi-serve); dev on 5175
+  src/lib/     pure logic with node --test: console state, operator, api (routes locked), telemetry, recipe mirror, duration estimate, elevation geometry, format/gates
+  src/components/views/   PrintView, PrepareView, ControlView, RunsView
+  src/components/         Elevation (front-elevation drawing), HeaterRing, IoGrid, EventLog, StatusBar, ErrorBoundary
 ```
 
 ## License

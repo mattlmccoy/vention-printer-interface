@@ -47,6 +47,9 @@ export interface ControllerSnap {
 
 export interface RecipeSnap {
   state: "idle" | "running" | "paused" | "done" | "aborted" | "fault";
+  macro: string | null;
+  part_zero_mm: number | null;
+  part_height_measured_mm: number | null;
   step_index: number;
   n_steps: number;
   phase: string;
@@ -61,8 +64,11 @@ export interface RecipeSnap {
   plan: Record<string, unknown> | null;
 }
 
+export interface EventItem { host_timestamp_ns: number; label: string; data: Record<string, unknown> }
+
 export interface StatusPayload {
   device: Record<string, unknown>;
+  events: EventItem[];
   controller: ControllerSnap;
   axis_motion: Record<string, { max_speed: number | null; max_accel: number | null }>;
   recipe: RecipeSnap;
