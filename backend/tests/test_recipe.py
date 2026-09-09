@@ -164,3 +164,15 @@ def test_steps_are_frozen() -> None:
     s = compile_recipe(one_layer())[0]
     with pytest.raises(dataclasses.FrozenInstanceError):
         s.kind = "x"  # type: ignore[misc]
+
+
+def test_estimate_duration_is_positive_and_scales_with_layers() -> None:
+    from vention_printer_interface.control.recipe import estimate_duration_s
+
+    one = one_layer()
+    ten = dataclasses.replace(one, printing=dataclasses.replace(one.printing, n_layers=10))
+    t1, t10 = estimate_duration_s(one), estimate_duration_s(ten)
+    assert t1 > 0 and t10 > t1 * 5
+    # the default V1 plan: setup feed 145 mm at 5 mm/s = 29 s alone; whole print well under 2 h
+    total = estimate_duration_s(RecipePlan())
+    assert 29 < total < 7200

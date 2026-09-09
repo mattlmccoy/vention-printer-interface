@@ -209,3 +209,44 @@ def test_snapshot_shape_idle() -> None:
         "current_step",
         "plan",
     }
+
+
+def test_macro_runs_on_the_step_machine_and_reports_name() -> None:
+    from vention_printer_interface.control.macros import macro_steps
+
+    rc, c, t = make()
+    try:
+        c.arm()
+        c.home_all()
+        assert wait(lambda: (c.snapshot()["telemetry"] or {}).get("positions", {}).get("2") == 0)
+        c.set_limits(SafetyLimits.bounded(travel_max={"1": 10, "2": 12}))  # short: fast test
+        rc.start_macro("load_cart", macro_steps("load_cart", c.limits))
+        s = rc.snapshot()
+        assert s["state"] == "running" and s["macro"] == "load_cart" and s["plan"] is None
+        assert wait(lambda: rc.snapshot()["state"] == "done", timeout=60)
+        tel = c.snapshot()["telemetry"]
+        assert tel["positions"]["1"] == 10.0 and tel["positions"]["2"] == 12.0
+        assert tel["positions"]["3"] == 0.0 and tel["positions"]["4"] == 0.0
+        with pytest.raises(RuntimeError):
+            rc.start_macro("load_cart", ())  # empty is refused
+    finally:
+        c.stop()
+
+
+def test_part_height_measured_from_piston_zero() -> None:
+    rc, c, _ = make()
+    try:
+        c.arm()
+        c.home_all()
+        assert wait(lambda: (c.snapshot()["telemetry"] or {}).get("positions", {}).get("1") == 0)
+        c.move_absolute(1, 20)  # operator placed the build piston by hand
+        assert wait(lambda: (c.snapshot()["telemetry"] or {})["positions"]["1"] == 20)
+        rc.start(fast_plan())
+        assert rc.snapshot()["part_zero_mm"] == 20.0
+        assert wait(lambda: rc.snapshot()["state"] == "done")
+        s = rc.snapshot()
+        # the zero is re-captured after the setup home, so measured == expected (1 layer x 1 mm)
+        assert s["part_height_measured_mm"] == pytest.approx(1.0, abs=0.05)
+        assert s["part_height_mm"] == 1.0
+    finally:
+        c.stop()

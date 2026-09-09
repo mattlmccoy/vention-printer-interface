@@ -45,6 +45,24 @@ Plans: `docs/superpowers/plans/2026-09-08-backend-core.md` (Plan 1), Plan 2 reci
   pause → E-STOP (FAULT latched, recipe aborted, run closed with manifest) → release → clear fault → read-only.
 - Not done: screenshots on disk (browser pane only); the lab wireframe is not embedded (schematic drawn in its style).
 
+## Plan 3b — console redesign (2026-09-09, after user review "this is a 3D printer controller")
+- Spec §6 rewritten: share FLIR's design language, not its studio layout. Mockup approved (artifact "Binder Jet Console").
+- Backend: `control/events.py` (ring + sinks, `/api/events`, status.events), `control/macros.py`
+  (`load_cart` = home all then both pistons to bottom of travel; `clear_bed`) run through
+  `RecipeController.start_macro`, `part_zero_mm` captured at start and re-captured after the setup
+  home, `part_height_measured_mm` in the snapshot, `estimate_duration_s`; auto-log run now opens
+  before the recipe starts so `recipe_started` is recorded once.
+- Frontend rewritten: Print / Prepare / Control / Runs views; ARM lock + E-STOP in the top bar;
+  fault banner with ordered recovery; Elevation drawing; layer-cycle strip; heater ring; layer stack
+  vs powder budget; jog pads labelled by physical motion; park macros.
+- User answers: no custom GUI on the Vention HMI (open question for Vention); load cart = pistons
+  at bottom of travel + gantries homed, then manual placement; part height = measured (piston
+  minus zero at start) with the recipe value beside it, amber on mismatch; current lab scripts
+  to follow.
+- Verification: backend 173 passed; frontend 27 passed; build green; browser: ARM → Control (jog
+  pads live, macros gated) → Prepare (stack, 11:39 estimate, 280 steps) → START DRY RUN → Print
+  view live (layer 0/12 setup, feed piston moving, REC open, event log).
+
 ## Blocked on the user (lab)
 - [ ] Step 0-1: network + `vpi-probe --ip 192.168.0.2` → `plan/probe_report.json`
 - [ ] Step 2: reconcile parsers/fixtures; update `plan/notes.md`

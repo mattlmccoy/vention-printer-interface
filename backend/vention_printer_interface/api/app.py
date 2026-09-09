@@ -23,8 +23,10 @@ from pydantic import BaseModel, Field
 
 from vention_printer_interface import __version__
 from vention_printer_interface.control.controller import Controller
+from vention_printer_interface.control.events import EventLog
 from vention_printer_interface.control.limits_store import load_limits, save_limits
-from vention_printer_interface.control.recipe import RecipePlan, compile_recipe
+from vention_printer_interface.control.macros import MACROS, macro_steps
+from vention_printer_interface.control.recipe import RecipePlan, compile_recipe, estimate_duration_s
 from vention_printer_interface.control.recipe_controller import RecipeController, RecipeState
 from vention_printer_interface.control.recipe_store import load_recipe, save_recipe
 from vention_printer_interface.control.safety import HARD_BOUNDS, SafetyLimits
@@ -175,9 +177,11 @@ def create_app(
         )
         app.state.auto_log = True
         app.state.auto_run_open = False
+        events = EventLog()
+        events.add_sink(recorder.event)  # every event also lands in the durable run record
 
         def on_recipe_event(label: str, data: dict[str, Any]) -> None:
-            recorder.event(label, data)
+            events.append(label, data)
             if label == "layer_completed":
                 recorder.record_layer(data)
             if (
@@ -188,9 +192,19 @@ def create_app(
                 recorder.stop()
 
         recipe.on_event = on_recipe_event
+        last_state = {"v": "disconnected"}
+
+        def on_controller_state(snap: dict[str, Any]) -> None:
+            if snap["state"] != last_state["v"]:
+                last_state["v"] = snap["state"]
+                if snap["state"] == "fault":
+                    events.append("fault", {"reasons": snap["fault_reasons"]})
+
         # Order matters: the recipe ticks first so the recorder logs the row that reflects it.
         controller.add_listener(recipe.tick)
+        controller.add_listener(on_controller_state)
         controller.add_listener(recorder.record)
+        app.state.events = events
         app.state.controller, app.state.recorder, app.state.recipe = controller, recorder, recipe
         app.state.recipe_plan = load_recipe(root, controller.limits)
         app.state.backend = "none"
@@ -226,12 +240,16 @@ def create_app(
     def recipe() -> RecipeController:
         return app.state.recipe  # type: ignore[no-any-return]
 
+    def ev(label: str, data: dict[str, Any] | None = None) -> None:
+        app.state.events.append(label, data)
+
     def recipe_payload() -> dict[str, Any]:
         plan: RecipePlan = app.state.recipe_plan
         return {
             "plan": plan.to_dict(),
             "validation": plan.validate(ctrl().limits),
             "n_steps": len(compile_recipe(plan)),
+            "estimated_duration_s": estimate_duration_s(plan, recipe_min_wait_s),
             "total_layers": plan.total_layers,
             "total_thickness_mm": plan.total_thickness_mm,
             "bounds": HARD_BOUNDS,
@@ -247,6 +265,7 @@ def create_app(
             "axis_motion": {str(k): v for k, v in app.state.axis_motion.items()},
             "recipe": recipe().snapshot(),
             "auto_log": app.state.auto_log,
+            "events": app.state.events.recent(50),
             "recording": {
                 "active": rc.active is not None,
                 "run": rc.active.name if rc.active else None,
@@ -302,12 +321,15 @@ def create_app(
         try:
             _attach(app, body.backend, body.ip, body.heater_io)
         except Exception as exc:  # noqa: BLE001 - surface any connect failure as 503
+            ev("connect_failed", {"backend": body.backend, "error": str(exc)})
             raise HTTPException(503, f"could not connect: {exc}") from exc
+        ev("connected", {"backend": body.backend, "ip": body.ip})
         return status_payload()
 
     @app.post("/api/disconnect")
     def disconnect() -> dict[str, Any]:
         recipe().abort("disconnect")
+        ev("disconnected")
         rec().stop()
         ctrl().detach_device()
         app.state.backend = "none"
@@ -316,20 +338,20 @@ def create_app(
     @app.post("/api/arm")
     def arm() -> dict[str, Any]:
         guarded(ctrl().arm)
-        rec().event("armed")
+        ev("armed")
         return status_payload()
 
     @app.post("/api/disarm")
     def disarm() -> dict[str, Any]:
         recipe().abort("disarm")
         ctrl().disarm()
-        rec().event("disarmed")
+        ev("disarmed")
         return status_payload()
 
     @app.post("/api/estop")
     def estop() -> Any:
         result = ctrl().estop()
-        rec().event("estop", result)
+        ev("estop", result)
         if not result["ok"]:
             # Never a false green: the operator must know which safe action did not reach the
             # controller (review C3).
@@ -339,13 +361,13 @@ def create_app(
     @app.post("/api/estop/release")
     def estop_release() -> dict[str, Any]:
         guarded(ctrl().estop_release)
-        rec().event("estop_released")
+        ev("estop_released")
         return status_payload()
 
     @app.post("/api/clear-fault")
     def clear_fault() -> dict[str, Any]:
         guarded(ctrl().clear_fault)
-        rec().event("fault_cleared")
+        ev("fault_cleared")
         return status_payload()
 
     # ---- motion -----------------------------------------------------------------------------
@@ -357,7 +379,7 @@ def create_app(
                 guarded(ctrl().home, a)
         else:
             guarded(ctrl().home_all)
-        rec().event("home", {"axes": body.axes or "all"})
+        ev("home", {"axes": body.axes or "all"})
         return status_payload()
 
     @app.post("/api/motion/move")
@@ -365,13 +387,13 @@ def create_app(
         fn = ctrl().move_absolute if body.mode == "abs" else ctrl().move_relative
         applied = guarded(fn, body.axis, body.mm)
         out = {"axis": body.axis, "mode": body.mode, "requested_mm": body.mm, "applied_mm": applied}
-        rec().event("move", out)
+        ev("move", out)
         return out
 
     @app.post("/api/motion/stop")
     def stop(body: StopBody) -> dict[str, Any]:
         guarded(ctrl().stop_all)
-        rec().event("stop", {"axes": body.axes or "all"})
+        ev("stop", {"axes": body.axes or "all"})
         return status_payload()
 
     @app.get("/api/axes/{axis}/motion")
@@ -422,13 +444,13 @@ def create_app(
     @app.post("/api/heater/on")
     def heater_on() -> dict[str, Any]:
         guarded(ctrl().heater_on)
-        rec().event("heater_on")
+        ev("heater_on")
         return status_payload()
 
     @app.post("/api/heater/off")
     def heater_off() -> dict[str, Any]:
         ctrl().heater_off()
-        rec().event("heater_off")
+        ev("heater_off")
         return status_payload()
 
     # ---- recipe -----------------------------------------------------------------------------
@@ -454,8 +476,16 @@ def create_app(
     @app.post("/api/recipe/start")
     def recipe_start(body: RecipeStartBody) -> dict[str, Any]:
         plan: RecipePlan = app.state.recipe_plan
-        guarded(recipe().start, plan, body.dry_run, body.single_step)
+        # Open the auto-log run BEFORE starting so the recipe's own start event lands in it.
+        opened = False
         if app.state.auto_log and rec().active is None:
+            if recipe().state in (RecipeState.RUNNING, RecipeState.PAUSED):
+                raise HTTPException(409, "recipe already running")
+            if not ctrl().armed:
+                raise HTTPException(409, "not armed — press ARM to take control of the printer")
+            reasons = plan.validate(ctrl().limits)
+            if reasons:
+                raise HTTPException(409, "recipe invalid: " + "; ".join(reasons))
             name = body.name or ("dry-run" if body.dry_run else "print")
             rec().start(
                 name,
@@ -469,10 +499,14 @@ def create_app(
                 },
             )
             app.state.auto_run_open = True
-            # the recipe's own start event fired before the run opened; record it here
-            rec().event(
-                "recipe_started", {"n_steps": len(compile_recipe(plan)), "dry_run": body.dry_run}
-            )
+            opened = True
+        try:
+            guarded(recipe().start, plan, body.dry_run, body.single_step)
+        except HTTPException:
+            if opened:
+                app.state.auto_run_open = False
+                rec().stop()
+            raise
         return recipe().snapshot()
 
     @app.post("/api/recipe/pause")
@@ -494,6 +528,21 @@ def create_app(
     def recipe_abort() -> dict[str, Any]:
         recipe().abort()
         return recipe().snapshot()
+
+    @app.post("/api/macro/{name}")
+    def run_macro(name: str) -> dict[str, Any]:
+        if name not in MACROS:
+            raise HTTPException(400, f"unknown macro {name!r}; known: {sorted(MACROS)}")
+        guarded(recipe().start_macro, name, macro_steps(name, ctrl().limits))
+        return recipe().snapshot()
+
+    @app.get("/api/macros")
+    def list_macros() -> dict[str, Any]:
+        return {"macros": MACROS}
+
+    @app.get("/api/events")
+    def get_events() -> dict[str, Any]:
+        return {"events": app.state.events.recent(200)}
 
     @app.get("/api/auto-log")
     def get_auto_log() -> dict[str, Any]:

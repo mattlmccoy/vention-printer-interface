@@ -35,7 +35,7 @@ async function req<T>(method: string, path: string, body?: unknown): Promise<T> 
 
 export interface Health { version: string; api_version: string; backend: string; platform: string }
 export interface Discovery { candidates: Array<{ backend: string; ip: string | null; label?: string; reachable: boolean }>; connected: { backend: string } }
-export interface RecipePayload { plan: Record<string, unknown>; validation: string[]; n_steps: number; total_layers: number; total_thickness_mm: number; bounds: Record<string, unknown>; limits: Record<string, unknown> }
+export interface RecipePayload { plan: Record<string, unknown>; validation: string[]; n_steps: number; estimated_duration_s: number; total_layers: number; total_thickness_mm: number; bounds: Record<string, unknown>; limits: Record<string, unknown> }
 export interface AxisMotion { max_speed: number | null; max_accel: number | null; bounds: { max_speed: [number, number]; max_accel: [number, number] }; limit_speed: number; limit_accel: number }
 
 export const api = {
@@ -68,6 +68,8 @@ export const api = {
   recordingStart: (body: { name: string; notes: string }) => req<{ run: string }>("POST", "/api/recording/start", body),
   recordingStop: () => req<{ run: string | null; stopped: boolean }>("POST", "/api/recording/stop"),
   recordings: () => req<{ runs: Array<{ run: string; complete: boolean; size_bytes: number }> }>("GET", "/api/recordings"),
+  macro: (name: string) => req<StatusPayload["recipe"]>("POST", `/api/macro/${name}`),
+  events: () => req<{ events: StatusPayload["events"] }>("GET", "/api/events"),
   autoLog: () => req<{ enabled: boolean }>("GET", "/api/auto-log"),
   setAutoLog: (enabled: boolean) => req<{ enabled: boolean }>("PUT", "/api/auto-log", { enabled }),
 };

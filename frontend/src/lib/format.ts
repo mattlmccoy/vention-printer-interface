@@ -56,6 +56,22 @@ export function armHint(g: Gates, faultReasons: string[]): string {
   return "Armed. Motion, heater and recipe controls are live.";
 }
 
+/** Part height agreement: measured vs recipe-expected, amber when off by more than half a layer. */
+export function heightMismatch(measured: number | null, expected: number, layerMm: number): boolean {
+  return measured !== null && Math.abs(measured - expected) > Math.max(layerMm / 2, 0.05);
+}
+
+/** Layer-cycle step (1-6) for the current recipe step, from its kind/axis/value sequence. */
+export function cycleIndex(step: { kind: string; axis: number | null; value: number | null; phase: string } | null, plan: { recoater_end_mm: number; heater_end_mm: number; printhead_end_mm: number } | null): number {
+  if (!step || !plan || step.phase === "setup") return 0;
+  if (step.kind === "heater" || (step.axis === 4 && step.kind === "move_abs" && step.value === plan.heater_end_mm)) return 6;
+  if (step.axis === 3) return 5;
+  if (step.axis === 4 && step.kind === "move_abs") return step.value === plan.recoater_end_mm ? 2 : 4;
+  if (step.axis === 2) return 3;
+  if (step.axis === 1) return 1;
+  return 0;
+}
+
 export function formatError(e: unknown): string {
   if (e instanceof Error) return e.message;
   return String(e);
