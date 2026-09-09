@@ -14,7 +14,7 @@ def test_register_and_create_custom() -> None:
     class Fake(Transport):
         name = "fake"
 
-        def http_get(self, path: str) -> bytes:
+        def http_get(self, path: str, *, timeout_s: float | None = None) -> bytes:
             return b""
 
         def http_post_json(self, path: str, body: dict[str, float]) -> bytes:

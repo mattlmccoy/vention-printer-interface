@@ -4,7 +4,7 @@ Answers the same HTTP routes and MQTT topics as the controller so the whole stac
 hardware. It is a *model* of the MachineMotion 2, not a capture of the physical unit: axis
 kinematics are constant-velocity at maxSpeed (acceleration is stored, not integrated), homing
 takes travel/homing_speed, and a system reset re-energises the drives after 3 s
-(MachineMotion.py:2470). Fault knobs: ``unreachable``, ``slow_completion_s`` (report
+(MachineMotion.py:2462). Fault knobs: ``unreachable``, ``slow_completion_s`` (report
 complete=false for this long after arrival, reproducing the V1.py sleep quirk), ``stall_axis``.
 """
 
@@ -125,7 +125,7 @@ class SimulatedTransport(Transport):
                 self.advance(dt)
 
     # ---- HTTP -------------------------------------------------------------------------------
-    def http_get(self, path: str) -> bytes:
+    def http_get(self, path: str, *, timeout_s: float | None = None) -> bytes:
         self._check_reachable()
         with self._lock:
             self._sync()
