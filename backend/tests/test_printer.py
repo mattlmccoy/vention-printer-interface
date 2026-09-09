@@ -35,7 +35,9 @@ def test_read_telemetry_shape() -> None:
     assert tel.motion_complete == {1: True, 2: True, 3: True, 4: True}
     assert tel.estop_triggered is False and tel.drives_ready is True
     assert tel.health_ok is True
-    assert tel.heater_on is False
+    assert tel.heater_on is None  # never written, never observed: unknown, not "off"
+    d.heater_write(False)
+    assert d.read_telemetry().heater_on is False
 
 
 def test_move_and_speed() -> None:
@@ -61,11 +63,11 @@ def test_heater_write_and_read() -> None:
     assert d.read_telemetry().heater_on is False
 
 
-def test_heater_unconfigured_refuses_write_but_reads_false() -> None:
+def test_heater_unconfigured_refuses_write_and_reads_unknown() -> None:
     d = PrinterDevice(SimulatedTransport(realtime=False), heater_io=None)
     with pytest.raises(TransportError):
         d.heater_write(True)
-    assert d.heater_read() is False
+    assert d.heater_read() is None
 
 
 def test_estop_cycle() -> None:

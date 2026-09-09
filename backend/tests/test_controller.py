@@ -71,6 +71,8 @@ def test_move_is_clamped_and_speed_bounded() -> None:
         assert c.set_max_accel(3, 1e9) == SafetyLimits().max_accel[3]
         assert c.move_absolute(3, 5000) == 840.0
         assert wait(lambda: (c.snapshot()["telemetry"] or {})["positions"]["3"] > 100)
+        c.stop_all()
+        assert wait(lambda: all((c.snapshot()["telemetry"] or {})["motion_complete"].values()))
         assert c.move_relative(3, -99999) < 0
     finally:
         c.stop()
@@ -100,6 +102,7 @@ def test_estop_release_then_clear_fault() -> None:
         t.advance(3.1)
         assert wait(lambda: (c.snapshot()["telemetry"] or {}).get("drives_ready") is True)
         assert wait(lambda: not (c.snapshot()["telemetry"] or {}).get("estop_triggered", True))
+        assert wait(lambda: c.snapshot()["heater"]["on"] is False)
         c.clear_fault()
         assert c.state == ControllerState.CONNECTED
     finally:
@@ -118,6 +121,7 @@ def test_unreachable_faults_and_clear_requires_clean() -> None:
         t._unreachable = False
         assert wait(lambda: c.snapshot()["read_error"] is None)
         assert wait(lambda: t.mqtt_latest(HEATER) == "0")  # re-enforced once the link returns
+        assert wait(lambda: c.snapshot()["heater"]["on"] is False)
         c.clear_fault()
         assert c.state == ControllerState.CONNECTED
         assert c.snapshot()["armed"] is False

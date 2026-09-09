@@ -37,7 +37,7 @@ def parse_echo_ok(reply: str) -> str:
 
 
 def parse_positions(payload: bytes | str) -> dict[int, float]:
-    """/smartDrives/position -> {axis: mm} (MachineMotion.py:1171-1185)."""
+    """/smartDrives/position -> {axis: mm} (MachineMotion.py:1183-1194)."""
     text = _text(payload)
     if "Error" in text:
         raise ProtocolError(f"position query failed: {text[:120]!r}")

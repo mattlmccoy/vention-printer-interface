@@ -119,11 +119,16 @@ def test_heater_requires_arm_and_off_is_ungated(client: TestClient) -> None:
 def test_estop_and_release(client: TestClient) -> None:
     connect(client)
     r = client.post("/api/estop")
-    assert r.status_code == 200 and r.json() == {"ok": True}
-    wait_state(client, "fault")
+    assert r.status_code == 200 and r.json()["ok"] is True
+    assert r.json()["steps"]["estop_trigger"] == "ok"
+    assert client.get("/api/status").json()["controller"]["state"] == "fault"  # latched itself
     assert client.post("/api/clear-fault").status_code == 409
-    assert client.post("/api/estop/release").status_code == 200
-    time.sleep(3.3)  # simulator re-energises drives 3 s after reset
+    assert client.post("/api/estop/release").status_code == 200  # waits for drives ready
+    for _ in range(100):
+        s = client.get("/api/status").json()["controller"]
+        if s["telemetry"]["estop_triggered"] is False and s["heater"]["on"] is False:
+            break
+        time.sleep(0.05)
     assert client.post("/api/clear-fault").status_code == 200
     assert client.get("/api/status").json()["controller"]["state"] == "connected"
 
@@ -142,6 +147,15 @@ def test_recording_flow(client: TestClient) -> None:
     assert client.get(f"/api/recordings/{stop['run']}/telemetry.csv").status_code == 200
     assert client.get(f"/api/recordings/{stop['run']}/secret.txt").status_code == 404
     assert client.get("/api/recordings/nope/telemetry.csv").status_code == 400
+
+
+def test_estop_reports_502_when_controller_unreachable(client: TestClient) -> None:
+    connect(client, arm=False)
+    wait_tel(client)
+    client.app.state.controller._device._t._unreachable = True  # type: ignore[attr-defined]
+    r = client.post("/api/estop")
+    assert r.status_code == 502 and r.json()["ok"] is False
+    assert "failed" in r.json()["steps"]["estop_trigger"]
 
 
 def test_disconnect_stops_recording(client: TestClient) -> None:

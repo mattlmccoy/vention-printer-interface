@@ -11,7 +11,7 @@ from __future__ import annotations
 from collections.abc import Iterable, Mapping
 from urllib.parse import urlencode
 
-HTTP_PORT = 8000  # MachineMotion.py:432  (GCode.libPort = ":8000")
+HTTP_PORT = 8000  # MachineMotion.py:428  (GCode.libPort = ":8000")
 MQTT_PORT = 1883  # paho default; MachineMotion.py:818 connects with no port/auth
 
 DEFAULT_IP_ETHERNET = "192.168.0.2"  # MachineMotion.py:84 + json/configuration.json
@@ -95,12 +95,12 @@ def drive_config_path(drive: int) -> str:
 GCODE_HOME_ALL = "G28"  # MachineMotion.py:1369
 GCODE_STOP_ALL = "M410"  # MachineMotion.py:1339 (hard stop, not a safety-rated E-STOP)
 GCODE_MOTION_STATUS = "V0"  # MachineMotion.py:1786 ("COMPLETED" in reply)
-GCODE_ENDSTOPS = "M119"  # MachineMotion.py:1229
+GCODE_ENDSTOPS = "M119"  # MachineMotion.py:1230
 GCODE_DESIRED_POSITION = "M114"  # MachineMotion.py:1114 (deprecated; probe only)
 
 
 def gcode_home(axis: int) -> str:
-    return f"{GCODE_HOME_ALL} {axis_letter(axis)}"  # MachineMotion.py:1387
+    return f"{GCODE_HOME_ALL} {axis_letter(axis)}"  # MachineMotion.py:1385
 
 
 def gcode_stop(axes: Iterable[int]) -> str:
@@ -116,20 +116,33 @@ TOPIC_ESTOP_RELEASE_REQUEST = "estop/release/request"  # :202
 TOPIC_ESTOP_RELEASE_RESPONSE = "estop/release/response"  # :203
 TOPIC_ESTOP_RESET_REQUEST = "estop/systemreset/request"  # :204
 TOPIC_ESTOP_RESET_RESPONSE = "estop/systemreset/response"  # :205
-TOPIC_DRIVES_READY = "smartDrives/areReady"  # :210 (JSON bool)
+TOPIC_DRIVES_READY = "smartDrives/areReady"  # :210 (JSON bool; subscribed at :2771)
 TOPIC_DEVICES_AVAILABLE = "devices/+/+/available"  # :2764
 TOPIC_IO_INPUTS = "devices/+/+/digital-input/#"  # :2765
+# Outputs are published retained (:2146); subscribing is how we OBSERVE the heater relay state.
+# Publishing never feeds our cache — only the broker's echo does (review finding C1).
+TOPIC_IO_OUTPUTS = "devices/+/+/digital-output/#"
 TOPIC_DRIVE_MOTION_COMPLETE = "drive/+/motionComplete"  # Vention docs, UNVERIFIED on our unit
 TOPIC_DRIVE_ERROR = "drive/+/error"  # Vention docs, UNVERIFIED on our unit
 MQTT_RESPONSE_TIMEOUT_S = 10.0  # MachineMotion.py:212
+
+# Request/response topics: the SDK reads these with retained=False (:2358, :2414, :2459), so a
+# retained stale "true" must never count as an answer.
+RESPONSE_TOPICS: frozenset[str] = frozenset(
+    {TOPIC_ESTOP_TRIGGER_RESPONSE, TOPIC_ESTOP_RELEASE_RESPONSE, TOPIC_ESTOP_RESET_RESPONSE}
+)
 
 SUBSCRIPTIONS: tuple[str, ...] = (
     TOPIC_ESTOP_STATUS,
     TOPIC_DRIVES_READY,
     TOPIC_DEVICES_AVAILABLE,
     TOPIC_IO_INPUTS,
+    TOPIC_IO_OUTPUTS,
     TOPIC_DRIVE_MOTION_COMPLETE,
     TOPIC_DRIVE_ERROR,
+    TOPIC_ESTOP_TRIGGER_RESPONSE,
+    TOPIC_ESTOP_RELEASE_RESPONSE,
+    TOPIC_ESTOP_RESET_RESPONSE,
 )
 
 
@@ -151,5 +164,5 @@ def io_input_topic(device_id: int, pin: int) -> str:
 
 
 def io_available_topic(device_id: int) -> str:
-    """IO module presence topic (MachineMotion.py:2764, 2830-2838)."""
+    """IO module presence topic (MachineMotion.py:2764, 2836-2845)."""
     return f"devices/io-expander/{device_id}/available"

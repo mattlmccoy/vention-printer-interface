@@ -4,8 +4,13 @@ Answers the same HTTP routes and MQTT topics as the controller so the whole stac
 hardware. It is a *model* of the MachineMotion 2, not a capture of the physical unit: axis
 kinematics are constant-velocity at maxSpeed (acceleration is stored, not integrated), homing
 takes travel/homing_speed, and a system reset re-energises the drives after 3 s
-(MachineMotion.py:2470). Fault knobs: ``unreachable``, ``slow_completion_s`` (report
-complete=false for this long after arrival, reproducing the V1.py sleep quirk), ``stall_axis``.
+(MachineMotion.py:2462). Move targets are NOT clamped (the real drive accepts any target); the
+axis stops at the end sensor instead, so soft-limit protection can be exercised end to end.
+Fault knobs: ``unreachable``, ``slow_completion_s`` (report complete=false for this long after
+arrival, reproducing the V1.py sleep quirk), ``stall_axis``, ``estop_on_boot``,
+``read_delay_s`` (every HTTP reply is delayed), ``health_reachable`` (/health reports the motion
+controller unreachable), ``suppress_output_echo`` (broker never echoes digital-output writes —
+what a mis-subscribed real transport would look like).
 """
 
 from __future__ import annotations
@@ -60,6 +65,11 @@ class SimAxis:
             self.arrived_at = now
         else:
             self.position += move if delta > 0 else -move
+        # End sensors: the carriage physically stops at the travel limits.
+        if self.position <= 0.0 or self.position >= self.travel_mm:
+            self.position = min(max(self.position, 0.0), self.travel_mm)
+            if self.target is not None and not 0.0 <= self.target <= self.travel_mm:
+                self.target, self.speed_override, self.arrived_at = None, None, now
 
 
 @dataclass
@@ -81,12 +91,16 @@ class SimulatedTransport(Transport):
         unreachable: bool = False,
         slow_completion_s: float = 0.0,
         stall_axis: int | None = None,
+        estop_on_boot: bool = False,
         clock: Callable[[], float] = time.monotonic,
     ) -> None:
         self._realtime = realtime
         self._unreachable = unreachable
         self._slow_completion_s = slow_completion_s
         self._stall_axis = stall_axis
+        self.read_delay_s = 0.0
+        self.health_reachable = True
+        self.suppress_output_echo = False
         self._clock = clock
         self._t = 0.0
         self._last_wall = clock()
@@ -99,6 +113,10 @@ class SimulatedTransport(Transport):
             r.TOPIC_DRIVES_READY: "true",
             r.io_available_topic(1): "true",
         }
+        if estop_on_boot:
+            self.machine.estop, self.machine.drives_ready = True, False
+            self._topics[r.TOPIC_ESTOP_STATUS] = "true"
+            self._topics[r.TOPIC_DRIVES_READY] = "false"
 
     # ---- time -------------------------------------------------------------------------------
     def advance(self, dt: float) -> None:
@@ -125,8 +143,10 @@ class SimulatedTransport(Transport):
                 self.advance(dt)
 
     # ---- HTTP -------------------------------------------------------------------------------
-    def http_get(self, path: str) -> bytes:
+    def http_get(self, path: str, *, timeout_s: float | None = None) -> bytes:
         self._check_reachable()
+        if self.read_delay_s:
+            time.sleep(self.read_delay_s)
         with self._lock:
             self._sync()
             url = urlparse(path)
@@ -137,7 +157,7 @@ class SimulatedTransport(Transport):
                             "services/mm-vention-control/version": SIM_VERSION
                         },
                         "estop_triggered": self.machine.estop,
-                        "motion_controller_reachable": True,
+                        "motion_controller_reachable": self.health_reachable,
                         "time_now": self._t,
                     }
                 ).encode()
@@ -182,7 +202,7 @@ class SimulatedTransport(Transport):
                 for key, value in body.items():
                     axis = self.machine.axes[int(key)]
                     target = value if path == r.MOVE_ABSOLUTE_PATH else axis.position + value
-                    axis.target = min(max(0.0, float(target)), axis.travel_mm)
+                    axis.target = float(target)  # not clamped: the real drive accepts any target
                     axis.arrived_at = None
                 return b"{}"
             raise TransportError(f"request http://sim{path} failed with status 404")
@@ -241,8 +261,9 @@ class SimulatedTransport(Transport):
         self._check_reachable()
         with self._lock:
             if topic.startswith("devices/io-expander/") and "/digital-output/" in topic:
-                self._topics[topic] = payload
                 self.machine.io_outputs[topic] = payload
+                if not self.suppress_output_echo:
+                    self._topics[topic] = payload  # the broker echo of a retained publish
                 return
             if topic == r.TOPIC_ESTOP_TRIGGER_REQUEST:
                 self.machine.estop, self.machine.drives_ready = True, False

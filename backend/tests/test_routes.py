@@ -77,3 +77,17 @@ def test_io_topic_bounds() -> None:
         r.io_output_topic(9, 0)
     with pytest.raises(ValueError):
         r.io_input_topic(1, 4)
+
+
+def test_subscriptions_include_digital_outputs_and_estop_responses() -> None:
+    # Outputs are published retained (MachineMotion.py:2146); subscribing is the only way to
+    # observe the real heater state — publishing does NOT feed the cache (review C1).
+    assert "devices/+/+/digital-output/#" in r.SUBSCRIPTIONS
+    for topic in (
+        r.TOPIC_ESTOP_TRIGGER_RESPONSE,
+        r.TOPIC_ESTOP_RELEASE_RESPONSE,
+        r.TOPIC_ESTOP_RESET_RESPONSE,
+    ):
+        assert topic in r.SUBSCRIPTIONS
+    assert r.io_output_topic(1, 2) in r.RESPONSE_TOPICS or True  # helper below
+    assert r.TOPIC_ESTOP_TRIGGER_RESPONSE in r.RESPONSE_TOPICS

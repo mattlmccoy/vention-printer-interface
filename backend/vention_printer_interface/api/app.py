@@ -24,6 +24,9 @@ from pydantic import BaseModel, Field
 from vention_printer_interface import __version__
 from vention_printer_interface.control.controller import Controller
 from vention_printer_interface.control.limits_store import load_limits, save_limits
+from vention_printer_interface.control.recipe import RecipePlan, compile_recipe
+from vention_printer_interface.control.recipe_controller import RecipeController, RecipeState
+from vention_printer_interface.control.recipe_store import load_recipe, save_recipe
 from vention_printer_interface.control.safety import HARD_BOUNDS, SafetyLimits
 from vention_printer_interface.device import create_transport, registered_transports
 from vention_printer_interface.device.printer import PrinterDevice
@@ -114,6 +117,17 @@ class RecordingStartBody(BaseModel):
     notes: str = ""
 
 
+class RecipeStartBody(BaseModel):
+    dry_run: bool = False
+    single_step: bool = False
+    name: str = ""
+    notes: str = ""
+
+
+class AutoLogBody(BaseModel):
+    enabled: bool
+
+
 def _tcp_open(ip: str, port: int, timeout_s: float = 0.5) -> bool:
     try:
         with socket.create_connection((ip, port), timeout=timeout_s):
@@ -147,6 +161,8 @@ def create_app(
     frontend_dist: Path | None = None,
     site_origin: str | None = None,
     heater_io: tuple[int, int] | None = None,
+    recipe_min_wait_s: float = 0.5,
+    recipe_step_timeout_s: float = 120.0,
 ) -> FastAPI:
     root = experiments_root or Path.cwd() / "experiments"
 
@@ -154,8 +170,29 @@ def create_app(
     async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         controller = Controller(poll_interval_s=poll_interval_s, limits=limits or load_limits(root))
         recorder = Recorder(root)
+        recipe = RecipeController(
+            controller, min_wait_s=recipe_min_wait_s, step_timeout_s=recipe_step_timeout_s
+        )
+        app.state.auto_log = True
+        app.state.auto_run_open = False
+
+        def on_recipe_event(label: str, data: dict[str, Any]) -> None:
+            recorder.event(label, data)
+            if label == "layer_completed":
+                recorder.record_layer(data)
+            if (
+                label in ("recipe_done", "recipe_aborted", "recipe_fault")
+                and app.state.auto_run_open
+            ):
+                app.state.auto_run_open = False
+                recorder.stop()
+
+        recipe.on_event = on_recipe_event
+        # Order matters: the recipe ticks first so the recorder logs the row that reflects it.
+        controller.add_listener(recipe.tick)
         controller.add_listener(recorder.record)
-        app.state.controller, app.state.recorder = controller, recorder
+        app.state.controller, app.state.recorder, app.state.recipe = controller, recorder, recipe
+        app.state.recipe_plan = load_recipe(root, controller.limits)
         app.state.backend = "none"
         app.state.default_heater_io = heater_io or DEFAULT_HEATER_IO
         app.state.axis_motion = _fresh_axis_motion()
@@ -186,6 +223,21 @@ def create_app(
     def rec() -> Recorder:
         return app.state.recorder  # type: ignore[no-any-return]
 
+    def recipe() -> RecipeController:
+        return app.state.recipe  # type: ignore[no-any-return]
+
+    def recipe_payload() -> dict[str, Any]:
+        plan: RecipePlan = app.state.recipe_plan
+        return {
+            "plan": plan.to_dict(),
+            "validation": plan.validate(ctrl().limits),
+            "n_steps": len(compile_recipe(plan)),
+            "total_layers": plan.total_layers,
+            "total_thickness_mm": plan.total_thickness_mm,
+            "bounds": HARD_BOUNDS,
+            "limits": ctrl().limits.to_dict(),
+        }
+
     def status_payload() -> dict[str, Any]:
         c, rc = ctrl(), rec()
         snap = c.snapshot()
@@ -193,6 +245,8 @@ def create_app(
             "device": snap.pop("device"),
             "controller": snap,
             "axis_motion": {str(k): v for k, v in app.state.axis_motion.items()},
+            "recipe": recipe().snapshot(),
+            "auto_log": app.state.auto_log,
             "recording": {
                 "active": rc.active is not None,
                 "run": rc.active.name if rc.active else None,
@@ -253,6 +307,7 @@ def create_app(
 
     @app.post("/api/disconnect")
     def disconnect() -> dict[str, Any]:
+        recipe().abort("disconnect")
         rec().stop()
         ctrl().detach_device()
         app.state.backend = "none"
@@ -266,15 +321,20 @@ def create_app(
 
     @app.post("/api/disarm")
     def disarm() -> dict[str, Any]:
+        recipe().abort("disarm")
         ctrl().disarm()
         rec().event("disarmed")
         return status_payload()
 
     @app.post("/api/estop")
-    def estop() -> dict[str, Any]:
-        ctrl().estop()
-        rec().event("estop")
-        return {"ok": True}
+    def estop() -> Any:
+        result = ctrl().estop()
+        rec().event("estop", result)
+        if not result["ok"]:
+            # Never a false green: the operator must know which safe action did not reach the
+            # controller (review C3).
+            return JSONResponse(result, status_code=502)
+        return result
 
     @app.post("/api/estop/release")
     def estop_release() -> dict[str, Any]:
@@ -370,6 +430,79 @@ def create_app(
         ctrl().heater_off()
         rec().event("heater_off")
         return status_payload()
+
+    # ---- recipe -----------------------------------------------------------------------------
+    @app.get("/api/recipe")
+    def get_recipe() -> dict[str, Any]:
+        return recipe_payload()
+
+    @app.put("/api/recipe")
+    def put_recipe(body: dict[str, Any]) -> dict[str, Any]:
+        if recipe().state in (RecipeState.RUNNING, RecipeState.PAUSED):
+            raise HTTPException(409, "recipe is running; abort it before editing")
+        current = app.state.recipe_plan.to_dict()
+        for key, value in body.items():
+            if isinstance(value, dict) and isinstance(current.get(key), dict):
+                current[key] = {**current[key], **value}
+            else:
+                current[key] = value
+        plan = RecipePlan.bounded(current, ctrl().limits)
+        app.state.recipe_plan = plan
+        save_recipe(root, plan)
+        return recipe_payload()
+
+    @app.post("/api/recipe/start")
+    def recipe_start(body: RecipeStartBody) -> dict[str, Any]:
+        plan: RecipePlan = app.state.recipe_plan
+        guarded(recipe().start, plan, body.dry_run, body.single_step)
+        if app.state.auto_log and rec().active is None:
+            name = body.name or ("dry-run" if body.dry_run else "print")
+            rec().start(
+                name,
+                notes=body.notes,
+                metadata={
+                    "backend": app.state.backend,
+                    "device": ctrl().snapshot()["device"],
+                    "limits": ctrl().limits.to_dict(),
+                    "recipe": plan.to_dict(),
+                    "dry_run": body.dry_run,
+                },
+            )
+            app.state.auto_run_open = True
+            # the recipe's own start event fired before the run opened; record it here
+            rec().event(
+                "recipe_started", {"n_steps": len(compile_recipe(plan)), "dry_run": body.dry_run}
+            )
+        return recipe().snapshot()
+
+    @app.post("/api/recipe/pause")
+    def recipe_pause() -> dict[str, Any]:
+        recipe().pause()
+        return recipe().snapshot()
+
+    @app.post("/api/recipe/resume")
+    def recipe_resume() -> dict[str, Any]:
+        guarded(recipe().resume)
+        return recipe().snapshot()
+
+    @app.post("/api/recipe/step")
+    def recipe_step() -> dict[str, Any]:
+        guarded(recipe().step)
+        return recipe().snapshot()
+
+    @app.post("/api/recipe/abort")
+    def recipe_abort() -> dict[str, Any]:
+        recipe().abort()
+        return recipe().snapshot()
+
+    @app.get("/api/auto-log")
+    def get_auto_log() -> dict[str, Any]:
+        return {"enabled": app.state.auto_log}
+
+    @app.put("/api/auto-log")
+    def put_auto_log(body: AutoLogBody) -> dict[str, Any]:
+        app.state.auto_log = body.enabled
+        return {"enabled": app.state.auto_log}
 
     # ---- recording --------------------------------------------------------------------------
     @app.post("/api/recording/start")

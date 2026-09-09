@@ -146,12 +146,15 @@ def evaluate(
     warnings: list[str] = []
     if telemetry_age_s > limits.telemetry_timeout_s:
         reasons.append(f"telemetry stale ({telemetry_age_s:.1f}s > {limits.telemetry_timeout_s}s)")
-    if telemetry.estop_triggered:
+    if telemetry.estop_triggered is None:
+        reasons.append("controller e-stop status unknown (no estop/status message yet)")
+    elif telemetry.estop_triggered:
         reasons.append("controller e-stop asserted")
     if not telemetry.health_ok:
         reasons.append("controller health not ok (motion controller unreachable)")
     if move_pending and not telemetry.drives_ready:
-        reasons.append("drives not ready while a move is pending")
+        state = "unknown" if telemetry.drives_ready is None else "not ready"
+        reasons.append(f"drives {state} while a move is pending")
     for axis, pos in telemetry.positions.items():
         lo = limits.travel_min.get(axis, 0.0)
         hi = limits.travel_max.get(axis, TRAVEL_MM.get(axis, 0.0))
@@ -159,6 +162,10 @@ def evaluate(
             reasons.append(f"axis {axis} at {pos:.2f} mm outside [{lo:.1f}, {hi:.1f}]")
         elif pos - lo < limits.near_limit_mm or hi - pos < limits.near_limit_mm:
             warnings.append(f"axis {axis} near travel limit ({pos:.1f} mm)")
-    if telemetry.heater_on and heater_on_s > limits.heater_max_on_s:
+    # heater_on_s is measured from the earlier of "commanded on" and "observed on", so the
+    # watchdog works even when the relay state is never echoed back (review C1).
+    if heater_on_s > limits.heater_max_on_s:
         reasons.append(f"heater on {heater_on_s:.0f}s > watchdog {limits.heater_max_on_s:.0f}s")
+    if telemetry.heater_on is None and heater_on_s > 0:
+        warnings.append("heater commanded on but relay state not observed")
     return SafetyDecision(trip=bool(reasons), reasons=tuple(reasons), warnings=tuple(warnings))
