@@ -145,3 +145,12 @@ Fixes:
    latched fault. Commanded moves are still clamped to the window (clamp_position), so software
    cannot drive out of range; a parked-out-of-range axis stays recoverable via homing.
 Verified on hardware: connect at -51.8 mm → CONNECTED with warning (not fault) → arm succeeds.
+
+## Homing VERIFIED working (2026-09-09) — CORRECTION
+With the fix, a completed home re-zeros the axis to **0.0** (recoater drive 4: -51.8 → 0.0 after
+HOME). So axes DO zero to 0 on a clean home; the earlier -22/-51.8 were interrupted-home artifacts
+(protection stopping the move), NOT the machine's real home. The -30 travel_min floor + out-of-range
+warning stay as robustness (moves are clamped; harmless), but per-axis travel_min can be tightened
+back toward 0 once each axis is confirmed homing to 0. Positions after recoater home:
+{1: -0.1, 2: 0.1, 3: 250.0 (printhead not yet homed), 4: 0.0}. Full print-motion path (G28 → move →
+protection) now proven end-to-end on real hardware.
