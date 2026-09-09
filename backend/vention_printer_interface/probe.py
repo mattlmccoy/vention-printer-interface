@@ -70,7 +70,9 @@ def run_probe(
         "captured_utc": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
     }
     try:
-        h = p.parse_health(t.http_get(r.HEALTH_PATH))
+        h = p.parse_health(
+            t.http_get(r.HEALTH_PATH, timeout_s=12.0)
+        )  # /health is slow on real units
         report["health"] = {
             "version": ".".join(map(str, h.version)),
             "async_supported": h.async_supported,

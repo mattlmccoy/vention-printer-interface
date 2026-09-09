@@ -26,6 +26,9 @@ from vention_printer_interface.protocol import routes as r
 log = logging.getLogger(__name__)
 
 HTTP_TIMEOUT_S = 5.0  # the SDK uses 65 s (:355); we poll, so fail fast and let protection act
+HEALTH_TIMEOUT_S = (
+    12.0  # /health blocks ~5 s on our unit (io-expander-hub subscribe_failed, 2026-09-09)
+)
 
 
 class MachineMotionTransport(Transport):

@@ -34,6 +34,7 @@ class AxisConfig:
     homing_speed: float
 
 
+_HEALTH_TIMEOUT_S = 12.0  # matches machinemotion.HEALTH_TIMEOUT_S
 HOMING_TIMEOUT_S = 330.0  # the SDK gives G28 DEFAULT_TIMEOUT*5 (MachineMotion.py:1369); UNVERIFIED
 # whether the controller blocks the reply until homing completes.
 
@@ -67,7 +68,9 @@ class PrinterDevice:
 
     # ---- identity ---------------------------------------------------------------------------
     def health(self) -> p.HealthInfo:
-        self._health = p.parse_health(self._t.http_get(r.HEALTH_PATH))
+        # /health can block several seconds on a real controller (a failing io-expander-hub
+        # subscribe), so it gets its own long timeout and is fetched sparingly (at connect).
+        self._health = p.parse_health(self._t.http_get(r.HEALTH_PATH, timeout_s=_HEALTH_TIMEOUT_S))
         return self._health
 
     def identify(self) -> dict[str, Any]:
