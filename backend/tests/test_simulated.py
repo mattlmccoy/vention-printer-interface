@@ -77,9 +77,7 @@ def test_estop_round_trip_over_mqtt() -> None:
     t = make()
     assert t.mqtt_latest(r.TOPIC_ESTOP_STATUS) == "false"
     assert t.mqtt_latest(r.TOPIC_DRIVES_READY) == "true"
-    reply = t.mqtt_request(
-        r.TOPIC_ESTOP_TRIGGER_REQUEST, r.TOPIC_ESTOP_TRIGGER_RESPONSE, "test", 1
-    )
+    reply = t.mqtt_request(r.TOPIC_ESTOP_TRIGGER_REQUEST, r.TOPIC_ESTOP_TRIGGER_RESPONSE, "test", 1)
     assert reply == "true"
     assert t.mqtt_latest(r.TOPIC_ESTOP_STATUS) == "true"
     assert t.mqtt_latest(r.TOPIC_DRIVES_READY) == "false"
