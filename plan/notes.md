@@ -154,3 +154,33 @@ warning stay as robustness (moves are clamped; harmless), but per-axis travel_mi
 back toward 0 once each axis is confirmed homing to 0. Positions after recoater home:
 {1: -0.1, 2: 0.1, 3: 250.0 (printhead not yet homed), 4: 0.0}. Full print-motion path (G28 → move →
 protection) now proven end-to-end on real hardware.
+
+## Piston mechanics (2026-09-09, from user slides) — CRITICAL, powder-eject risk
+Piston position commands are INVERTED vs the console's earlier assumption (small = up/flush,
+large = down/bottom), and **homing a piston (G28 → 0) drives it fully UP = flush with the
+substrate = ejects all powder.** Gantries (drives 3,4) are safe to home; pistons (drives 1,2)
+must NEVER be homed while loaded.
+- Build/part cylinder (drive 1): command 4 mm ≈ top (near substrate), 70 mm ≈ bottom; ~56 mm
+  printable height ("can totally lengthen cylinder"). To print, the part piston DESCENDS
+  (command increases) to open room for the next layer.
+- Feed cylinder (drive 2): command 11 mm ≈ top, 80 mm ≈ bottom; **0 mm = flush with substrate**.
+  To feed, the feed piston RISES (command decreases) to push fresh powder up for the recoater.
+- Workflow: fill the bottom with several layers of virgin powder (manual is fine), then per layer:
+  recoater spreads fresh powder → printheads jet ink (multiple passes if needed) → recoater pass
+  to evaporate IPA.
+Console implications (DONE where noted): HOME ALL must not home pistons (→ "HOME GANTRIES",
+homes 3,4 only); per-piston home is behind an explicit "ejects powder" confirm; the print-settings
+compiler must NOT emit home_all for a loaded print (home gantries only) — HOLD exact routine until
+the user's print-routine code arrives. Travel extents to re-measure: build ~4-70+, feed ~0/11-80.
+
+## Two-phase workflow (user, 2026-09-09) — governs the print-settings redesign
+The operator runs TWO things: (1) a separate **powder-prep script** FIRST (homes/positions the
+pistons for loading, they load powder), then (2) the **print** which runs AFTER prep. Consequences:
+- The print routine does NOT home the pistons (prep did the piston setup). It may home gantries.
+- The feed piston start position is whatever PREP left it at (handoff from prep → print).
+- Print model = full async_print_routine (3 stages + printhead + optional heater) PLUS postcoat
+  and the piston-break move from the powder-only script, plus any other powder-only features.
+- BLOCKED: user is finding the powder-prep script; build the prep phase + print compiler once it
+  arrives. Heater confirmed = IO module 1, pin 0 (detectIOModules + HEATER_PIN=0 in their code).
+UI done now (safe regardless of the redesign): "HOME ALL" → "HOME GANTRIES" (axes 3,4 only);
+per-piston home ⌂ requires a powder-eject confirm; LOAD CART relabeled "empty cart only".

@@ -25,7 +25,7 @@ function Axis({ a, status, ok, call, step }: { a: AxisNo; status: StatusPayload 
       <div className="jog">
         <button disabled={!ok} onClick={() => rel(-1)}>{piston ? "▲ UP" : "◀ HOME SIDE"}</button>
         <button disabled={!ok} onClick={() => rel(1)}>{piston ? "▼ DOWN" : "AWAY ▶"}</button>
-        <button className="home" disabled={!ok} title="home this axis" onClick={() => call(`home ${AXIS_NAMES[a]}`, () => api.home([a]))}>⌂</button>
+        <button className="home" disabled={!ok} title={piston ? "home this piston — EJECTS POWDER (drives it fully up/flush)" : "home this axis"} onClick={() => { if (!piston || window.confirm(`Home the ${AXIS_NAMES[a]}? This drives it fully up (0 mm) = flush with the substrate and EJECTS any powder in the cylinder. Continue?`)) call(`home ${AXIS_NAMES[a]}`, () => api.home([a])); }}>⌂</button>
       </div>
       <details style={{ gridColumn: "1 / -1", marginTop: 2 }}>
         <summary>more</summary>
@@ -49,9 +49,9 @@ export function ControlView({ status, gates, call, gantryStep, pistonStep, setGa
     { id: "pistons", title: "pistons", size: "m", node: <>{stepper(pistonStep, setPistonStep)}<Axis a={1} status={status} ok={ok} call={call} step={pistonStep} /><Axis a={2} status={status} ok={ok} call={call} step={pistonStep} /></> },
     { id: "motion", title: "motion", size: "s", node: (
       <>
-        <div className="actions" style={{ marginTop: 0 }}><button className="cta" disabled={!ok} onClick={() => call("home all", () => api.home([]))}>HOME ALL</button><button className="cta danger" disabled={!gates.connected} onClick={() => call("stop", api.stop)}>STOP</button></div>
+        <div className="actions" style={{ marginTop: 0 }}><button className="cta" disabled={!ok} title="homes the printhead + recoater gantries only (never the pistons — that would eject powder)" onClick={() => call("home gantries", () => api.home([3, 4]))}>HOME GANTRIES</button><button className="cta danger" disabled={!gates.connected} onClick={() => call("stop", api.stop)}>STOP</button></div>
         <div className="actions tight">
-          <button className="cta" disabled={!ok} onClick={() => { if (window.confirm("Home all axes, then lower BOTH pistons to the bottom of travel?")) call("load cart", () => api.macro("load_cart")); }}>LOAD CART</button>
+          <button className="cta" disabled={!ok} onClick={() => { if (window.confirm("For an EMPTY cart only. Homes the gantries, then drives both pistons to the bottom of travel so you can load the cart. Do NOT run with powder loaded. Continue?")) call("load cart", () => api.macro("load_cart")); }}>LOAD CART (empty)</button>
           <button className="cta" disabled={!ok} onClick={() => call("clear bed", () => api.macro("clear_bed"))}>CLEAR BED</button>
         </div>
         <div className="hint" style={{ marginTop: 10 }}>Load cart lowers both pistons and homes the gantries; then jog the pistons into place.</div>
