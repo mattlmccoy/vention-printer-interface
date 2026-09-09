@@ -175,7 +175,8 @@ export function RecipeSection({ status, gates, call }: Common) {
     if (!dry && !window.confirm(`Start the print recipe on the machine? ${plan ? compileRecipe(plan).length : "?"} steps, heater ${plan?.heater_enabled ? "ENABLED" : "disabled"}. A run will be recorded.`)) return;
     call("start recipe", () => api.recipeStart({ dry_run: dry, single_step: single }));
   };
-  const step = r ? compileRecipe((r.plan as unknown as RecipePlan) ?? plan ?? ({} as RecipePlan)) : [];
+  const stepsPlan = (r?.plan as unknown as RecipePlan | null) ?? plan;
+  const step = stepsPlan ? compileRecipe(stepsPlan) : [];
   const cur = r && r.current_step ? step[r.current_step.index] ?? null : null;
   return (
     <>
