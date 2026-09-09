@@ -6,12 +6,14 @@ IR heater). Third sibling of the [FLIR Research Interface](../../../../FLIR) and
 [T&C Power Interface](../TC-POWER); it mirrors their architecture and conventions so the three
 read as one family.
 
-**Status (2026-09-09): backend + recipe engine working against a built-in simulator; NOT yet run
-against the physical controller.** Protocol layer, simulator, real HTTP+MQTT transport,
-supervisory controller (ARM gate, E-STOP, pure protection, heater watchdog), the V1.py recipe as a
-pausable step machine, run recorder with per-layer log, FastAPI + `/ws/telemetry`, and three CLIs
-are implemented and tested (164 backend tests). An independent review pass fixed several
-safety gaps (see `plan/task_plan.md`). The Studio UI (Plan 3) is next.
+**Status (2026-09-09): backend, recipe engine and Studio UI working against a built-in simulator;
+NOT yet run against the physical controller.** Protocol layer, simulator, real HTTP+MQTT
+transport, supervisory controller (ARM gate, E-STOP, pure protection, heater watchdog), the V1.py
+recipe as a pausable step machine, run recorder with per-layer log, FastAPI + `/ws/telemetry`,
+three CLIs, and the React operator UI are implemented and tested (164 backend tests, 28 frontend
+tests). An independent review pass fixed several safety gaps (see `plan/task_plan.md`). The UI
+was browser-verified against the simulator: connect → ARM → home → dry-run recipe → pause →
+E-STOP → release → clear fault.
 
 | Piece | Location | State |
 |---|---|---|
@@ -29,6 +31,7 @@ safety gaps (see `plan/task_plan.md`). The Studio UI (Plan 3) is next.
 | Recipe step machine (pause/resume/abort, dry-run, single-step, timeouts) | `backend/.../control/recipe_controller.py` | tested; simulator-verified |
 | Recipe API + auto-logged runs with `layers.csv` | `backend/.../api/app.py` | tested |
 | CLIs `vpi-serve`, `vpi-probe` (read-only), `vpi-monitor` | `backend/.../api/server.py`, `probe.py`, `monitor.py` | run against the simulator |
+| Studio UI: theme/layout ported from FLIR, to-scale machine view, position plot, rail sections, gated controls, status bar | `frontend/` (Vite + React + TS) | logic tested (`node --test`, 28); browser-verified against the simulator |
 
 ## Scientific / engineering stance
 
@@ -54,6 +57,15 @@ uv run vpi-probe --simulated --samples 3        # read-only probe of the simulat
 uv run vpi-serve --backend simulated            # http://127.0.0.1:8020/api/status
 ```
 
+Run the full app (UI + API) against the simulator:
+
+```bash
+cd frontend && npm install && npm run build     # builds frontend/dist, served by the operator
+cd ../backend && uv run vpi-serve --backend simulated   # open http://127.0.0.1:8020
+# UI hot-reload during development:
+cd frontend && npm run dev                      # http://127.0.0.1:5175 (proxies /api + /ws to :8020)
+```
+
 ## Talking to the real printer (read-only first)
 
 See `docs/commissioning.md`. In short:
@@ -74,7 +86,10 @@ backend/    Python package `vention_printer_interface` + tests (uv-managed)
   api/        FastAPI create_app + vpi-serve
 docs/       architecture, protocol, recipe, commissioning, development
 plan/       task plan, research notes, data-contract status, SDK reference copy (git-ignored)
-frontend/   (Plan 3) Vite + React + TS Studio UI, ports 5175 (dev) / served by the operator on 8020
+frontend/   Vite + React + TS Studio UI (built into frontend/dist, served by vpi-serve); dev on 5175
+  src/lib/     pure logic with node --test: layout, operator, api (routes locked), telemetry, recipe mirror, machine geometry, format/gates
+  src/components/studio/  StudioFrame, ToolStrip, Rail, RailSection, PlotDock, StatusBar, floating panels (from FLIR)
+  src/components/         MachineView (to-scale schematic), TimePlot, rail Sections, ErrorBoundary
 ```
 
 ## License

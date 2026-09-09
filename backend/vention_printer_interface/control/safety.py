@@ -160,7 +160,8 @@ def evaluate(
         hi = limits.travel_max.get(axis, TRAVEL_MM.get(axis, 0.0))
         if pos < lo - 0.01 or pos > hi + 0.01:
             reasons.append(f"axis {axis} at {pos:.2f} mm outside [{lo:.1f}, {hi:.1f}]")
-        elif pos - lo < limits.near_limit_mm or hi - pos < limits.near_limit_mm:
+        elif (lo > 0.0 and pos - lo < limits.near_limit_mm) or hi - pos < limits.near_limit_mm:
+            # the home end (0) is where every axis parks; only a raised travel_min is a limit
             warnings.append(f"axis {axis} near travel limit ({pos:.1f} mm)")
     # heater_on_s is measured from the earlier of "commanded on" and "observed on", so the
     # watchdog works even when the relay state is never echoed back (review C1).

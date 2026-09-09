@@ -46,6 +46,16 @@ def test_soft_travel_limit_trips_and_warns() -> None:
     assert evaluate(tel(positions={1: 10, 2: 10, 3: 10, 4: 931}), lim, 0.1, 0, False).trip
     w = evaluate(tel(positions={1: 10, 2: 10, 3: 10, 4: 927}), lim, 0.1, 0, False)
     assert not w.trip and any("near" in x for x in w.warnings)
+    # sitting at home (0) is normal, not a warning; a raised travel_min is warned about
+    home = evaluate(tel(positions={1: 0, 2: 0, 3: 0, 4: 0}), lim, 0.1, 0, False)
+    assert home.warnings == ()
+    raised = SafetyLimits.bounded(travel_min={"3": 50})
+    assert any(
+        "near" in x
+        for x in evaluate(
+            tel(positions={1: 10, 2: 10, 3: 52, 4: 10}), raised, 0.1, 0, False
+        ).warnings
+    )
 
 
 def test_heater_watchdog_by_on_time_even_if_unobserved() -> None:
