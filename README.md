@@ -6,11 +6,12 @@ IR heater). Third sibling of the [FLIR Research Interface](../../../../FLIR) and
 [T&C Power Interface](../TC-POWER); it mirrors their architecture and conventions so the three
 read as one family.
 
-**Status (2026-09-09): backend core working against a built-in simulator; NOT yet run against the
-physical controller.** Protocol layer, simulator, real HTTP+MQTT transport, supervisory controller
-(ARM gate, E-STOP, pure protection, heater watchdog), run recorder, FastAPI + `/ws/telemetry`, and
-three CLIs are implemented and tested (102 backend tests). The recipe engine (Plan 2) and the
-Studio UI (Plan 3) are next.
+**Status (2026-09-09): backend + recipe engine working against a built-in simulator; NOT yet run
+against the physical controller.** Protocol layer, simulator, real HTTP+MQTT transport,
+supervisory controller (ARM gate, E-STOP, pure protection, heater watchdog), the V1.py recipe as a
+pausable step machine, run recorder with per-layer log, FastAPI + `/ws/telemetry`, and three CLIs
+are implemented and tested (164 backend tests). An independent review pass fixed several
+safety gaps (see `plan/task_plan.md`). The Studio UI (Plan 3) is next.
 
 | Piece | Location | State |
 |---|---|---|
@@ -24,6 +25,9 @@ Studio UI (Plan 3) are next.
 | Supervisory `Controller` (poll, ARM, E-STOP, FAULT latch, listeners) | `backend/.../control/controller.py` | tested; simulator-verified live |
 | Run recorder (`metadata.json` at start; `manifest.json` only on clean stop) | `backend/.../recording/recorder.py` | tested |
 | FastAPI operator + `/ws/telemetry` + cross-origin policy | `backend/.../api/app.py` | tested; live-verified on :8020 |
+| Recipe plan (V1.py constants) + pure compiler asserted against the script order | `backend/.../control/recipe.py` | tested |
+| Recipe step machine (pause/resume/abort, dry-run, single-step, timeouts) | `backend/.../control/recipe_controller.py` | tested; simulator-verified |
+| Recipe API + auto-logged runs with `layers.csv` | `backend/.../api/app.py` | tested |
 | CLIs `vpi-serve`, `vpi-probe` (read-only), `vpi-monitor` | `backend/.../api/server.py`, `probe.py`, `monitor.py` | run against the simulator |
 
 ## Scientific / engineering stance
@@ -45,7 +49,7 @@ tighten-only; the UI and config files can narrow them, never widen them.
 ```bash
 cd backend
 uv sync --extra dev
-uv run pytest                                   # 102 tests
+uv run pytest                                   # 164 tests
 uv run vpi-probe --simulated --samples 3        # read-only probe of the simulator
 uv run vpi-serve --backend simulated            # http://127.0.0.1:8020/api/status
 ```
@@ -68,7 +72,7 @@ backend/    Python package `vention_printer_interface` + tests (uv-managed)
   control/    safety (pure), controller, limits persistence
   recording/  run recorder
   api/        FastAPI create_app + vpi-serve
-docs/       architecture, protocol, commissioning, development
+docs/       architecture, protocol, recipe, commissioning, development
 plan/       task plan, research notes, data-contract status, SDK reference copy (git-ignored)
 frontend/   (Plan 3) Vite + React + TS Studio UI, ports 5175 (dev) / served by the operator on 8020
 ```
