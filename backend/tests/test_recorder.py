@@ -34,7 +34,12 @@ def test_layout_and_manifest_on_clean_stop(tmp_path: Path) -> None:
     assert rec.stop() == run
     manifest = json.loads((run / "manifest.json").read_text())
     assert manifest["complete"] is True and manifest["sample_count"] == 2
-    assert set(manifest["checksums"]) == {"metadata.json", "events.json", "telemetry.csv"}
+    assert set(manifest["checksums"]) == {
+        "metadata.json",
+        "events.json",
+        "telemetry.csv",
+        "layers.csv",
+    }
     lines = (run / "telemetry.csv").read_text().splitlines()
     assert lines[0].startswith("host_timestamp_ns,controller_state,armed,pos_1,pos_2,pos_3,pos_4")
     assert len(lines) == 3
@@ -79,3 +84,15 @@ def test_double_start_refused(tmp_path: Path) -> None:
         assert "already" in str(exc)
     else:
         raise AssertionError("second start should be refused")
+
+
+def test_layers_csv(tmp_path: Path) -> None:
+    rec = Recorder(tmp_path)
+    run = rec.start("layers")
+    rec.record_layer({"layer": 1, "phase": "printing", "part_height_mm": 2.0, "elapsed_s": 3.5})
+    rec.stop()
+    lines = (run / "layers.csv").read_text().splitlines()
+    assert lines[0] == "host_timestamp_ns,layer,phase,part_height_mm,elapsed_s"
+    assert lines[1].endswith(",1,printing,2.0,3.5")
+    manifest = json.loads((run / "manifest.json").read_text())
+    assert "layers.csv" in manifest["checksums"]

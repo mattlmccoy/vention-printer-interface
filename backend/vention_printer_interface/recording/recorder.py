@@ -39,6 +39,7 @@ TELEMETRY_FIELDS = [
     "heater_on",
     "heater_on_s",
 ]
+LAYER_FIELDS = ["host_timestamp_ns", "layer", "phase", "part_height_mm", "elapsed_s"]
 
 
 def _slug(name: str) -> str:
@@ -59,6 +60,8 @@ class Recorder:
         self.active: Path | None = None
         self._csv: Any = None
         self._file: Any = None
+        self._layers_csv: Any = None
+        self._layers_file: Any = None
         self._events: list[dict[str, Any]] = []
         self._count = 0
         self._started = 0.0
@@ -91,6 +94,10 @@ class Recorder:
             self._csv = csv.writer(self._file)
             self._csv.writerow(TELEMETRY_FIELDS)
             self._file.flush()
+            self._layers_file = (run / "layers.csv").open("w", newline="")
+            self._layers_csv = csv.writer(self._layers_file)
+            self._layers_csv.writerow(LAYER_FIELDS)
+            self._layers_file.flush()
             self._events, self._count, self._started = [], 0, time.time()
             self.active = run
         self.event("recording_started", {"name": name})
@@ -125,6 +132,21 @@ class Recorder:
             self._file.flush()
             self._count += 1
 
+    def record_layer(self, data: dict[str, Any]) -> None:
+        with self._lock:
+            if self.active is None:
+                return
+            self._layers_csv.writerow(
+                [
+                    time.time_ns(),
+                    data.get("layer"),
+                    data.get("phase"),
+                    data.get("part_height_mm"),
+                    data.get("elapsed_s"),
+                ]
+            )
+            self._layers_file.flush()
+
     def event(self, label: str, data: dict[str, Any] | None = None) -> None:
         with self._lock:
             if self.active is None:
@@ -140,17 +162,20 @@ class Recorder:
             if run is None:
                 return None
             self._file.close()
+            self._layers_file.close()
             (run / "events.json").write_text(json.dumps(self._events, indent=2))
             manifest = {
                 "complete": True,
                 "sample_count": self._count,
                 "duration_s": round(time.time() - self._started, 3),
                 "checksums": {
-                    n: _sha256(run / n) for n in ("metadata.json", "events.json", "telemetry.csv")
+                    n: _sha256(run / n)
+                    for n in ("metadata.json", "events.json", "telemetry.csv", "layers.csv")
                 },
             }
             (run / "manifest.json").write_text(json.dumps(manifest, indent=2))
             self.active, self._csv, self._file = None, None, None
+            self._layers_csv, self._layers_file = None, None
             return run
 
     def list_runs(self) -> list[dict[str, Any]]:
