@@ -94,7 +94,7 @@ def load_job(job_dir: Path) -> JobInfo:
 
 
 def layer_png(job: JobInfo, layer: int, *, max_px: int = 700) -> bytes:
-    """Render page `layer` (1-based) as a PNG: ink in amber on transparent, downscaled to fit."""
+    """Render page `layer` (1-based) as a greyscale PNG (white paper, black ink), downscaled."""
     if not 1 <= layer <= len(job.pages):
         raise IndexError(f"layer {layer} not in 1..{len(job.pages)}")
     key = (layer, max_px)
@@ -104,18 +104,15 @@ def layer_png(job: JobInfo, layer: int, *, max_px: int = 700) -> bytes:
         gray = im.convert("L")
         # Pillow presents WhiteIsZero pages as a normal L image: 255 = paper, 0 = full ink
         # (verified on ir_heater_socket_mount_v1 from the lab hot folder, 2026-09-09).
-        # Ink darkness (255 - v) becomes the alpha of the amber overlay.
+        # The PNG keeps that greyscale as-is.
         w, h = gray.size
         scale = min(1.0, max_px / max(w, h))
         if scale < 1.0:
             gray = gray.resize(
                 (max(1, int(w * scale)), max(1, int(h * scale))), Image.Resampling.BOX
             )
-        alpha = gray.point(lambda v: 255 - v)
-        rgba = Image.new("RGBA", gray.size, (255, 180, 84, 0))
-        rgba.putalpha(alpha)
         buf = io.BytesIO()
-        rgba.save(buf, format="PNG", optimize=True)
+        gray.save(buf, format="PNG", optimize=True)
     job._cache[key] = buf.getvalue()
     return job._cache[key]
 

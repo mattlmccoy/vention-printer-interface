@@ -66,7 +66,7 @@ export function PrintView({ status, gates, call, order, onOrder, onJob }: { stat
         <div className="bar-lbl">{job ? `${active ? Math.max(printLayer - 1, 0) : 0} of ${job.layer_count} layers printed` : "no job"}</div>
       </>
     ) },
-    { id: "run", title: "print", size: "s", node: (
+    { id: "run", title: "this print", size: "s", node: (
       <>
         <div className="state" style={{ margin: "0 0 14px" }}><span className={`big ${r?.state === "fault" ? "fault" : ""}`}>{label}</span></div>
         {r?.reason && <div className="hint">{r.reason}</div>}
@@ -94,7 +94,7 @@ export function PrintView({ status, gates, call, order, onOrder, onJob }: { stat
       </>
     ) },
     { id: "problems", title: "attention", size: "s", hidden: problems.length === 0 && !mismatch, node: (
-      <div className="chips" style={{ marginTop: 0 }}>{problems.map(([txt, cls]) => <span key={txt} className={`chip ${cls}`}>{txt}</span>)}{mismatch && <span className="chip warn">part height differs from recipe ({fmtMm(r?.part_height_mm, 1)})</span>}</div>
+      <div className="chips" style={{ marginTop: 0 }}>{problems.map(([txt, cls]) => <span key={txt} className={`chip ${cls}`}>{txt}</span>)}{mismatch && <span className="chip warn">part height differs from the print settings ({fmtMm(r?.part_height_mm, 1)})</span>}</div>
     ) },
   ];
   return <div className="view modules-view"><ModuleGrid modules={modules} order={order} onOrder={onOrder} /></div>;

@@ -3,7 +3,7 @@ import type { JobSnap } from "../lib/telemetry.ts";
 
 /** The current (or chosen) layer's ink pattern from the sliced job, letterboxed. */
 export function CrossSection({ job, layer, caption }: { job: JobSnap | null; layer: number; caption?: string }) {
-  if (!job) return <div className="xsec"><div className="empty">no sliced job selected<br /><span className="hint">pick one on the Job tab, or run a manual recipe</span></div></div>;
+  if (!job) return <div className="xsec"><div className="empty">no sliced job selected<br /><span className="hint">pick one on the Job tab, or run a manual print</span></div></div>;
   const n = Math.min(Math.max(layer, 1), job.layer_count);
   return (
     <div className="xsec">

@@ -42,7 +42,7 @@ export function ControlView({ status, gates, call, gantryStep, pistonStep, setGa
   const c = status?.controller;
   const t = c?.telemetry;
   const ok = gates.controllable && !gates.recipeActive;
-  const lock = !gates.controllable ? (gates.connected ? "read-only · take control from the connection pill" : "connect a controller to jog") : gates.recipeActive ? "a print or macro is running · manual motion is locked" : null;
+  const lock = !gates.controllable ? (gates.connected ? "read-only · take control from the connection pill" : "connect a controller to jog") : gates.recipeActive ? "a print is running · manual motion is locked" : null;
   const stepper = (v: number, set: (s: number) => void) => <div className="stepper" style={{ marginBottom: 8 }}>step {JOG_STEPS.map((s) => <button key={s} className={s === v ? "on" : ""} onClick={() => set(s)}>{s} mm</button>)}</div>;
   const modules: Module[] = [
     { id: "gantries", title: "gantries", size: "m", node: <>{stepper(gantryStep, setGantryStep)}<Axis a={3} status={status} ok={ok} call={call} step={gantryStep} /><Axis a={4} status={status} ok={ok} call={call} step={gantryStep} />{lock && <div className="lock">{lock}</div>}</> },

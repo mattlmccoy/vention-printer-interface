@@ -18,8 +18,8 @@ export function StatusBar(p: StatusBarProps) {
       <span className={p.heaterOn ? "bad" : p.heaterOn === null ? "warnv" : ""}>heater <b>{tri(p.heaterOn, `ON ${fmtSecs(p.heaterOnS)}`, "off")}</b>{p.heaterOn ? <span className="muted"> / {fmtSecs(p.heaterMaxS)}</span> : null}</span>
       {unknown && p.state !== "disconnected" && <span className="warnv">STATUS UNKNOWN</span>}
       <span className="right">
-        {p.recipeState !== "idle" && <span className={p.recipeState === "fault" ? "bad" : ""}>recipe <b>{p.recipeState}</b></span>}
-        {p.recActive && <span className="badge rec">● REC {p.recRun}</span>}
+        {p.recipeState !== "idle" && <span className={p.recipeState === "fault" ? "bad" : ""}>print <b>{p.recipeState}</b></span>}
+        {p.recActive && <span title="telemetry, layer times and events are being written to this run folder">logging <b>{p.recRun}</b></span>}
         {p.version && <span className="muted">v{p.version}</span>}
       </span>
     </footer>
