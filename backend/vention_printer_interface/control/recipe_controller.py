@@ -71,7 +71,7 @@ class RecipeController:
         self._height = 0.0
 
     # ---- operator actions -------------------------------------------------------------------
-    def start(self, plan: RecipePlan, *, dry_run: bool = False, single_step: bool = False) -> None:
+    def start(self, plan: RecipePlan, dry_run: bool = False, single_step: bool = False) -> None:
         with self._lock:
             if self.state in (RecipeState.RUNNING, RecipeState.PAUSED):
                 raise RuntimeError("recipe already running")
