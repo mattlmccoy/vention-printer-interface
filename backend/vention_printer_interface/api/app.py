@@ -271,10 +271,14 @@ def create_app(
         return status_payload()
 
     @app.post("/api/estop")
-    def estop() -> dict[str, Any]:
-        ctrl().estop()
-        rec().event("estop")
-        return {"ok": True}
+    def estop() -> Any:
+        result = ctrl().estop()
+        rec().event("estop", result)
+        if not result["ok"]:
+            # Never a false green: the operator must know which safe action did not reach the
+            # controller (review C3).
+            return JSONResponse(result, status_code=502)
+        return result
 
     @app.post("/api/estop/release")
     def estop_release() -> dict[str, Any]:

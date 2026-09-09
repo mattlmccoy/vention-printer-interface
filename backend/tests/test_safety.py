@@ -48,10 +48,22 @@ def test_soft_travel_limit_trips_and_warns() -> None:
     assert not w.trip and any("near" in x for x in w.warnings)
 
 
-def test_heater_watchdog() -> None:
+def test_heater_watchdog_by_on_time_even_if_unobserved() -> None:
     lim = SafetyLimits(heater_max_on_s=10)
     assert evaluate(tel(heater_on=True), lim, 0.1, 11, False).trip
-    assert not evaluate(tel(heater_on=True), lim, 0.1, 9, False).trip
+    assert evaluate(tel(heater_on=None), lim, 0.1, 11, False).trip
+    d = evaluate(tel(heater_on=None), lim, 0.1, 9, False)
+    assert not d.trip and any("not observed" in w for w in d.warnings)
+
+
+def test_unknown_estop_status_trips() -> None:
+    d = evaluate(tel(estop_triggered=None), SafetyLimits(), 0.1, 0, False)
+    assert d.trip and "unknown" in d.reasons[0]
+
+
+def test_unknown_drives_ready_trips_only_with_move_pending() -> None:
+    assert not evaluate(tel(drives_ready=None), SafetyLimits(), 0.1, 0, False).trip
+    assert evaluate(tel(drives_ready=None), SafetyLimits(), 0.1, 0, True).trip
 
 
 def test_health_not_ok_trips() -> None:

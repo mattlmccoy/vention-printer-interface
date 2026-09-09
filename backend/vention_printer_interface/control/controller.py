@@ -1,11 +1,17 @@
 """Supervisory controller (spec §3): poll loop, ARM gate, E-STOP, protection, listeners.
 
 Responsibilities (protection dominant):
-1. Poll telemetry on a thread; every sample goes through ``safety.evaluate``. A trip stops all
-   motion, forces the heater off and latches FAULT. Any read error is itself a protection event.
-2. ARM gate: a connected controller is read-only until ``arm()``. Guarded: home, move, speed,
-   accel, heater on. Never gated: stop_all, heater_off, estop, disarm.
-3. All device IO is serialized behind ``_io_lock``.
+1. Poll telemetry on a thread; every sample goes through ``safety.evaluate``. A trip latches FAULT
+   and disarms FIRST, then stops all motion and forces the heater off (review H1: no window where
+   a command can slip in after the stop). Any read error is itself a protection event. While
+   faulted, every successful poll re-enforces stop + heater-off until the operator clears.
+2. ARM gate: a connected controller is read-only until ``arm()``, which needs a fresh, clean
+   sample. Guarded: home, move, speed, accel, heater on. Never gated: stop_all, heater_off,
+   estop, disarm.
+3. All device IO is serialized behind ``_io_lock`` (except homing, whose reply may block until
+   the axis has homed — UNVERIFIED — so it must not stall the poll loop).
+4. The heater watchdog counts from the earlier of "commanded on" and "observed on" so it works
+   even if the relay state is never echoed back (review C1).
 The controller never turns the heater on by itself.
 """
 
@@ -23,6 +29,8 @@ from vention_printer_interface.device.printer import PrinterDevice, Telemetry
 
 log = logging.getLogger(__name__)
 Listener = Callable[[dict[str, Any]], None]
+HEALTH_EVERY_N_TICKS = 10
+ESTOP_READY_WAIT_S = 10.0  # SDK resetSystem waits for areSmartDrivesReady (MachineMotion.py:2459)
 
 
 class ControllerState(enum.StrEnum):
@@ -47,12 +55,15 @@ class Controller:
         self._last_read_done = time.monotonic()
         self._fault_reasons: tuple[str, ...] = ()
         self._warnings: tuple[str, ...] = ()
-        self._heater_on_since: float | None = None
+        self._heater_on_since: float | None = None  # observed
+        self._heater_cmd_on_since: float | None = None  # commanded
         self._move_pending = False
         self._read_error: str | None = None
         self._device_info: dict[str, Any] = {}
+        self._safe_actions_at = 0.0  # a fault is clearable only from a sample taken after this
         self._stop = threading.Event()
         self._thread: threading.Thread | None = None
+        self._ticks = 0
 
     # ---- lifecycle --------------------------------------------------------------------------
     def attach_device(self, device: PrinterDevice, *, backend: str) -> None:
@@ -63,22 +74,33 @@ class Controller:
             except Exception:
                 device.close()
                 raise
+        stop = threading.Event()
         with self._lock:
             self._device, self.backend, self._device_info = device, backend, info
             self.state, self.armed = ControllerState.CONNECTED, False
-            self._fault_reasons, self._telemetry = (), None
+            self._fault_reasons, self._telemetry, self._read_error = (), None, None
+            self._heater_on_since = self._heater_cmd_on_since = None
+            self._move_pending, self._ticks = False, 0
             self._last_read_done = time.monotonic()
-        self._stop.clear()
-        self._thread = threading.Thread(target=self._loop, name="vpi-poll", daemon=True)
+            self._stop = stop
+        self._thread = threading.Thread(
+            target=self._loop, args=(device, stop), name="vpi-poll", daemon=True
+        )
         self._thread.start()
 
     def detach_device(self) -> None:
         thread = self._thread
-        self._stop.set()
+        self._stop.set()  # the loop bound to THIS event exits; a stuck read cannot outlive it
         if thread and thread.is_alive() and thread is not threading.current_thread():
             thread.join(timeout=2.0)
         self._thread = None
         dev = self._device
+        with self._lock:
+            self._device, self.backend, self._device_info = None, "none", {}
+            self.state, self.armed = ControllerState.DISCONNECTED, False
+            self._telemetry, self._fault_reasons = None, ()
+            self._heater_on_since = self._heater_cmd_on_since = None
+            self._move_pending, self._read_error = False, None
         if dev is not None:
             with self._io_lock:
                 for step in (dev.stop_all, lambda: dev.heater_write(False), dev.close):
@@ -86,11 +108,6 @@ class Controller:
                         step()
                     except Exception as exc:  # noqa: BLE001 - detach is best-effort, must finish
                         log.warning("detach step failed: %s", exc)
-        with self._lock:
-            self._device, self.backend, self._device_info = None, "none", {}
-            self.state, self.armed = ControllerState.DISCONNECTED, False
-            self._telemetry, self._fault_reasons, self._heater_on_since = None, (), None
-            self._move_pending = False
 
     def stop(self) -> None:
         self.detach_device()
@@ -100,69 +117,95 @@ class Controller:
         self._listeners.append(fn)
 
     # ---- poll loop --------------------------------------------------------------------------
-    def _loop(self) -> None:
-        while not self._stop.is_set():
-            self._tick()
-            self._stop.wait(self.poll_interval_s)
+    def _loop(self, dev: PrinterDevice, stop: threading.Event) -> None:
+        while not stop.is_set():
+            self._tick(dev, stop)
+            stop.wait(self.poll_interval_s)
 
-    def _tick(self) -> None:
-        dev = self._device
-        if dev is None:
+    def _tick(self, dev: PrinterDevice, stop: threading.Event) -> None:
+        if stop.is_set() or dev is not self._device:
             return
-        start = time.monotonic()
-        age = start - self._last_read_done
+        previous_read = self._last_read_done
+        self._ticks += 1
         try:
             with self._io_lock:
-                tel = dev.read_telemetry()
+                tel = dev.read_telemetry(refresh_health=self._ticks % HEALTH_EVERY_N_TICKS == 1)
         except Exception as exc:  # noqa: BLE001 - any read error is a protection event
+            if stop.is_set() or dev is not self._device:
+                return  # orphaned thread: its device is gone, its result is meaningless
             with self._lock:
                 self._read_error = str(exc)
             if self.state != ControllerState.FAULT:
                 self._enter_fault((f"telemetry read failed: {exc}",))
             self._notify()
             return
-        self._last_read_done = time.monotonic()
-        if self.state == ControllerState.FAULT and tel.heater_on:
-            # A fault action may have failed while the link was down; re-enforce the safe
-            # state on every successful poll until the operator clears the fault.
-            with self._io_lock:
-                for step in (dev.stop_all, lambda: dev.heater_write(False)):
-                    try:
-                        step()
-                    except Exception as exc:  # noqa: BLE001 - keep polling; retry next tick
-                        log.warning("fault re-enforcement failed: %s", exc)
+        if stop.is_set() or dev is not self._device:
+            return
+        now = time.monotonic()
+        age = now - previous_read  # measured AFTER the read: a slow reply is a late sample (H6)
+        self._last_read_done = now
         with self._lock:
             self._read_error = None
             self._telemetry = tel
             if tel.heater_on and self._heater_on_since is None:
-                self._heater_on_since = start
-            if not tel.heater_on:
+                self._heater_on_since = now
+            if tel.heater_on is False:
                 self._heater_on_since = None
-            heater_on_s = (start - self._heater_on_since) if self._heater_on_since else 0.0
+                if not self._heater_cmd_on_since or now - self._heater_cmd_on_since > 1.0:
+                    self._heater_cmd_on_since = None  # observed off after the command settled
+            heater_on_s = self._heater_on_s(now)
             if all(tel.motion_complete.values()):
                 self._move_pending = False
             decision: SafetyDecision = evaluate(
                 tel, self.limits, age, heater_on_s, self._move_pending
             )
             self._warnings = decision.warnings
-        if decision.trip and self.state != ControllerState.FAULT:
+            faulted = self.state == ControllerState.FAULT
+            needs_reenforce = faulted and (
+                tel.heater_on is not False
+                or self._heater_cmd_on_since is not None
+                or not all(tel.motion_complete.values())
+            )
+        if decision.trip and not faulted:
             self._enter_fault(decision.reasons)
+        elif needs_reenforce:
+            self._safe_actions(dev, "fault re-enforcement")
         self._notify()
+
+    def _heater_on_s(self, now: float) -> float:
+        starts = [t for t in (self._heater_on_since, self._heater_cmd_on_since) if t is not None]
+        return (now - min(starts)) if starts else 0.0
+
+    def _safe_actions(self, dev: PrinterDevice, why: str) -> dict[str, str]:
+        """stop_all + heater off, best effort, under the IO lock. Returns per-step outcome."""
+        results: dict[str, str] = {}
+        with self._io_lock:
+            for name, step in (
+                ("stop_all", dev.stop_all),
+                ("heater_off", lambda: dev.heater_write(False)),
+            ):
+                try:
+                    step()
+                    results[name] = "ok"
+                    if name == "heater_off":
+                        with self._lock:
+                            self._heater_cmd_on_since = None
+                except Exception as exc:  # noqa: BLE001 - keep going: every step must be tried
+                    results[name] = f"failed: {exc}"
+                    log.warning("%s: %s failed: %s", why, name, exc)
+            with self._lock:
+                self._safe_actions_at = time.monotonic()
+        return results
 
     def _enter_fault(self, reasons: tuple[str, ...]) -> None:
         log.error("FAULT: %s", "; ".join(reasons))
-        dev = self._device
-        if dev is not None:
-            with self._io_lock:
-                for step in (dev.stop_all, lambda: dev.heater_write(False)):
-                    try:
-                        step()
-                    except Exception as exc:  # noqa: BLE001 - latch the fault regardless
-                        log.warning("fault action failed: %s", exc)
         with self._lock:
             self.state, self.armed = ControllerState.FAULT, False
-            self._fault_reasons, self._heater_on_since = reasons, None
+            self._fault_reasons = reasons
             self._move_pending = False
+            dev = self._device
+        if dev is not None:
+            self._safe_actions(dev, "fault")
 
     def clear_fault(self) -> None:
         with self._lock:
@@ -173,11 +216,15 @@ class Controller:
                 raise RuntimeError("cannot clear fault: no telemetry")
             if self._read_error is not None:
                 raise RuntimeError(f"cannot clear fault: last read failed: {self._read_error}")
+            if self._last_read_done <= self._safe_actions_at:
+                raise RuntimeError("cannot clear fault: no sample yet since the fault actions")
+            if tel.heater_on is not False or self._heater_cmd_on_since is not None:
+                raise RuntimeError("cannot clear fault: heater is on or its state is unknown")
             age = time.monotonic() - self._last_read_done
             d = evaluate(tel, self.limits, age, 0.0, False)
             if d.trip:
                 raise RuntimeError("cannot clear fault: " + "; ".join(d.reasons))
-            self.state, self._fault_reasons = ControllerState.CONNECTED, ()
+            self.state, self._fault_reasons, self.armed = ControllerState.CONNECTED, (), False
 
     def _notify(self) -> None:
         snap = self.snapshot()
@@ -194,22 +241,37 @@ class Controller:
         return self._device
 
     def _require_armed(self) -> PrinterDevice:
-        dev = self._require_device()
-        if self.state == ControllerState.FAULT:
-            raise RuntimeError("faulted: " + "; ".join(self._fault_reasons))
-        if not self.armed:
-            raise RuntimeError("not armed — press ARM to take control of the printer")
-        return dev
+        with self._lock:
+            dev = self._require_device()
+            if self.state == ControllerState.FAULT:
+                raise RuntimeError("faulted: " + "; ".join(self._fault_reasons))
+            if not self.armed:
+                raise RuntimeError("not armed — press ARM to take control of the printer")
+            return dev
+
+    def _fresh_sample(self) -> Telemetry:
+        tel = self._telemetry
+        if tel is None or self._read_error is not None:
+            raise RuntimeError("no fresh telemetry from the controller yet")
+        if time.monotonic() - self._last_read_done > self.limits.telemetry_timeout_s:
+            raise RuntimeError("telemetry is stale")
+        return tel
 
     def arm(self) -> None:
-        self._require_device()
-        if self.state != ControllerState.CONNECTED:
-            raise RuntimeError(f"cannot arm in state {self.state.value}")
-        self.armed = True
+        with self._lock:
+            self._require_device()
+            if self.state != ControllerState.CONNECTED:
+                raise RuntimeError(f"cannot arm in state {self.state.value}")
+            tel = self._fresh_sample()
+            d = evaluate(tel, self.limits, 0.0, self._heater_on_s(time.monotonic()), False)
+            if d.trip:
+                raise RuntimeError("cannot arm: " + "; ".join(d.reasons))
+            self.armed = True
 
     def disarm(self) -> None:
+        with self._lock:
+            self.armed = False  # drop the gate FIRST; heater-off may fail (review H2)
         self.heater_off()
-        self.armed = False
 
     def set_limits(self, limits: SafetyLimits) -> None:
         self.limits = limits
@@ -217,60 +279,72 @@ class Controller:
     # ---- guarded actions --------------------------------------------------------------------
     def home_all(self) -> None:
         dev = self._require_armed()
-        with self._io_lock:
+        with self._lock:
             self._move_pending = True
-            dev.home_all()
+        dev.home_all()  # not under _io_lock: the reply may block until homed (see module doc)
 
     def home(self, axis: int) -> None:
         dev = self._require_armed()
-        with self._io_lock:
+        with self._lock:
             self._move_pending = True
-            dev.home(axis)
+        dev.home(axis)
 
     def set_max_speed(self, axis: int, mm_s: float) -> float:
-        dev = self._require_armed()
         v = self.limits.clamp_speed(axis, mm_s)
         with self._io_lock:
-            dev.set_max_speed(axis, v)
+            self._require_armed().set_max_speed(axis, v)
         return v
 
     def set_max_accel(self, axis: int, mm_s2: float) -> float:
-        dev = self._require_armed()
         v = self.limits.clamp_accel(axis, mm_s2)
         with self._io_lock:
-            dev.set_max_accel(axis, v)
+            self._require_armed().set_max_accel(axis, v)
         return v
 
     def move_absolute(self, axis: int, mm: float) -> float:
-        dev = self._require_armed()
         v = self.limits.clamp_position(axis, mm)
         with self._io_lock:
-            self._move_pending = True
+            dev = self._require_armed()
+            with self._lock:
+                self._move_pending = True
             dev.move_absolute(axis, v)
         return v
 
     def move_relative(self, axis: int, mm: float) -> float:
-        """Relative moves are clamped by issuing an absolute move to the clamped target."""
-        dev = self._require_armed()
-        tel = self._telemetry
-        here = tel.positions.get(axis, 0.0) if tel else 0.0
-        target = self.limits.clamp_position(axis, here + mm)
+        """Host-computed: an absolute move to (fresh position + mm), clamped. Requires a fresh
+        sample and an idle axis, else the target would be computed from stale data (review H5)."""
         with self._io_lock:
-            self._move_pending = True
+            dev = self._require_armed()
+            with self._lock:
+                tel = self._fresh_sample()
+                if not tel.motion_complete.get(axis, False):
+                    raise RuntimeError(f"axis {axis} is moving; relative move refused")
+                here = tel.positions[axis]
+                target = self.limits.clamp_position(axis, here + mm)
+                self._move_pending = True
             dev.move_absolute(axis, target)
         return target - here
 
     def heater_on(self) -> None:
-        dev = self._require_armed()
         with self._io_lock:
+            dev = self._require_armed()
+            with self._lock:
+                if self._heater_cmd_on_since is None:
+                    self._heater_cmd_on_since = time.monotonic()
             dev.heater_write(True)
 
     def estop_release(self) -> None:
-        """Explicit operator action: release the software e-stop and re-energise drives."""
+        """Explicit operator action: release the software e-stop, reset, wait for drives ready."""
         dev = self._require_device()
         with self._io_lock:
             dev.estop_release()
             dev.estop_reset()
+            end = time.monotonic() + ESTOP_READY_WAIT_S
+            while time.monotonic() < end:
+                if dev.read_telemetry().drives_ready:
+                    return
+                time.sleep(0.2)
+        raise RuntimeError(f"drives not ready {ESTOP_READY_WAIT_S:.0f}s after system reset")
 
     # ---- safe-direction (ungated) -----------------------------------------------------------
     def stop_all(self) -> None:
@@ -284,31 +358,34 @@ class Controller:
             return
         with self._io_lock:
             dev.heater_write(False)
+            with self._lock:
+                self._heater_cmd_on_since = None
 
-    def estop(self) -> None:
-        """Best-effort, bypasses every gate: stop, heater off, controller e-stop, disarm."""
+    def estop(self) -> dict[str, Any]:
+        """Bypasses every gate, safe in any state. Latches FAULT itself (review C3) and reports
+        the outcome of every step instead of pretending success."""
         dev = self._device
-        self.armed = False
+        with self._lock:
+            self.armed = False
         if dev is None:
-            return
+            return {"ok": True, "steps": {}, "note": "no device attached"}
+        self._enter_fault(("operator e-stop",))
+        steps = self._safe_actions(dev, "e-stop")
         with self._io_lock:
-            steps = (
-                dev.stop_all,
-                lambda: dev.heater_write(False),
-                lambda: dev.estop_trigger("vpi operator"),
-            )
-            for step in steps:
-                try:
-                    step()
-                except Exception as exc:  # noqa: BLE001 - e-stop must complete every step
-                    log.warning("e-stop step failed: %s", exc)
+            try:
+                dev.estop_trigger("vpi operator")
+                steps["estop_trigger"] = "ok"
+            except Exception as exc:  # noqa: BLE001 - report, never raise from E-STOP
+                steps["estop_trigger"] = f"failed: {exc}"
+                log.error("e-stop trigger failed: %s", exc)
+        return {"ok": all(v == "ok" for v in steps.values()), "steps": steps}
 
     # ---- snapshot ---------------------------------------------------------------------------
     def snapshot(self) -> dict[str, Any]:
         with self._lock:
             tel = self._telemetry
-            since = self._heater_on_since
-            heater_on_s = (time.monotonic() - since) if since else 0.0
+            now = time.monotonic()
+            heater_on_s = self._heater_on_s(now)
             return {
                 "state": self.state.value,
                 "backend": self.backend,
@@ -319,7 +396,8 @@ class Controller:
                 "device": dict(self._device_info),
                 "limits": self.limits.to_dict(),
                 "heater": {
-                    "on": bool(tel and tel.heater_on),
+                    "on": None if tel is None else tel.heater_on,
+                    "commanded_on": self._heater_cmd_on_since is not None,
                     "on_s": round(heater_on_s, 1),
                     "max_on_s": self.limits.heater_max_on_s,
                 },

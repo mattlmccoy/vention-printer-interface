@@ -34,15 +34,22 @@ class AxisConfig:
     homing_speed: float
 
 
+HOMING_TIMEOUT_S = 330.0  # the SDK gives G28 DEFAULT_TIMEOUT*5 (MachineMotion.py:1369); UNVERIFIED
+# whether the controller blocks the reply until homing completes.
+
+
 @dataclass(frozen=True)
 class Telemetry:
+    """One poll. Tri-state fields are None when the status has NOT been observed — never assume
+    healthy (review C1/C2)."""
+
     host_timestamp_ns: int
     positions: dict[int, float]
     motion_complete: dict[int, bool]
-    estop_triggered: bool
-    drives_ready: bool
+    estop_triggered: bool | None
+    drives_ready: bool | None
     health_ok: bool
-    heater_on: bool
+    heater_on: bool | None
 
 
 class PrinterDevice:
@@ -86,15 +93,19 @@ class PrinterDevice:
         }
 
     # ---- telemetry --------------------------------------------------------------------------
-    def read_telemetry(self) -> Telemetry:
+    def read_telemetry(self, *, refresh_health: bool = False) -> Telemetry:
+        if refresh_health or self._health is None:
+            self.health()
         positions = p.parse_positions(self._t.http_get(r.POSITION_PATH))
         complete = {n: p.parse_complete(self._t.http_get(r.complete_path(n))) for n in self.axes}
         estop_raw = self._t.mqtt_latest(r.TOPIC_ESTOP_STATUS)
         ready_raw = self._t.mqtt_latest(r.TOPIC_DRIVES_READY)
-        estop = p.parse_json_bool(estop_raw) if estop_raw is not None else False
-        ready = p.parse_json_bool(ready_raw) if ready_raw is not None else True
+        estop = p.parse_json_bool(estop_raw) if estop_raw is not None else None
+        ready = p.parse_json_bool(ready_raw) if ready_raw is not None else None
         health = self._health
-        health_ok = health is None or health.motion_controller_reachable is not False
+        health_ok = health is not None and health.motion_controller_reachable is not False
+        if health is not None and health.estop_triggered:
+            estop = True  # /health cross-check (MachineMotion.py:1418) dominates a stale MQTT value
         return Telemetry(
             host_timestamp_ns=time.time_ns(),
             positions=positions,
@@ -109,14 +120,23 @@ class PrinterDevice:
         return p.parse_endstops(self._t.http_get(r.gcode_path(r.GCODE_ENDSTOPS)).decode())
 
     # ---- motion -----------------------------------------------------------------------------
-    def _gcode(self, gcode: str) -> str:
-        return p.parse_echo_ok(self._t.http_get(r.gcode_path(gcode)).decode())
+    def _gcode(self, gcode: str, *, timeout_s: float | None = None) -> str:
+        return p.parse_echo_ok(self._t.http_get(r.gcode_path(gcode), timeout_s=timeout_s).decode())
 
     def home_all(self) -> None:
-        self._gcode(r.GCODE_HOME_ALL)
+        """G28. On any failure send M410 like the SDK does (MachineMotion.py:1370-1372)."""
+        try:
+            self._gcode(r.GCODE_HOME_ALL, timeout_s=HOMING_TIMEOUT_S)
+        except Exception:
+            self.stop_all()
+            raise
 
     def home(self, axis: int) -> None:
-        self._gcode(r.gcode_home(axis))
+        try:
+            self._gcode(r.gcode_home(axis), timeout_s=HOMING_TIMEOUT_S)
+        except Exception:
+            self.stop_all()
+            raise
 
     def stop_all(self) -> None:
         self._gcode(r.GCODE_STOP_ALL)
@@ -164,11 +184,15 @@ class PrinterDevice:
         dev, pin = self.heater_io
         self._t.mqtt_publish(r.io_output_topic(dev, pin), "1" if on else "0", retain=True)
 
-    def heater_read(self) -> bool:
+    def heater_read(self) -> bool | None:
+        """Observed relay state from the broker's retained echo; None = never observed."""
         if self.heater_io is None:
-            return False
+            return None
         dev, pin = self.heater_io
-        return self._t.mqtt_latest(r.io_output_topic(dev, pin)) == "1"
+        raw = self._t.mqtt_latest(r.io_output_topic(dev, pin))
+        if raw is None:
+            return None
+        return raw.strip() in ("1", "true")
 
     def close(self) -> None:
         self._t.close()
