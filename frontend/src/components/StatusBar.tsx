@@ -12,8 +12,7 @@ export function StatusBar(p: StatusBarProps) {
   return (
     <footer className="statusbar">
       <span className={!p.reachable ? "bad" : ""}>operator <b>{p.reachable ? "ok" : "UNREACHABLE"}</b></span>
-      <span className={p.state === "fault" ? "bad" : ""}>ctrl <b>{p.state}</b> <span className="muted">{p.backend}</span></span>
-      <span>poll <b>{p.pollHz === null ? "—" : p.pollHz.toFixed(1)}</b> Hz</span>
+      <span className={p.state === "fault" ? "bad" : ""}>controller <b>{p.state}</b></span>
       <span className={p.estop ? "bad" : p.estop === null ? "warnv" : ""}>e-stop <b>{tri(p.estop, "ASSERTED", "clear")}</b></span>
       <span className={p.drivesReady === false ? "bad" : p.drivesReady === null ? "warnv" : ""}>drives <b>{tri(p.drivesReady, "ready", "NOT READY")}</b></span>
       <span className={p.heaterOn ? "bad" : p.heaterOn === null ? "warnv" : ""}>heater <b>{tri(p.heaterOn, `ON ${fmtSecs(p.heaterOnS)}`, "off")}</b>{p.heaterOn ? <span className="muted"> / {fmtSecs(p.heaterMaxS)}</span> : null}</span>

@@ -65,7 +65,7 @@ export function App() {
   const heaterOk = Number.isInteger(dev) && Number.isInteger(pin) && dev >= 1 && dev <= 8 && pin >= 0 && pin <= 3;
   const connect = () => call("connect", () => api.connect({ backend: choice === "simulated" ? "simulated" : "machinemotion", ip: choice === "ethernet" ? "192.168.0.2" : choice === "usb" ? "192.168.7.2" : choice === "custom" ? ip : null, heater_io: [dev, pin] }).then(() => setShowConnect(false)));
   const dotCls = !reachable ? "err" : g.faulted ? "err" : g.connected ? "live" : "warn";
-  const ctrlLabel = !reachable ? "operator unreachable" : !g.connected ? "no controller" : `${c?.backend === "simulated" ? "simulator" : "MachineMotion"} · fw ${String((status?.device as { version?: string })?.version ?? "?")}`;
+  const ctrlLabel = !reachable ? "operator unreachable" : !g.connected ? "connect" : c?.backend === "simulated" ? "simulator" : `MachineMotion ${String((status?.device as { version?: string })?.version ?? "")}`;
   const estopStillAsserted = c?.telemetry?.estop_triggered !== false;
 
   return (
@@ -74,13 +74,13 @@ export function App() {
         <header className="top">
           <span className="wordmark">BINDER JET CONSOLE</span>
           <nav className="tabs">{VIEWS.map((v) => <button key={v} className={ui.view === v ? "active" : ""} onClick={() => setView(v)}>{v}</button>)}</nav>
-          <button className="pill" onClick={() => setShowConnect((s) => !s)} title="connection"><span className={`dot ${dotCls}`} />{ctrlLabel}{g.connected ? " · disconnect" : " · connect"}</button>
+          <button className="pill" onClick={() => setShowConnect((s) => !s)} title="connection"><span className={`dot ${dotCls}`} />{ctrlLabel}</button>
           {handshake && <span className="pill warn">{handshake}</span>}
           <span className="spacer" />
           {busy && <span className="muted mono">{busy}…</span>}
           <button className={`arm ${g.armed ? "on" : ""}`} disabled={!g.connected || g.faulted} onClick={() => call(g.armed ? "disarm" : "arm", g.armed ? api.disarm : api.arm)} title={g.armed ? "Disarm: drop control, heater off" : "Arm: take control of the machine"}>
             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><rect x="4" y="10" width="16" height="11" rx="2" /><path d={g.armed ? "M8 10V7a4 4 0 0 1 8 0" : "M8 10V7a4 4 0 0 1 8 0v3"} /></svg>
-            {g.armed ? "ARMED · click to lock" : g.faulted ? "FAULTED" : g.connected ? "LOCKED · click to ARM" : "NOT CONNECTED"}
+            {g.armed ? "ARMED" : g.faulted ? "FAULTED" : g.connected ? "ARM" : "ARM"}
           </button>
           <button className="estop" disabled={!g.connected} onClick={() => call("e-stop", api.estop)}>■ E-STOP</button>
         </header>
@@ -108,9 +108,9 @@ export function App() {
             </div>
           )}
         </div>
-        {ui.view === "print" && <PrintView status={status} gates={g} call={call} pollHz={pollHz} onPrepare={() => setView("prepare")} />}
+        {ui.view === "print" && <PrintView status={status} gates={g} call={call} onPrepare={() => setView("prepare")} />}
         {ui.view === "prepare" && <PrepareView status={status} gates={g} call={call} onStarted={() => setView("print")} />}
-        {ui.view === "control" && <ControlView status={status} gates={g} call={call} pollHz={pollHz} gantryStep={ui.gantryStep} pistonStep={ui.pistonStep} setGantryStep={(s) => setUi((u) => ({ ...u, gantryStep: s }))} setPistonStep={(s) => setUi((u) => ({ ...u, pistonStep: s }))} />}
+        {ui.view === "control" && <ControlView status={status} gates={g} call={call} gantryStep={ui.gantryStep} pistonStep={ui.pistonStep} setGantryStep={(s) => setUi((u) => ({ ...u, gantryStep: s }))} setPistonStep={(s) => setUi((u) => ({ ...u, pistonStep: s }))} />}
         {ui.view === "runs" && <RunsView status={status} gates={g} call={call} />}
         <StatusBar state={c?.state ?? "disconnected"} backend={c?.backend ?? "none"} pollHz={pollHz} reachable={reachable}
           estop={c?.telemetry?.estop_triggered ?? null} drivesReady={c?.telemetry?.drives_ready ?? null} heaterOn={c?.heater.on ?? null} heaterOnS={c?.heater.on_s ?? 0} heaterMaxS={c?.heater.max_on_s ?? 0}
