@@ -17,7 +17,7 @@ export function EventLog({ events, title = "Event log" }: { events: EventItem[];
   const rows = [...events].reverse();
   return (
     <div className="log">
-      <div className="card-h">{title}<span className="muted">{rows.length} recent</span></div>
+      <div className="h">{title}</div>
       {rows.length === 0 ? <div className="hint">no events yet</div> : (
         <table><tbody>{rows.map((e, i) => (
           <tr key={`${e.host_timestamp_ns}-${i}`} className={/fault|estop|failed|warning/.test(e.label) ? "warn" : ""}><td>{fmtTime(e.host_timestamp_ns)}</td><td className="k">{e.label}</td><td className="d">{summary(e)}</td></tr>
