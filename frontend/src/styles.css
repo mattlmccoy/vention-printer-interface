@@ -106,6 +106,16 @@ button.small { height: 34px; padding: 0 12px; border: 1px solid var(--line-contr
 .el-blade { fill: var(--fg); }
 .el-heater-on { fill: var(--err); } .el-heater-off { fill: var(--line-control); } .el-heater-unk { fill: var(--warn); }
 .el-moving { animation: vpi-blink .7s steps(1) infinite; }
+/* live vs model axis markers (lib/diagram.ts markerClass). mk-live is a neutral no-op so each
+   axis keeps its own colour; mk-model paints the violet preview ghost; mk-moving pulses in motion. */
+.mk-live { fill-opacity: 1; }
+.mk-model { fill: var(--violet); stroke: var(--violet); stroke-width: 1; stroke-dasharray: 4 3; opacity: .6; }
+.mk-live.mk-moving { filter: drop-shadow(0 0 3px var(--live)); animation: vpi-mk-pulse 1s ease-in-out infinite; }
+.mk-model.mk-moving { filter: drop-shadow(0 0 3px var(--violet)); animation: vpi-mk-pulse 1s ease-in-out infinite; }
+@keyframes vpi-mk-pulse { 0%, 100% { opacity: 1; } 50% { opacity: .5; } }
+/* legend swatches reuse the marker classes; give the live swatch the live colour (the global
+   mk-live is intentionally colourless so real markers keep their per-axis fill). */
+.el-legend .mk-live { fill: var(--live); }
 .el-empty { fill: var(--muted); font-size: 15px; }
 .readout { display: grid; grid-template-columns: repeat(4, 1fr); gap: 14px; margin-top: 18px; }
 .readout div { font: 12px var(--font-mono); color: var(--muted); }
@@ -176,7 +186,7 @@ button.small { height: 34px; padding: 0 12px; border: 1px solid var(--line-contr
 .statusbar > span { white-space: nowrap; flex: 0 0 auto; }
 .badge { padding: 2px 8px; border-radius: 10px; font-size: 12px; font-weight: 600; font-family: var(--font-mono); }
 .badge.rec { background: var(--err-bg); color: var(--rec); animation: vpi-blink 1s steps(1) infinite; }
-@media (prefers-reduced-motion: reduce) { .badge.rec, .el-moving { animation: none; } }
+@media (prefers-reduced-motion: reduce) { .badge.rec, .el-moving, .mk-live.mk-moving, .mk-model.mk-moving { animation: none; } }
 
 /* ---- jobs / cross-section ---- */
 .xsec { position: relative; flex: 1; min-height: 0; display: grid; place-items: center; background: var(--bg-deep); border: 1px solid var(--line); border-radius: var(--radius); overflow: hidden; }
