@@ -57,9 +57,10 @@ export function PrintView({ status, gates, call, order, sizes, onOrder, onResize
   const [mdirty, setMdirty] = useState(false);
   const [mdry, setMdry] = useState(true);
   const [msingle, setMsingle] = useState(false);
-  // The manual-print controls are revealed on demand by a button beneath CHOOSE A JOB, not
-  // auto-shown — so the entry point is discoverable right where the operator looks to start.
-  const [manualOpen, setManualOpen] = useState(false);
+  // With no job selected, manual print is the only way to run — so the controls are shown by
+  // default (the Print tab "assumes a manual print", reflecting anything staged from the Job tab).
+  // The button beneath CHOOSE A JOB still toggles them hidden/shown.
+  const [manualOpen, setManualOpen] = useState(true);
   useEffect(() => {
     if (!showManual) return;
     let live = true;

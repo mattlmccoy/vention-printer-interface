@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { api } from "../../lib/api.ts";
 import { estimateDurationS } from "../../lib/estimate.ts";
 import { fmtSecs, type Gates } from "../../lib/format.ts";
@@ -29,6 +29,15 @@ export function JobView({ status, gates, call, order, sizes, onOrder, onResize, 
   const edit = (patch: Partial<PrintSettings>) => plan && (setPlan({ ...plan, ...patch }), setDirty(true));
   const editPh = (ph: "thin_precoat" | "printing" | "postcoat", patch: Partial<PrintSettings["printing"]>) => plan && edit({ [ph]: { ...plan[ph], ...patch } } as Partial<PrintSettings>);
   const save = async () => { if (!plan) return; await call("save print_settings", () => api.setPrintSettings(plan as unknown as Record<string, unknown>).then((r) => { setPlan(r.plan as unknown as PrintSettings); setDirty(false); })); };
+  // Persist unsaved edits when leaving the Job tab, so a manual print configured here carries
+  // through to Priming and the Print tab without having to hit START PRINT from this page.
+  const planRef = useRef<PrintSettings | null>(null); const dirtyRef = useRef(false); const runningRef = useRef(false);
+  useEffect(() => { planRef.current = plan; dirtyRef.current = dirty; runningRef.current = running; }, [plan, dirty, running]);
+  useEffect(() => () => {
+    if (dirtyRef.current && planRef.current && !runningRef.current) {
+      api.setPrintSettings(planRef.current as unknown as Record<string, unknown>).catch(() => undefined);
+    }
+  }, []);
   const reasons = plan ? validate(plan) : [];
   const total = plan ? totalThickness(plan) : 0;
   const layers = plan ? totalLayers(plan) : 0;
