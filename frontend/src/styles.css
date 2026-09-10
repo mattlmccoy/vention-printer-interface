@@ -148,7 +148,12 @@ button.small { height: 34px; padding: 0 12px; border: 1px solid var(--line-contr
 .el-part { fill: var(--line-control); }
 .el-ph { fill: var(--trace-ph); } .el-rc { fill: var(--trace-rc); } .el-feed { fill: var(--trace-feed); } .el-build { fill: var(--trace-part); }
 .el-blade { fill: var(--fg); }
-.el-heater-on { fill: var(--err); } .el-heater-off { fill: var(--line-control); } .el-heater-unk { fill: var(--warn); }
+/* Heater bar: lit + glowing when ON, flat grey when OFF (independent of gantry motion). */
+.el-heater-on { fill: var(--err); filter: drop-shadow(0 0 5px var(--err)); }
+.el-heater-off { fill: var(--line-control); }
+.el-heater-unk { fill: var(--warn); }
+@media (prefers-reduced-motion: no-preference) { .el-heater-on { animation: vpi-heater-pulse 1.4s ease-in-out infinite; } }
+@keyframes vpi-heater-pulse { 50% { filter: drop-shadow(0 0 9px var(--err)); } }
 .el-moving { animation: vpi-blink .7s steps(1) infinite; }
 /* live vs model axis markers (lib/diagram.ts markerClass). mk-live is a neutral no-op so each
    axis keeps its own colour; mk-model paints the violet preview ghost; mk-moving pulses in motion. */
@@ -168,10 +173,12 @@ button.small { height: 34px; padding: 0 12px; border: 1px solid var(--line-contr
 }
 @keyframes vpi-arrow-blink { 50% { opacity: 0; } }
 .el-empty { fill: var(--muted); font-size: 15px; }
-.el-ctl { cursor: pointer; }
+.linklike { background: none; border: 0; padding: 0; color: var(--accent); font: inherit; text-decoration: underline; cursor: pointer; }
+.el-ctl { cursor: pointer; user-select: none; -webkit-user-select: none; -webkit-tap-highlight-color: transparent; }
 .el-ctl rect { fill: var(--panel); stroke: var(--line-control); }
 .el-ctl:hover rect, .el-ctl:focus-visible rect { stroke: var(--accent); }
-.el-ctl text { fill: var(--fg); font-family: var(--font-mono); }
+.el-ctl text { fill: var(--fg); font-family: var(--font-mono); user-select: none; pointer-events: none; }
+.el-ctl:focus { outline: none; }
 .el-ctl[aria-disabled="true"] { opacity: .35; pointer-events: none; }
 .readout { display: grid; grid-template-columns: repeat(4, 1fr); gap: 14px; margin-top: 18px; }
 .readout div { font: 12px var(--font-mono); color: var(--muted); }

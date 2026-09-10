@@ -2,6 +2,7 @@ import { useEffect, useState } from "react";
 import { api, type PrintSettingsPayload } from "../lib/api.ts";
 import type { Gates } from "../lib/format.ts";
 import type { Call } from "./views/types.ts";
+import { NumberField } from "./NumberField.tsx";
 
 /** Edit the 4-phase print routine (thick/thin precoat, printing multi-pass, postcoat) plus the
  *  heater-exposure inputs, and show the backend-computed IPA exposure readout. Fetches the resolved
@@ -23,7 +24,6 @@ interface Draft {
   heater_section_power_w: number;
 }
 
-function num(v: string, fb: number): number { const n = Number(v); return v !== "" && Number.isFinite(n) ? n : fb; }
 function n(v: unknown, fb = 0): number { return typeof v === "number" && Number.isFinite(v) ? v : fb; }
 function rnd(v: number, d = 2): number { return Number.isFinite(v) ? Number(v.toFixed(d)) : 0; }
 function phaseOf(plan: Record<string, unknown>, key: string): PhaseDraft {
@@ -82,19 +82,19 @@ export function RoutinePanel({ gates, call }: { gates: Gates; call: Call }) {
     <>
       <div className="fields" style={{ marginTop: 0, maxWidth: "none" }}>
         <span>thick precoat</span>
-        <label className="row"><input type="number" value={d.thick_precoat.n_layers} disabled={!ok} style={{ width: 64 }} onChange={(e) => setPh("thick_precoat", { n_layers: num(e.target.value, d.thick_precoat.n_layers) })} /> × <input type="number" step="0.1" value={d.thick_precoat.layer_thickness_mm} disabled={!ok} style={{ width: 72 }} onChange={(e) => setPh("thick_precoat", { layer_thickness_mm: num(e.target.value, d.thick_precoat.layer_thickness_mm) })} /> mm · feed <input type="number" step="0.1" value={d.thick_precoat.feed_thickness_mm} disabled={!ok} style={{ width: 72 }} onChange={(e) => setPh("thick_precoat", { feed_thickness_mm: num(e.target.value, d.thick_precoat.feed_thickness_mm) })} /> mm</label>
+        <label className="row"><NumberField value={d.thick_precoat.n_layers} disabled={!ok} style={{ width: 64 }} onChange={(v) => setPh("thick_precoat", { n_layers: v })} /> × <NumberField step="0.1" value={d.thick_precoat.layer_thickness_mm} disabled={!ok} style={{ width: 72 }} onChange={(v) => setPh("thick_precoat", { layer_thickness_mm: v })} /> mm · feed <NumberField step="0.1" value={d.thick_precoat.feed_thickness_mm} disabled={!ok} style={{ width: 72 }} onChange={(v) => setPh("thick_precoat", { feed_thickness_mm: v })} /> mm</label>
         <span>thin precoat</span>
-        <label className="row"><input type="number" value={d.thin_precoat.n_layers} disabled={!ok} style={{ width: 64 }} onChange={(e) => setPh("thin_precoat", { n_layers: num(e.target.value, d.thin_precoat.n_layers) })} /> × <input type="number" step="0.1" value={d.thin_precoat.layer_thickness_mm} disabled={!ok} style={{ width: 72 }} onChange={(e) => setPh("thin_precoat", { layer_thickness_mm: num(e.target.value, d.thin_precoat.layer_thickness_mm) })} /> mm · feed <input type="number" step="0.1" value={d.thin_precoat.feed_thickness_mm} disabled={!ok} style={{ width: 72 }} onChange={(e) => setPh("thin_precoat", { feed_thickness_mm: num(e.target.value, d.thin_precoat.feed_thickness_mm) })} /> mm</label>
-        <span>printing feed</span><span className="row"><input type="number" step="0.1" value={d.printing_feed_thickness_mm} disabled={!ok} onChange={(e) => setD({ printing_feed_thickness_mm: num(e.target.value, d.printing_feed_thickness_mm) })} /> mm / layer</span>
-        <span>recoater return</span><span className="row"><input type="number" value={d.recoater_return_mm} disabled={!ok} onChange={(e) => setD({ recoater_return_mm: num(e.target.value, d.recoater_return_mm) })} /> mm</span>
-        <span>heater start</span><span className="row"><input type="number" value={d.heater_start_mm} disabled={!ok} onChange={(e) => setD({ heater_start_mm: num(e.target.value, d.heater_start_mm) })} /> mm</span>
-        <span>part max</span><span className="row"><input type="number" value={d.part_max_mm} disabled={!ok} onChange={(e) => setD({ part_max_mm: num(e.target.value, d.part_max_mm) })} /> mm</span>
-        <span>jet passes</span><span className="row"><input type="number" value={d.n_jet_passes} disabled={!ok} onChange={(e) => setD({ n_jet_passes: num(e.target.value, d.n_jet_passes) })} /></span>
-        <span>pre-heater drop</span><span className="row"><input type="number" step="0.1" value={d.pre_heater_drop_mm} disabled={!ok} onChange={(e) => setD({ pre_heater_drop_mm: num(e.target.value, d.pre_heater_drop_mm) })} /> mm</span>
+        <label className="row"><NumberField value={d.thin_precoat.n_layers} disabled={!ok} style={{ width: 64 }} onChange={(v) => setPh("thin_precoat", { n_layers: v })} /> × <NumberField step="0.1" value={d.thin_precoat.layer_thickness_mm} disabled={!ok} style={{ width: 72 }} onChange={(v) => setPh("thin_precoat", { layer_thickness_mm: v })} /> mm · feed <NumberField step="0.1" value={d.thin_precoat.feed_thickness_mm} disabled={!ok} style={{ width: 72 }} onChange={(v) => setPh("thin_precoat", { feed_thickness_mm: v })} /> mm</label>
+        <span>printing feed</span><span className="row"><NumberField step="0.1" value={d.printing_feed_thickness_mm} disabled={!ok} onChange={(v) => setD({ printing_feed_thickness_mm: v })} /> mm / layer</span>
+        <span>recoater return</span><span className="row"><NumberField value={d.recoater_return_mm} disabled={!ok} onChange={(v) => setD({ recoater_return_mm: v })} /> mm</span>
+        <span>heater start</span><span className="row"><NumberField value={d.heater_start_mm} disabled={!ok} onChange={(v) => setD({ heater_start_mm: v })} /> mm</span>
+        <span>part max</span><span className="row"><NumberField value={d.part_max_mm} disabled={!ok} onChange={(v) => setD({ part_max_mm: v })} /> mm</span>
+        <span>jet passes</span><span className="row"><NumberField value={d.n_jet_passes} disabled={!ok} onChange={(v) => setD({ n_jet_passes: v })} /></span>
+        <span>pre-heater drop</span><span className="row"><NumberField step="0.1" value={d.pre_heater_drop_mm} disabled={!ok} onChange={(v) => setD({ pre_heater_drop_mm: v })} /> mm</span>
         <span>postcoat</span><label className="row"><input type="checkbox" checked={d.postcoat_enabled} disabled={!ok} onChange={(e) => setD({ postcoat_enabled: e.target.checked })} /> enabled</label>
-        <span>target carbon</span><span className="row"><input type="number" step="0.01" value={d.target_carbon_wt} disabled={!ok} onChange={(e) => setD({ target_carbon_wt: num(e.target.value, d.target_carbon_wt) })} /> wt</span>
-        <span>part area</span><span className="row"><input type="number" value={d.part_area_mm2} disabled={!ok} onChange={(e) => setD({ part_area_mm2: num(e.target.value, d.part_area_mm2) })} /> mm²</span>
-        <span>heater power</span><span className="row"><input type="number" value={d.heater_section_power_w} disabled={!ok} onChange={(e) => setD({ heater_section_power_w: num(e.target.value, d.heater_section_power_w) })} /> W</span>
+        <span>target carbon</span><span className="row"><NumberField step="0.01" value={d.target_carbon_wt} disabled={!ok} onChange={(v) => setD({ target_carbon_wt: v })} /> wt</span>
+        <span>part area</span><span className="row"><NumberField value={d.part_area_mm2} disabled={!ok} onChange={(v) => setD({ part_area_mm2: v })} /> mm²</span>
+        <span>heater power</span><span className="row"><NumberField value={d.heater_section_power_w} disabled={!ok} onChange={(v) => setD({ heater_section_power_w: v })} /> W</span>
       </div>
       <div className="kv" style={{ marginTop: 10 }}>
         <span>IPA exposure</span><span>{exp ? `energy ${rnd(exp.energy_j)} J · dwell ${rnd(exp.time_s)} s · sweep ${rnd(exp.sweep_speed_mm_s)} mm/s` : "exposure unavailable"}</span>

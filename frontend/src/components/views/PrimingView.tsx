@@ -14,7 +14,7 @@ import type { Call } from "./types.ts";
  *  loading powder, leveling, and capturing the primed bed. The walkthrough shows its OWN step
  *  position ("Step 3 of 6"), never the compiled priming macro's raw step count. A RUN PRIMING
  *  (auto) escape hatch + ABORT stay available, but the stepper is the primary flow. */
-export function PrimingView({ status, gates, call }: { status: StatusPayload | null; gates: Gates; call: Call }) {
+export function PrimingView({ status, gates, call, onJob }: { status: StatusPayload | null; gates: Gates; call: Call; onJob: () => void }) {
   const { p, s, invalid, edit, setEdit, save, setParam } = usePriming(call);
   const ok = gates.controllable && !gates.printActive;
   const r = status?.print ?? null;
@@ -24,33 +24,40 @@ export function PrimingView({ status, gates, call }: { status: StatusPayload | n
   const cur = WALKTHROUGH_STEPS[step];
 
   // Amount inputs. "job" reads the loaded print's total thickness; the manual sources are operator mm.
+  // Inputs are RAW STRINGS so they clear + type normally (empty allowed); parsed to numbers for the calc.
   const [source, setSource] = useState<FillSource>("job");
-  const [marginMm, setMarginMm] = useState(5);
-  const [nLayers, setNLayers] = useState(0);
-  const [layerThicknessMm, setLayerThicknessMm] = useState(0);
-  const [manualDepthMm, setManualDepthMm] = useState(0);
+  const [marginMm, setMarginMm] = useState("5");
+  const [nLayers, setNLayers] = useState("");
+  const [layerThicknessMm, setLayerThicknessMm] = useState("");
+  const [manualDepthMm, setManualDepthMm] = useState("");
   const [jobThicknessMm, setJobThicknessMm] = useState<number | null>(null);
 
   const [primed, setPrimed] = useState<{ part_mm: number; feed_mm: number; captured_at: number } | null>(null);
 
-  // Pull the loaded job's total powder thickness once, plus any previously captured primed bed.
+  // Re-pull the print's total powder thickness whenever the selected job changes (selecting a job in
+  // the Job tab updates the print settings), so "paired to job" reflects the current job live.
   useEffect(() => {
     let live = true;
     api.printSettings().then((x) => live && setJobThicknessMm(x.total_thickness_mm)).catch(() => {});
+    return () => { live = false; };
+  }, [status?.job?.path]);
+  // Any previously captured primed bed (once).
+  useEffect(() => {
+    let live = true;
     api.primed().then((x) => live && setPrimed(x.primed)).catch(() => {});
     return () => { live = false; };
   }, []);
 
-  const depth = fillDepthMm({ source, totalThicknessMm: jobThicknessMm ?? 0, nLayers, layerThicknessMm, manualDepthMm, marginMm });
+  const n = (v: string) => { const x = Number(v); return Number.isFinite(x) ? x : 0; };
+  const depth = fillDepthMm({ source, totalThicknessMm: jobThicknessMm ?? 0, nLayers: n(nLayers), layerThicknessMm: n(layerThicknessMm), manualDepthMm: n(manualDepthMm), marginMm: n(marginMm) });
   const pct = cavityFillPct(depth);
   const nudgeOpts = [0.5, 1, 5];
   const [nudgeStepMm, setNudgeStepMm] = useState(1);
 
-  const num = (v: number, set: (n: number) => void, label: string) => (
+  const num = (v: string, set: (s: string) => void, label: string) => (
     <>
       <span>{label}</span>
-      <input type="number" value={Number.isFinite(v) ? v : ""}
-        onChange={(e) => set(e.target.value === "" ? 0 : Number(e.target.value))} />
+      <input type="number" inputMode="decimal" value={v} onChange={(e) => set(e.target.value)} />
     </>
   );
 
@@ -89,10 +96,19 @@ export function PrimingView({ status, gates, call }: { status: StatusPayload | n
                 {srcBtn("depth", "depth (mm)")}
               </div>
               {source === "job" && (
-                <div className="fields">
-                  <span>job total thickness</span><span className="ro">{fmt(jobThicknessMm)}</span>
-                  {num(marginMm, setMarginMm, "margin")}
-                </div>
+                <>
+                  <div className="fields">
+                    <span>selected job</span>
+                    <span className="ro">{status?.job ? status.job.name : "none selected"}</span>
+                    <span>{status?.job ? "job total thickness" : "print-settings thickness"}</span>
+                    <span className="ro">{fmt(jobThicknessMm)}</span>
+                    {num(marginMm, setMarginMm, "margin")}
+                  </div>
+                  {!status?.job && (
+                    <div className="hint">No sliced job is loaded, so this uses the current print-settings thickness.
+                      Pick a job for an exact amount: <button className="linklike" onClick={onJob}>open the Job tab →</button></div>
+                  )}
+                </>
               )}
               {source === "layers" && (
                 <>

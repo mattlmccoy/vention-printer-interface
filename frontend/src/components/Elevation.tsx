@@ -29,8 +29,10 @@ export function Elevation({
 }) {
   const e = layoutElevation();
   // One in-SVG accessible nudge button: rounded hit-rect + centered glyph. Scales with the viewBox.
-  const ctl = (key: string, cx: number, cy: number, glyph: string, label: string, axis: number, delta: number) => {
-    const en = controlsEnabled;
+  // `enabled` is per-button so a nudge is greyed while ITS axis is moving — a relative move is
+  // refused mid-motion by the controller (409), so we don't offer it rather than error.
+  const ctl = (key: string, cx: number, cy: number, glyph: string, label: string, axis: number, delta: number, enabled: boolean) => {
+    const en = enabled;
     const fire = () => onNudge?.(axis, delta);
     const s = 18;
     return (
@@ -89,8 +91,8 @@ export function Elevation({
             <text className="el-lbl" x={r.x + r.w / 2} y={r.y + r.h + 18} textAnchor="middle">{lbl} piston</text>
             {/* fixed nudge pair, clear of the moving Task-3 arrow: ▲ above the well's top edge (r.y),
                 ▼ below the caption. Up = flush/negative mm, down = open cavity/positive mm. */}
-            {onNudge && ctl(`${lbl}-up`, ax, r.y - 22, "▲", `${lbl} piston up ${nudgeStepMm} mm`, axis, -nudgeStepMm)}
-            {onNudge && ctl(`${lbl}-down`, ax, r.y + r.h + 38, "▼", `${lbl} piston down ${nudgeStepMm} mm`, axis, nudgeStepMm)}
+            {onNudge && ctl(`${lbl}-up`, ax, r.y - 22, "▲", `${lbl} piston up ${nudgeStepMm} mm`, axis, -nudgeStepMm, controlsEnabled && !moving)}
+            {onNudge && ctl(`${lbl}-down`, ax, r.y + r.h + 38, "▼", `${lbl} piston down ${nudgeStepMm} mm`, axis, nudgeStepMm, controlsEnabled && !moving)}
           </g>
         );
       })}
@@ -100,17 +102,17 @@ export function Elevation({
         <rect className="el-blade" x={e.gantryX(4, rc) - 23} y={e.railRc.y + 20} width={46} height={4} />
         <rect className={hcls} x={e.gantryX(4, rc) + 25} y={e.railRc.y - 6} width={30} height={16} rx={3} />
       </g>}
-      {/* recoater nudge pair, centered on the rail. ◀ left of the carriage → toward home,
-          ▶ right of it (past the heater box) → away. If rc is null, flank the rail midpoint.
-          Centers are clamped into the frame so a homed carriage's control never clips off-screen. */}
+      {/* recoater nudge pair — STATIC at the rail ends (they do not follow the carriage). The
+          recoater homes RIGHT, so on screen higher position = further LEFT: ◀ (on the left) moves
+          the carriage left = +mm; ▶ (on the right) moves it right toward home = -mm. Greyed while
+          the recoater is moving (a relative move is refused mid-motion). */}
       {onNudge && (() => {
-        const carX = rc !== null ? e.gantryX(4, rc) : e.railRc.x + e.railRc.w / 2;
         const railCy = e.railRc.y + e.railRc.h / 2;
-        const clampX = (x: number) => Math.min(Math.max(x, e.frame.x + 12), e.frame.x + e.frame.w - 12);
+        const rcMoving = mv(4);
         return (
           <g>
-            {ctl("rec-left", clampX(carX - 40), railCy, "◀", `recoater toward home ${recoaterStepMm} mm`, 4, -recoaterStepMm)}
-            {ctl("rec-right", clampX(carX + (rc !== null ? 68 : 40)), railCy, "▶", `recoater away ${recoaterStepMm} mm`, 4, recoaterStepMm)}
+            {ctl("rec-left", e.railRc.x + 24, railCy, "◀", `recoater left (away from home) ${recoaterStepMm} mm`, 4, recoaterStepMm, controlsEnabled && !rcMoving)}
+            {ctl("rec-right", e.railRc.x + e.railRc.w - 24, railCy, "▶", `recoater right (toward home) ${recoaterStepMm} mm`, 4, -recoaterStepMm, controlsEnabled && !rcMoving)}
           </g>
         );
       })()}
