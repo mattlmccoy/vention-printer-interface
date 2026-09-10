@@ -18,6 +18,9 @@ export const TRAVEL_MM: Record<AxisNo, number> = { 1: 145, 2: 145, 3: 970, 4: 97
 export interface Telemetry {
   host_timestamp_ns: number;
   positions: Record<string, number>;
+  // Per-axis: has this axis been homed since the controller last had reference? When false the
+  // position is an unreferenced ~0 (incremental drives after a power-cycle), not true position.
+  referenced?: Record<string, boolean>;
   motion_complete: Record<string, boolean>;
   estop_triggered: boolean | null;
   drives_ready: boolean | null;

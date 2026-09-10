@@ -40,6 +40,37 @@ def test_attach_connects_and_polls() -> None:
         c.stop()
 
 
+def test_positions_unreferenced_until_homed() -> None:
+    # Incremental drives read ~0 after a power-cycle, NOT true position; until a home settles the
+    # reported positions are unreferenced and must be flagged as such (never rendered as truth).
+    c, _ = make()
+    try:
+        assert wait(lambda: c.snapshot()["telemetry"] is not None)
+        assert c.snapshot()["telemetry"]["referenced"] == {
+            "1": False, "2": False, "3": False, "4": False,
+        }
+        c.arm()
+        c.home_all()
+        assert wait(lambda: all(c.snapshot()["telemetry"]["referenced"].values()), timeout=6.0)
+    finally:
+        c.stop()
+
+
+def test_reference_cleared_on_read_failure() -> None:
+    # A telemetry read failure means the controller lost contact (a power-cycle always does this);
+    # reference cannot survive that gap, so every axis reverts to unreferenced.
+    c, t = make()
+    try:
+        c.arm()
+        c.home_all()
+        assert wait(lambda: all(c.snapshot()["telemetry"]["referenced"].values()), timeout=6.0)
+        t._unreachable = True  # the MM goes away (power-cycle / disconnect)
+        assert wait(lambda: c.snapshot()["read_error"] is not None)
+        assert not any(c.snapshot()["telemetry"]["referenced"].values())
+    finally:
+        c.stop()
+
+
 def test_attach_failure_closes_device_and_raises() -> None:
     c = Controller(poll_interval_s=0.05)
     t = SimulatedTransport(realtime=True, unreachable=True)

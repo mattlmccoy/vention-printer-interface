@@ -99,6 +99,10 @@ export function App() {
   const dotCls = !reachable ? "err" : g.faulted ? "err" : g.armed ? "live" : g.connected ? "warn" : "warn";
   const pillLabel = !reachable ? "operator unreachable" : !g.connected ? "connect" : `${c?.backend === "simulated" ? "simulator" : "MachineMotion"}${g.armed ? "" : g.faulted ? " · faulted" : " · read-only"}`;
   const estopStillAsserted = c?.telemetry?.estop_triggered !== false;
+  // Incremental drives read ~0 after a power-cycle until homed. If any axis is unreferenced the
+  // diagram's positions are not true position — warn globally and point at homing (Control tab).
+  const refMap = c?.telemetry?.referenced;
+  const anyUnref = !!refMap && Object.values(refMap).some((v) => v === false);
 
   return (
     <ErrorBoundary>
@@ -138,6 +142,13 @@ export function App() {
             </div>
           )}
           {!g.faulted && (err || (c && c.warnings.length > 0)) && <div className={`banner ${err ? "err" : "warn"}`}>{err ? <span className="apierr" style={{ marginLeft: 0, maxWidth: "100%" }}>{err}</span> : c?.warnings.join("; ")}{err && <button style={{ marginLeft: "auto" }} onClick={() => setErr(null)}>dismiss</button>}</div>}
+          {!g.faulted && g.connected && anyUnref && (
+            <div className="banner warn">
+              <b>NOT HOMED</b>
+              <span className="reason">positions are unreferenced since power-on — the machine may not be where the diagram shows. Home the axes to reference them.</span>
+              {ui.view !== "control" && <button className="small" style={{ marginLeft: "auto" }} onClick={() => setView("control")}>go to Control</button>}
+            </div>
+          )}
           {showConnect && (
             <div className="banner">
               {g.connected ? <>

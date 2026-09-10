@@ -11,6 +11,7 @@ const SW: Record<AxisNo, string> = { 1: "sw-part", 2: "sw-feed", 3: "sw-ph", 4: 
 function Axis({ a, status, ok, call, step }: { a: AxisNo; status: StatusPayload | null; ok: boolean; call: Call; step: number }) {
   const t = status?.controller.telemetry;
   const pos = t?.positions[String(a)];
+  const unref = t?.referenced?.[String(a)] === false;
   const moving = t ? t.motion_complete[String(a)] === false : false;
   const piston = a === 1 || a === 2;
   const lim = status?.controller.limits;
@@ -24,7 +25,7 @@ function Axis({ a, status, ok, call, step }: { a: AxisNo; status: StatusPayload 
   return (
     <div className="axis" style={{ borderTop: "none", paddingTop: 6 }}>
       <span className="nm"><i className={SW[a]} />{AXIS_NAMES[a]}</span>
-      <span className="pos">{typeof pos === "number" ? pos.toFixed(1) : "—"} <small>mm{moving ? " · moving" : ""}</small></span>
+      <span className="pos">{unref ? <b className="unref">unref</b> : typeof pos === "number" ? pos.toFixed(1) : "—"} <small>mm{moving ? " · moving" : unref ? " · not homed" : ""}</small></span>
       <div className="tune">
         <span className="lbl">spd</span>
         <input className="inp" type="number" value={speed} placeholder={String(am?.max_speed ?? "")} disabled={!ok} onChange={(e) => setSpeed(e.target.value)} />

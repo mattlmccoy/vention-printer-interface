@@ -183,7 +183,7 @@ export function PrintView({ status, gates, call, order, sizes, onOrder, onResize
     { id: "machine", title: "machine", size: "m", node: (
       <>
         <MachineImage status={status} partZeroMm={r?.part_zero_mm ?? null} />
-        <div className="readout">{AXES.map((a) => <div key={a}><i className={SW[a]} />{SHORT[a]}<b>{t ? `${(t.positions[String(a)] ?? 0).toFixed(1)} mm` : "—"}</b></div>)}</div>
+        <div className="readout">{AXES.map((a) => { const u = t?.referenced?.[String(a)] === false; return <div key={a}><i className={SW[a]} />{SHORT[a]}<b className={u ? "unref" : ""} title={u ? "not homed since power-on — unreferenced" : ""}>{!t ? "—" : u ? "unref" : `${(t.positions[String(a)] ?? 0).toFixed(1)} mm`}</b></div>; })}</div>
         <div className="narr" style={{ marginTop: 14, fontSize: 14 }}>{narr}{active && next && <div className="next">next: {phrase(next, plan)}</div>}</div>
       </>
     ) },

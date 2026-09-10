@@ -76,6 +76,11 @@ class Controller:
         self._stop = threading.Event()
         self._thread: threading.Thread | None = None
         self._ticks = 0
+        # Incremental drives read ~0 after a power-cycle, not true position. An axis is "referenced"
+        # only after a home settles, and reverts the moment telemetry contact is lost or e-stop
+        # asserts. Unreferenced positions must never be presented as truth (data-contract §5).
+        self._referenced_axes: set[int] = set()
+        self._homing_axes: set[int] = set()
 
     # ---- lifecycle --------------------------------------------------------------------------
     def attach_device(self, device: PrinterDevice, *, backend: str) -> None:
@@ -95,6 +100,7 @@ class Controller:
             self._move_pending, self._ticks = False, 0
             self._last_read_done = self._last_health = time.monotonic()
             self._homing_until = self._home_issued_at = 0.0
+            self._referenced_axes, self._homing_axes = set(), set()  # a fresh link is unreferenced
             self._stop = stop
         self._thread = threading.Thread(
             target=self._loop, args=(device, stop), name="vpi-poll", daemon=True
@@ -152,6 +158,8 @@ class Controller:
                 return  # orphaned thread: its device is gone, its result is meaningless
             with self._lock:
                 self._read_error = str(exc)
+                self._referenced_axes.clear()  # lost contact -> reference cannot be trusted
+                self._homing_axes.clear()
             if self.state != ControllerState.FAULT:
                 self._enter_fault((f"telemetry read failed: {exc}",))
             self._notify()
@@ -175,6 +183,9 @@ class Controller:
                 if not self._heater_cmd_on_since or now - self._heater_cmd_on_since > 1.0:
                     self._heater_cmd_on_since = None  # observed off after the command settled
             heater_on_s = self._heater_on_s(now)
+            if tel.estop_triggered:
+                self._referenced_axes.clear()  # e-stop cuts drive power -> re-home required
+                self._homing_axes.clear()
             done = all(tel.motion_complete.values())
             if done:
                 self._move_pending = False
@@ -183,6 +194,9 @@ class Controller:
             if homing and done and now - self._home_issued_at > 1.5:
                 self._homing_until = 0.0
                 homing = False
+                # the home has settled: the axes it covered now read true position
+                self._referenced_axes |= self._homing_axes
+                self._homing_axes = set()
             decision: SafetyDecision = evaluate(
                 tel, self.limits, age, heater_on_s, self._move_pending, home_in_progress=homing
             )
@@ -314,11 +328,15 @@ class Controller:
 
     def home_all(self) -> None:
         dev = self._require_armed()
+        with self._lock:
+            self._homing_axes = set(dev.axes)  # reference is granted when this home settles
         self._begin_homing()  # suspend position limits so the home can finish and re-zero
         dev.home_all()  # not under _io_lock: the reply may block until homed (see module doc)
 
     def home(self, axis: int) -> None:
         dev = self._require_armed()
+        with self._lock:
+            self._homing_axes = {axis}
         self._begin_homing()
         dev.home(axis)
 
@@ -476,6 +494,7 @@ class Controller:
                 else {
                     "host_timestamp_ns": tel.host_timestamp_ns,
                     "positions": {str(k): v for k, v in tel.positions.items()},
+                    "referenced": {str(k): (k in self._referenced_axes) for k in tel.positions},
                     "motion_complete": {str(k): v for k, v in tel.motion_complete.items()},
                     "estop_triggered": tel.estop_triggered,
                     "drives_ready": tel.drives_ready,
