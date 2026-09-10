@@ -29,7 +29,7 @@ export function App() {
   const [version, setVersion] = useState<string | null>(null);
   const [handshake, setHandshake] = useState<string | null>(null);
   const [busy, setBusy] = useState<string | null>(null);
-  const [showHelp, setShowHelp] = useState(false);
+  const [wsFails, setWsFails] = useState(0);
   const [copied, setCopied] = useState(false);
   const [showConnect, setShowConnect] = useState(false);
   const [choice, setChoice] = useState("simulated");
@@ -43,7 +43,7 @@ export function App() {
     const open = () => {
       if (!alive) return;
       ws = new WebSocket(wsUrl(base, "/ws/telemetry"));
-      ws.onopen = () => { setReachable(true); api.health().then((h) => { setVersion(h.version); const hs = checkHandshake(UI_API_VERSION, h.api_version); setHandshake(hs.level === "ok" ? null : hs.message); }).catch(() => undefined); };
+      ws.onopen = () => { setReachable(true); setWsFails(0); api.health().then((h) => { setVersion(h.version); const hs = checkHandshake(UI_API_VERSION, h.api_version); setHandshake(hs.level === "ok" ? null : hs.message); }).catch(() => undefined); };
       ws.onmessage = (ev) => {
         if (typeof ev.data !== "string") return;
         const s = JSON.parse(ev.data) as StatusPayload;
@@ -51,7 +51,7 @@ export function App() {
         const t = s.controller.telemetry?.host_timestamp_ns;
         if (t && samples.current[samples.current.length - 1] !== t) { samples.current.push(t); if (samples.current.length > 50) samples.current.shift(); }
       };
-      ws.onclose = () => { setReachable(false); if (alive) timer = window.setTimeout(open, 1000); };
+      ws.onclose = () => { setReachable(false); setWsFails((f) => Math.min(f + 1, 99)); if (alive) timer = window.setTimeout(open, 1000); };
       ws.onerror = () => ws?.close();
     };
     open();
@@ -63,14 +63,11 @@ export function App() {
     api.discovery().then((d) => setCandidates(d.candidates as Candidate[])).catch(() => undefined);
   }, [showConnect, base]);
 
-  // In site mode (the hosted UI), if the local operator stays unreachable for a moment, show
-  // the "how to start it" help — delayed so a brief WS reconnect doesn't flash it.
-  useEffect(() => {
-    if (reachable) { setShowHelp(false); return; }
-    const t = window.setTimeout(() => setShowHelp(true), 2500);
-    return () => clearTimeout(t);
-  }, [reachable]);
   const copyInstall = () => { navigator.clipboard?.writeText(INSTALL_SH).then(() => { setCopied(true); window.setTimeout(() => setCopied(false), 1500); }).catch(() => undefined); };
+  // In site mode (the hosted UI), show the "how to start the operator" help once the local operator
+  // has failed to answer a couple of reconnect attempts (~2s) — driven by the WS reconnect loop, not
+  // a standalone timer, so it reveals reliably. Hidden the moment the operator connects (wsFails→0).
+  const showHelp = SITE_MODE && !reachable && wsFails >= 2;
 
   const call = useCallback(async (label: string, fn: () => Promise<unknown>) => {
     setBusy(label);
@@ -145,7 +142,7 @@ export function App() {
             </div>
           )}
         </div>
-        {SITE_MODE && showHelp && !reachable && (
+        {showHelp && (
           <div className="setup-help">
             <div className="setup-title">Operator not found on this computer</div>
             <p className="setup-lead">
