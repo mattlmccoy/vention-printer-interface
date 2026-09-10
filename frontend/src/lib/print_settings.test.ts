@@ -27,6 +27,23 @@ test("compile matches the backend order for one print layer (37 steps, heater on
   assert.deepEqual(steps.map((s) => s.index), [...Array(37).keys()]);
 });
 
+test("printing layer: multi-pass jetting + pre-heater drop and return-up", () => {
+  const p = { ...DEFAULT_PLAN, thick_precoat: { ...DEFAULT_PLAN.thick_precoat, n_layers: 0 },
+    thin_precoat: { ...DEFAULT_PLAN.thin_precoat, n_layers: 0 },
+    printing: { ...DEFAULT_PLAN.printing, layer_thickness_mm: 0.2, n_layers: 1 },
+    postcoat: { ...DEFAULT_PLAN.postcoat, n_layers: 0 },
+    n_jet_passes: 2, pre_heater_drop_mm: 0.1, heater_enabled: true };
+  const ks = compilePrint(p).map((s) => [s.kind, s.axis, s.value] as const);
+  const jet = ks.flatMap((k, i) =>
+    k[0] === "move_abs" && k[1] === 3 && k[2] === p.printhead_end_mm ? [i] : []);
+  assert.equal(jet.length, 2); // two jet passes
+  const iDrop = ks.findIndex((k) => k[0] === "move_rel" && k[1] === 1 && k[2] === p.pre_heater_drop_mm);
+  const iHeaterOn = ks.findIndex((k) => k[0] === "heater" && k[2] === 1);
+  const iUp = ks.findIndex((k, i) =>
+    k[0] === "move_rel" && k[1] === 1 && k[2] === -p.pre_heater_drop_mm && i > iHeaterOn);
+  assert.ok(Math.max(...jet) < iDrop && iDrop < iHeaterOn && iHeaterOn < iUp);
+});
+
 test("compile of the full default plan: 16 layers, heights, resets", () => {
   const steps = compilePrint({ ...DEFAULT_PLAN, n_heater_passes: 3 });
   // printing 10 layers x 3 heater passes = 30 moves to heater_end (precoats never heat)

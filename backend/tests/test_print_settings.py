@@ -140,6 +140,24 @@ def test_compile_one_print_layer_matches_v1_order() -> None:
     assert [s.index for s in steps] == list(range(len(steps)))
 
 
+def test_printing_layer_multipass_and_pre_heater_drop() -> None:
+    import dataclasses
+
+    from vention_printer_interface.control.print_settings import PhasePlan
+    p = dataclasses.replace(PrintSettings(),
+        thick_precoat=PhasePlan(n_layers=0), thin_precoat=PhasePlan(n_layers=0),
+        printing=PhasePlan(layer_thickness_mm=0.2, n_layers=1), postcoat=PhasePlan(n_layers=0),
+        n_jet_passes=2, pre_heater_drop_mm=0.1, heater_enabled=True)
+    ks = [(s.kind, s.axis, s.value) for s in compile_print(p)]
+    jet = [i for i, k in enumerate(ks) if k == ("move_abs", PRINTHEAD, p.printhead_end_mm)]
+    assert len(jet) == 2  # two jet passes
+    i_drop = ks.index(("move_rel", PART, p.pre_heater_drop_mm))
+    i_heater_on = next(i for i, k in enumerate(ks) if k[0] == "heater" and k[2] == 1.0)
+    i_up = next(i for i, k in enumerate(ks)
+               if k == ("move_rel", PART, -p.pre_heater_drop_mm) and i > i_heater_on)
+    assert max(jet) < i_drop < i_heater_on < i_up  # jets → drop → heat → raise back up
+
+
 def test_compile_precoat_has_no_printhead_or_heater_steps() -> None:
     p = dataclasses.replace(
         one_layer(),

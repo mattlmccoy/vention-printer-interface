@@ -315,10 +315,17 @@ def compile_print(plan: PrintSettings) -> tuple[Step, ...]:
             add(name, layer_no, "move_abs", RECOATER, plan.recoater_home_mm)
             add(name, layer_no, "wait")
             if name == "printing":
-                add(name, layer_no, "move_abs", PRINTHEAD, plan.printhead_end_mm)  # jet pass
-                add(name, layer_no, "wait")
-                add(name, layer_no, "move_abs", PRINTHEAD, plan.printhead_home_mm)
-                add(name, layer_no, "wait")
+                for _ in range(plan.n_jet_passes):
+                    add(name, layer_no, "move_abs", PRINTHEAD, plan.printhead_end_mm)  # jet pass
+                    add(name, layer_no, "wait")
+                    add(name, layer_no, "move_abs", PRINTHEAD, plan.printhead_home_mm)
+                    add(name, layer_no, "wait")
+                if plan.pre_heater_drop_mm > 0:
+                    add(
+                        name, layer_no, "move_rel", PART,
+                        plan.pre_heater_drop_mm, "pre-heater drop",
+                    )
+                    add(name, layer_no, "wait")
                 add(name, layer_no, "set_speed", RECOATER, plan.heater_speed)  # evaporate ink
                 add(name, layer_no, "set_accel", RECOATER, plan.heater_accel)
                 if plan.heater_enabled:
@@ -330,6 +337,12 @@ def compile_print(plan: PrintSettings) -> tuple[Step, ...]:
                     add(name, layer_no, "wait")
                 if plan.heater_enabled:
                     add(name, layer_no, "heater", value=0.0)
+                if plan.pre_heater_drop_mm > 0:
+                    add(
+                        name, layer_no, "move_rel", PART,
+                        -plan.pre_heater_drop_mm, "raise back to layer",
+                    )
+                    add(name, layer_no, "wait")
             add(name, layer_no, "mark", label="layer_end")
     return tuple(out)
 

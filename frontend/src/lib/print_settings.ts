@@ -143,10 +143,16 @@ export function compilePrint(plan: PrintSettings): Step[] {
       add(name, layerNo, "move_abs", RECOATER, plan.recoater_home_mm);
       add(name, layerNo, "wait");
       if (name === "printing") {
-        add(name, layerNo, "move_abs", PRINTHEAD, plan.printhead_end_mm);
-        add(name, layerNo, "wait");
-        add(name, layerNo, "move_abs", PRINTHEAD, plan.printhead_home_mm);
-        add(name, layerNo, "wait");
+        for (let j = 0; j < plan.n_jet_passes; j++) {
+          add(name, layerNo, "move_abs", PRINTHEAD, plan.printhead_end_mm);
+          add(name, layerNo, "wait");
+          add(name, layerNo, "move_abs", PRINTHEAD, plan.printhead_home_mm);
+          add(name, layerNo, "wait");
+        }
+        if (plan.pre_heater_drop_mm > 0) {
+          add(name, layerNo, "move_rel", PART, plan.pre_heater_drop_mm, "pre-heater drop");
+          add(name, layerNo, "wait");
+        }
         add(name, layerNo, "set_speed", RECOATER, plan.heater_speed);
         add(name, layerNo, "set_accel", RECOATER, plan.heater_accel);
         if (plan.heater_enabled) add(name, layerNo, "heater", null, 1);
@@ -157,6 +163,10 @@ export function compilePrint(plan: PrintSettings): Step[] {
           add(name, layerNo, "wait");
         }
         if (plan.heater_enabled) add(name, layerNo, "heater", null, 0);
+        if (plan.pre_heater_drop_mm > 0) {
+          add(name, layerNo, "move_rel", PART, -plan.pre_heater_drop_mm, "raise back to layer");
+          add(name, layerNo, "wait");
+        }
       }
       add(name, layerNo, "mark", null, null, "layer_end");
     }
