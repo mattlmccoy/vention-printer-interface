@@ -1,7 +1,7 @@
 import { useEffect, useState } from "react";
 import { api } from "../../lib/api.ts";
 import type { Gates } from "../../lib/format.ts";
-import type { StatusPayload } from "../../lib/telemetry.ts";
+import { AXES, type AxisNo, type StatusPayload } from "../../lib/telemetry.ts";
 import { fillDepthMm, cavityFillPct, FEED_TRAVEL_MM, type FillSource } from "../../lib/powder.ts";
 import { WALKTHROUGH_STEPS, stepHeading } from "../../lib/walkthrough.ts";
 import { Elevation } from "../Elevation.tsx";
@@ -14,10 +14,14 @@ import type { Call } from "./types.ts";
  *  loading powder, leveling, and capturing the primed bed. The walkthrough shows its OWN step
  *  position ("Step 3 of 6"), never the compiled priming macro's raw step count. A RUN PRIMING
  *  (auto) escape hatch + ABORT stay available, but the stepper is the primary flow. */
+const SW: Record<AxisNo, string> = { 1: "sw-part", 2: "sw-feed", 3: "sw-ph", 4: "sw-rc" };
+const SHORT: Record<AxisNo, string> = { 1: "build", 2: "feed", 3: "printhead", 4: "recoater" };
+
 export function PrimingView({ status, gates, call, onJob }: { status: StatusPayload | null; gates: Gates; call: Call; onJob: () => void }) {
   const { p, s, invalid, edit, setEdit, save, setParam } = usePriming(call);
   const ok = gates.controllable && !gates.printActive;
   const r = status?.print ?? null;
+  const t = status?.controller.telemetry ?? null;
   const paused = r?.state === "paused";
   // Live state of the automatic RUN PRIMING macro. Surfaced as a banner so the button visibly
   // does something — the macro's progress otherwise only shows on the Print tab.
@@ -263,6 +267,7 @@ export function PrimingView({ status, gates, call, onJob }: { status: StatusPayl
             controlsEnabled={ok}
           />
         </div>
+        <div className="readout">{AXES.map((a) => { const u = t?.referenced?.[String(a)] === false; return <div key={a}><i className={SW[a]} />{SHORT[a]}<b className={u ? "unref" : ""} title={u ? "not homed since power-on — unreferenced" : ""}>{!t ? "—" : u ? "unref" : `${(t.positions[String(a)] ?? 0).toFixed(1)} mm`}</b></div>; })}</div>
         <div className="narr">
           {ok ? "in control" : gates.connected ? "read-only — arm to move" : "not connected"}
           <div className="next">

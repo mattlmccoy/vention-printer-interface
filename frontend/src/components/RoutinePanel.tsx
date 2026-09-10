@@ -15,6 +15,7 @@ interface Draft {
   printing_feed_thickness_mm: number; // feed advance per printing layer (the powder supply)
   recoater_return_mm: number;
   heater_start_mm: number;
+  heater_speed: number; // manual override of the computed exposure sweep speed (unachievable now)
   part_max_mm: number;
   n_jet_passes: number;
   pre_heater_drop_mm: number;
@@ -36,7 +37,8 @@ function readDraft(plan: Record<string, unknown>): Draft {
     printing_feed_thickness_mm: phaseOf(plan, "printing").feed_thickness_mm,
     recoater_return_mm: n(plan.recoater_return_mm, 350),
     heater_start_mm: n(plan.heater_start_mm, 425),
-    part_max_mm: n(plan.part_max_mm, 75),
+    heater_speed: n(plan.heater_speed, 50),
+    part_max_mm: n(plan.part_max_mm, 72),
     n_jet_passes: n(plan.n_jet_passes, 1),
     pre_heater_drop_mm: n(plan.pre_heater_drop_mm),
     postcoat_enabled: typeof plan.postcoat_enabled === "boolean" ? plan.postcoat_enabled : true,
@@ -64,6 +66,7 @@ export function RoutinePanel({ gates, call }: { gates: Gates; call: Call }) {
       printing: { feed_thickness_mm: d.printing_feed_thickness_mm },
       recoater_return_mm: d.recoater_return_mm,
       heater_start_mm: d.heater_start_mm,
+      heater_speed: d.heater_speed,
       part_max_mm: d.part_max_mm,
       n_jet_passes: d.n_jet_passes,
       pre_heater_drop_mm: d.pre_heater_drop_mm,
@@ -84,6 +87,7 @@ export function RoutinePanel({ gates, call }: { gates: Gates; call: Call }) {
         <span>printing feed</span><span className="row"><NumberField step="0.1" value={d.printing_feed_thickness_mm} disabled={!ok} onChange={(v) => setD({ printing_feed_thickness_mm: v })} /> mm / layer</span>
         <span>recoater return</span><span className="row"><NumberField value={d.recoater_return_mm} disabled={!ok} onChange={(v) => setD({ recoater_return_mm: v })} /> mm</span>
         <span>heater start</span><span className="row"><NumberField value={d.heater_start_mm} disabled={!ok} onChange={(v) => setD({ heater_start_mm: v })} /> mm</span>
+        <span title="Manual recoater sweep speed during the heater pass — overrides the computed exposure sweep (which is unachievable on the current hardware).">heater speed</span><span className="row"><NumberField step="1" value={d.heater_speed} disabled={!ok} onChange={(v) => setD({ heater_speed: v })} /> mm/s <span className="hint">(manual override)</span></span>
         <span>part max</span><span className="row"><NumberField value={d.part_max_mm} disabled={!ok} onChange={(v) => setD({ part_max_mm: v })} /> mm</span>
         <span title="prints each layer N times without dropping the part piston">multipass (passes / layer)</span><span className="row"><NumberField value={d.n_jet_passes} disabled={!ok} onChange={(v) => setD({ n_jet_passes: v })} /></span>
         <span>pre-heater drop</span><span className="row"><NumberField step="0.1" value={d.pre_heater_drop_mm} disabled={!ok} onChange={(v) => setD({ pre_heater_drop_mm: v })} /> mm</span>

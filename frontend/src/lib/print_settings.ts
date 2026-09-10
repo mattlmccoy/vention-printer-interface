@@ -68,7 +68,7 @@ export const DEFAULT_PLAN: PrintSettings = {
   n_jet_passes: 1, pre_heater_drop_mm: 0, postcoat_enabled: true,
   feed_end_mm: 145, recoater_home_mm: 5, recoater_return_mm: 350, recoater_end_mm: 925,
   heater_home_mm: 5, heater_start_mm: 425, heater_end_mm: 600,
-  printhead_home_mm: 5, printhead_end_mm: 900, part_max_mm: 75,
+  printhead_home_mm: 5, printhead_end_mm: 900, part_max_mm: 72,
   heater_speed: 50, heater_accel: 250, n_heater_passes: 1,
   heater_enabled: false, settle_s: 1, feed_fast_speed: 5, feed_fast_accel: 30,
 };
