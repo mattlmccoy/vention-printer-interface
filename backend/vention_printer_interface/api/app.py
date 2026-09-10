@@ -23,7 +23,7 @@ from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 
 from vention_printer_interface import __version__
-from vention_printer_interface.control.controller import Controller
+from vention_printer_interface.control.controller import REFERENCE_MATCH_TOL_MM, Controller
 from vention_printer_interface.control.events import EventLog
 from vention_printer_interface.control.heater_model import exposure
 from vention_printer_interface.control.limits_store import load_limits, save_limits
@@ -41,6 +41,7 @@ from vention_printer_interface.control.print_settings_store import (
     load_print_settings,
     save_print_settings,
 )
+from vention_printer_interface.control.reference_store import load_reference, save_reference
 from vention_printer_interface.control.safety import HARD_BOUNDS, SafetyLimits
 from vention_printer_interface.device import create_transport, registered_transports
 from vention_printer_interface.device.printer import PrinterDevice
@@ -173,9 +174,22 @@ def _attach(app: FastAPI, backend: str, ip: str | None, heater_io: tuple[int, in
         kwargs["ip"] = ip or r.DEFAULT_IP_ETHERNET
     transport = create_transport(backend, **kwargs)
     device = PrinterDevice(transport, heater_io=heater_io or app.state.default_heater_io)
+    # Lower the persist guard BEFORE the new poll loop starts, so an early tick can't overwrite the
+    # saved reference seed with the fresh (unreferenced) state before we restore from it.
+    app.state.reference_restored = False
     app.state.controller.attach_device(device, backend=backend)
     app.state.backend = backend
     app.state.axis_motion = _fresh_axis_motion()
+    # Reconnect restore: if the MM kept power its positions are unchanged, so re-reference the axes
+    # whose saved position still matches — this keeps a software disconnect from showing unref.
+    seed = load_reference(app.state.experiments_root)
+    if seed is not None:
+        ctrl = app.state.controller
+        deadline = time.monotonic() + 1.5
+        while time.monotonic() < deadline and ctrl.snapshot().get("telemetry") is None:
+            time.sleep(0.05)
+        ctrl.restore_reference(seed[0], seed[1], REFERENCE_MATCH_TOL_MM)
+    app.state.reference_restored = True
 
 
 def create_app(
@@ -224,15 +238,44 @@ def create_app(
                 if snap["state"] == "fault":
                     events.append("fault", {"reasons": snap["fault_reasons"]})
 
+        # Persist the referenced-axis set + positions so reference survives a software reconnect
+        # (guarded until restore has run so it never clobbers the saved seed; throttled for disk).
+        ref_persist: dict[str, Any] = {"axes": None, "pos": {}}
+
+        def persist_reference(snap: dict[str, Any]) -> None:
+            if not getattr(app.state, "reference_restored", False):
+                return
+            tel = snap.get("telemetry")
+            if not tel:
+                return
+            axes = {int(k) for k, v in (tel.get("referenced") or {}).items() if v}
+            positions = {int(k): float(v) for k, v in tel["positions"].items()}
+            prev_pos: dict[int, float] = ref_persist["pos"]
+            # Save whenever the referenced set changes, or a referenced axis moved beyond the match
+            # tolerance — so the saved positions stay within tol of reality and a reconnect matches.
+            moved = any(
+                abs(positions.get(a, 0.0) - prev_pos.get(a, 1e9)) > REFERENCE_MATCH_TOL_MM
+                for a in axes
+            )
+            if axes != ref_persist["axes"] or moved:
+                try:
+                    save_reference(root, axes, positions)
+                except OSError as exc:
+                    log.warning("reference persist failed: %s", exc)
+                ref_persist["axes"], ref_persist["pos"] = axes, positions
+
         # Order matters: the print controller ticks first so the recorder logs it.
         controller.add_listener(printer.tick)
         controller.add_listener(on_controller_state)
         controller.add_listener(recorder.record)
+        controller.add_listener(persist_reference)
         app.state.events = events
         app.state.controller, app.state.recorder, app.state.printer = controller, recorder, printer
         app.state.print_settings = load_print_settings(root, controller.limits)
         app.state.priming = load_priming(root, controller.limits)
         app.state.primed = load_primed(root)
+        app.state.experiments_root = root
+        app.state.reference_restored = False
         app.state.job = None
         app.state.backend = "none"
         app.state.default_heater_io = heater_io or DEFAULT_HEATER_IO

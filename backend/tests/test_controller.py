@@ -67,6 +67,32 @@ def test_reconcile_reference_keeps_matching_drops_moved() -> None:
     assert reconcile_reference(ref, saved, {1: 0.0, 2: 0.1, 3: 0.0, 4: 0.1}, 2.0) == {1, 3}
 
 
+def test_restore_reference_matches_saved_positions() -> None:
+    # On reconnect the app restores reference for axes whose position is unchanged vs the saved
+    # snapshot (the MM kept power); axes that moved (a power-cycle -> ~0) are not restored.
+    c, _ = make()
+    try:
+        assert wait(lambda: c.snapshot()["telemetry"] is not None)
+        pos = c.snapshot()["telemetry"]["positions"]
+        c.restore_reference({1, 2, 3}, {1: pos["1"], 2: pos["2"], 3: pos["3"] + 500.0}, 2.0)
+        ref = c.snapshot()["telemetry"]["referenced"]
+        assert ref["1"] and ref["2"] and not ref["3"]  # 3's saved position no longer matches
+    finally:
+        c.stop()
+
+
+def test_reference_state_getter_returns_axes_and_positions() -> None:
+    c, _ = make()
+    try:
+        c.arm()
+        c.home_all()
+        assert wait(lambda: all(c.snapshot()["telemetry"]["referenced"].values()), timeout=6.0)
+        axes, positions = c.reference_state()
+        assert axes == {1, 2, 3, 4} and set(positions) == {1, 2, 3, 4}
+    finally:
+        c.stop()
+
+
 def test_reference_survives_a_reconnect_when_positions_unchanged() -> None:
     # A telemetry blip while the MM keeps power (positions unchanged on recovery) must NOT drop
     # reference — the "shows unref every reconnect" annoyance.

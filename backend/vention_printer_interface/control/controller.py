@@ -498,6 +498,29 @@ class Controller:
                 log.error("e-stop trigger failed: %s", exc)
         return {"ok": all(v == "ok" for v in steps.values()), "steps": steps}
 
+    # ---- reference persistence (survive a software reconnect while the MM keeps power) -------
+    def restore_reference(
+        self, saved_axes: set[int], saved_positions: dict[int, float], tol: float
+    ) -> None:
+        """Reconnect restore: keep reference for saved axes whose position is unchanged (the MM
+        kept power); axes that moved (a power-cycle collapses to ~0) are dropped. No-op until the
+        first telemetry read has landed."""
+        with self._lock:
+            tel = self._telemetry
+            if tel is None:
+                return
+            self._referenced_axes = reconcile_reference(
+                set(saved_axes), saved_positions, tel.positions, tol
+            )
+            self._reference_positions = dict(tel.positions)
+            self._reference_suspect = False
+        self._notify()
+
+    def reference_state(self) -> tuple[set[int], dict[int, float]]:
+        """Current (referenced axes, last positions) — for the app to persist to disk."""
+        with self._lock:
+            return set(self._referenced_axes), dict(self._reference_positions)
+
     # ---- snapshot ---------------------------------------------------------------------------
     def snapshot(self) -> dict[str, Any]:
         with self._lock:

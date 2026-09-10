@@ -94,6 +94,44 @@ def test_put_print_settings_rebounds_validates_and_persists(
     assert bad.status_code == 200 and any("thickness" in v for v in bad.json()["validation"])
 
 
+def _wait_ref(c: TestClient, pred: Any, timeout: float = 8.0) -> dict[str, Any]:
+    end = time.monotonic() + timeout
+    while time.monotonic() < end:
+        t = c.get("/api/status").json()["controller"]["telemetry"]
+        if t and pred(t["referenced"]):
+            return t
+        time.sleep(0.05)
+    raise AssertionError(f"reference predicate never met: {c.get('/api/status').json()['print']}")
+
+
+def test_reference_restored_after_software_reconnect(client: TestClient, tmp_path: Path) -> None:
+    # A real MM keeps power and its positions across a software disconnect. The simulator instead
+    # resets to 50 on each connect, so to model "positions unchanged" we park every axis at 50
+    # while referenced; on reconnect the positions match the saved reference and it is restored.
+    connect_arm(client)
+    _wait_ref(client, lambda r: not any(r.values()))  # fresh connect is unreferenced
+    client.post("/api/motion/home", json={"axes": []})
+    _wait_ref(client, lambda r: all(r.values()))  # homing references every axis
+    for a in (1, 2, 3, 4):
+        client.post("/api/motion/move", json={"axis": a, "mode": "abs", "mm": 50.0})
+
+    def parked() -> bool:
+        t = client.get("/api/status").json()["controller"]["telemetry"]
+        return bool(t) and all(abs(t["positions"][str(a)] - 50.0) < 1.0 for a in (1, 2, 3, 4))
+
+    end = time.monotonic() + 8
+    while time.monotonic() < end and not parked():
+        time.sleep(0.05)
+    assert parked()
+    _wait_ref(client, lambda r: all(r.values()))  # moving does not drop reference
+    assert (tmp_path / ".reference.json").exists()
+
+    client.post("/api/disconnect")
+    assert client.post("/api/connect", json={"backend": "simulated"}).status_code == 200
+    t = _wait_ref(client, lambda r: all(r.values()), timeout=4.0)  # restored, not unref
+    assert all(t["referenced"].values()), t["referenced"]
+
+
 def test_partial_patch_preserves_unmentioned_routine_fields(client: TestClient) -> None:
     # The UI editors send partial patches; a later partial patch must NOT reset routine fields it
     # omits (multipass n_jet_passes, pre_heater_drop_mm) — the clobber that silently disabled them.
