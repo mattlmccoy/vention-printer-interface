@@ -169,11 +169,13 @@ export function App() {
             </ol>
           </div>
         )}
+        {!showHelp && (<>
         {ui.view === "print" && <PrintView status={status} gates={g} call={call} order={ui.order.print} sizes={ui.sizes.print} onOrder={setOrder("print")} onResize={setResize("print")} onJob={() => setView("job")} />}
         {ui.view === "job" && <JobView status={status} gates={g} call={call} order={ui.order.job} sizes={ui.sizes.job} onOrder={setOrder("job")} onResize={setResize("job")} onStarted={() => setView("print")} />}
         {ui.view === "control" && <ControlView status={status} gates={g} call={call} gantryStep={ui.gantryStep} pistonStep={ui.pistonStep} setGantryStep={(s) => setUi((u) => ({ ...u, gantryStep: s }))} setPistonStep={(s) => setUi((u) => ({ ...u, pistonStep: s }))} order={ui.order.control} sizes={ui.sizes.control} onOrder={setOrder("control")} onResize={setResize("control")} />}
         {ui.view === "priming" && <PrimingView status={status} gates={g} call={call} />}
         {ui.view === "runs" && <RunsView status={status} gates={g} call={call} order={ui.order.runs} sizes={ui.sizes.runs} onOrder={setOrder("runs")} onResize={setResize("runs")} />}
+        </>)}
         <StatusBar state={c?.state ?? "disconnected"} backend={c?.backend ?? "none"} pollHz={pollHz} reachable={reachable}
           estop={c?.telemetry?.estop_triggered ?? null} drivesReady={c?.telemetry?.drives_ready ?? null} heaterOn={c?.heater.on ?? null} heaterOnS={c?.heater.on_s ?? 0} heaterMaxS={c?.heater.max_on_s ?? 0}
           recActive={status?.recording.active ?? false} recRun={status?.recording.run ?? null} printState={r?.state ?? "idle"} version={version} />
