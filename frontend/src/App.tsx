@@ -3,6 +3,7 @@ import { api, operatorBase, setOperatorBase, SITE_MODE } from "./lib/api.ts";
 import { formatError, gates as computeGates } from "./lib/format.ts";
 import { checkHandshake, saveOperatorBase, UI_API_VERSION, wsUrl } from "./lib/operator.ts";
 import { clampSize, loadConsole, saveConsole, VIEWS, type ModuleSize, type View } from "./lib/console.ts";
+import { connectOptions, type Candidate } from "./lib/connect.ts";
 import type { StatusPayload } from "./lib/telemetry.ts";
 import { ErrorBoundary } from "./components/ErrorBoundary.tsx";
 import { StatusBar } from "./components/StatusBar.tsx";
@@ -26,6 +27,7 @@ export function App() {
   const [busy, setBusy] = useState<string | null>(null);
   const [showConnect, setShowConnect] = useState(false);
   const [choice, setChoice] = useState("simulated");
+  const [candidates, setCandidates] = useState<Candidate[]>([]);
   const [ip, setIp] = useState("192.168.0.2");
   const [heaterIo, setHeaterIo] = useState("1,0");
   const samples = useRef<number[]>([]);
@@ -49,6 +51,11 @@ export function App() {
     open();
     return () => { alive = false; if (timer) clearTimeout(timer); ws?.close(); };
   }, [base]);
+
+  useEffect(() => {
+    if (!showConnect) return;
+    api.discovery().then((d) => setCandidates(d.candidates as Candidate[])).catch(() => undefined);
+  }, [showConnect, base]);
 
   const call = useCallback(async (label: string, fn: () => Promise<unknown>) => {
     setBusy(label);
@@ -113,7 +120,7 @@ export function App() {
                 {g.armed && <button onClick={() => call("release control", api.disarm)}>release control (read-only)</button>}
                 <button onClick={() => call("disconnect", () => api.disconnect().then(() => setShowConnect(false)))}>disconnect</button>
               </> : <>
-                <select value={choice} onChange={(e) => setChoice(e.target.value)}><option value="simulated">simulator</option><option value="ethernet">MachineMotion — Ethernet 192.168.0.2</option><option value="usb">MachineMotion — USB 192.168.7.2</option><option value="custom">MachineMotion — custom IP</option></select>
+                <select value={choice} onChange={(e) => setChoice(e.target.value)}>{connectOptions(candidates).map((o) => <option key={o.value} value={o.value}>{o.label}</option>)}</select>
                 {choice === "custom" && <input type="text" value={ip} onChange={(e) => setIp(e.target.value)} />}
                 <label className="hint">heater io <input type="text" value={heaterIo} onChange={(e) => setHeaterIo(e.target.value)} style={{ width: 56 }} title="IO module id,pin — unverified until commissioning" /></label>
                 <label className="hint"><input type="checkbox" checked={ui.readOnlyConnect} onChange={(e) => setUi((u) => ({ ...u, readOnlyConnect: e.target.checked }))} /> read-only (watch only)</label>
