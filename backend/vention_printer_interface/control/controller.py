@@ -383,6 +383,32 @@ class Controller:
             "RESET on the MachineMotion, then Clear Fault"
         )
 
+    def reset_drives(self) -> None:
+        """Re-energize the drives via a software system reset (estop/systemreset), WITHOUT releasing
+        the e-stop. Releasing an e-stop is physical-only (ISO 13850), but re-energizing the drives
+        after the operator has already twisted out the physical E-STOP is a normal recovery step, so
+        this lets them do it from software instead of walking over to the physical RESET button.
+        Refuses while the e-stop is still engaged; may still be rejected by firmware that insists on
+        the physical RESET, in which case the error says so."""
+        dev = self._require_device()
+        with self._io_lock:
+            if dev.read_telemetry().estop_triggered:
+                raise RuntimeError(
+                    "E-STOP is still engaged — twist out the physical E-STOP first, "
+                    "then reset the drives"
+                )
+            dev.estop_reset()
+            end = time.monotonic() + ESTOP_READY_WAIT_S
+            while time.monotonic() < end:
+                if dev.read_telemetry().drives_ready:
+                    return
+                time.sleep(0.2)
+        raise RuntimeError(
+            f"drives did not re-energize within {ESTOP_READY_WAIT_S:.0f}s after the system reset — "
+            "your firmware may require the physical RESET button on the MachineMotion; press it, "
+            "then Clear Fault"
+        )
+
     # ---- safe-direction (ungated) -----------------------------------------------------------
     def stop_all(self) -> None:
         dev = self._require_device()

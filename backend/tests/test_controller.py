@@ -93,6 +93,18 @@ def test_estop_bypasses_gate_and_kills_heater() -> None:
         c.stop()
 
 
+def test_reset_drives_refuses_while_estop_asserted() -> None:
+    # Re-energizing the drives is a software step, but only AFTER the physical E-STOP is released.
+    c, _ = make()
+    try:
+        c.estop()
+        assert wait(lambda: c.state == ControllerState.FAULT)
+        with pytest.raises(RuntimeError, match="still engaged"):
+            c.reset_drives()
+    finally:
+        c.stop()
+
+
 def test_estop_release_then_clear_fault() -> None:
     c, t = make()
     try:

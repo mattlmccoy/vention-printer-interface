@@ -120,9 +120,14 @@ export function App() {
             <div className="banner err">
               <b>FAULT</b><span>{c?.fault_reasons.join("; ")}</span>
               <span className="step"><span className="n">1</span>{estopStillAsserted ? (
-                <span>Twist out the physical <b>E-STOP</b>, then press <b>RESET</b> on the MachineMotion. An e-stop can only be released by hand at the machine — the firmware does not allow a software release. <button className="linklike" onClick={() => call("try software release", api.estopRelease)}>try software release anyway</button></span>
+                <span>Twist out the physical <b>E-STOP</b> — an e-stop can only be released by hand at the machine (the firmware does not allow a software release). <button className="linklike" onClick={() => call("try software release", api.estopRelease)}>try software release anyway</button></span>
               ) : <span>e-stop released ✓</span>}</span>
-              <span className="step"><span className="n">2</span><button onClick={clearFault}>clear fault{ui.readOnlyConnect ? "" : " and take control"}</button> <span className="hint">(after the physical reset above)</span></span>
+              <span className="step"><span className="n">2</span>{estopStillAsserted
+                ? <span className="hint">reset the drives (available once the e-stop is released)</span>
+                : c?.telemetry?.drives_ready === true
+                  ? <span>drives ready ✓</span>
+                  : <><button onClick={() => call("reset drives", api.estopResetDrives)}>reset drives</button> <span className="hint">(re-energize in software, or press RESET on the MachineMotion)</span></>}</span>
+              <span className="step"><span className="n">3</span><button onClick={clearFault} disabled={estopStillAsserted || c?.telemetry?.drives_ready !== true}>clear fault{ui.readOnlyConnect ? "" : " and take control"}</button></span>
               {err && <span className="apierr">{err}</span>}
             </div>
           )}

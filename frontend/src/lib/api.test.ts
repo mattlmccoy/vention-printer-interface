@@ -25,6 +25,7 @@ test("every route: method + path + body locked", async () => {
     [() => api.disarm(), "POST", "/api/disarm", undefined],
     [() => api.estop(), "POST", "/api/estop", undefined],
     [() => api.estopRelease(), "POST", "/api/estop/release", undefined],
+    [() => api.estopResetDrives(), "POST", "/api/estop/reset-drives", undefined],
     [() => api.clearFault(), "POST", "/api/clear-fault", undefined],
     [() => api.home([3]), "POST", "/api/motion/home", { axes: [3] }],
     [() => api.move(3, "rel", -10), "POST", "/api/motion/move", { axis: 3, mode: "rel", mm: -10 }],

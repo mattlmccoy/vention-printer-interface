@@ -50,6 +50,7 @@ export const api = {
   disarm: () => req<StatusPayload>("POST", "/api/disarm"),
   estop: () => req<{ ok: boolean; steps: Record<string, string> }>("POST", "/api/estop"),
   estopRelease: () => req<StatusPayload>("POST", "/api/estop/release"),
+  estopResetDrives: () => req<StatusPayload>("POST", "/api/estop/reset-drives"),
   clearFault: () => req<StatusPayload>("POST", "/api/clear-fault"),
   home: (axes: number[]) => req<StatusPayload>("POST", "/api/motion/home", { axes }),
   move: (axis: number, mode: "abs" | "rel", mm: number) => req<{ applied_mm: number }>("POST", "/api/motion/move", { axis, mode, mm }),

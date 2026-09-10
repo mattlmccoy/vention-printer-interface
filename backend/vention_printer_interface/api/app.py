@@ -419,6 +419,14 @@ def create_app(
         ev("estop_released")
         return status_payload()
 
+    @app.post("/api/estop/reset-drives")
+    def estop_reset_drives() -> dict[str, Any]:
+        """Re-energize the drives in software after the e-stop is PHYSICALLY released (does not
+        release the e-stop, which is physical-only)."""
+        guarded(ctrl().reset_drives)
+        ev("drives_reset")
+        return status_payload()
+
     @app.post("/api/clear-fault")
     def clear_fault() -> dict[str, Any]:
         guarded(ctrl().clear_fault)
