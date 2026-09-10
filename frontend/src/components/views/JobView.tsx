@@ -6,6 +6,7 @@ import { totalLayers, totalThickness, validate, type PrintSettings } from "../..
 import type { JobSnap, StatusPayload } from "../../lib/telemetry.ts";
 import { CrossSection } from "../CrossSection.tsx";
 import { ModuleGrid, type Module } from "../Modules.tsx";
+import { NumberField } from "../NumberField.tsx";
 import type { Call } from "./types.ts";
 
 type JobRow = Omit<JobSnap, "current_layer">;
@@ -83,13 +84,14 @@ export function JobView({ status, gates, call, order, sizes, onOrder, onResize, 
         <div className="stack compact">
           <div className="scale">{[0, 50, 100, 145].map((mm) => <span key={mm} style={{ bottom: pct(mm) }}>{mm}</span>)}</div>
           <div className="col">
-            <div className={total > plan.feed_end_mm ? "over" : "thin"} style={{ bottom: 0, height: pct(thin) }}>{thin > 0 ? `thin ${thin.toFixed(1)}` : ""}</div>
+            <div className={total > plan.feed_end_mm ? "over" : "thin"} style={{ bottom: 0, height: pct(thin) }}>{thin > 0 ? `precoat ${thin.toFixed(1)}` : ""}</div>
             <div className={total > plan.feed_end_mm ? "over" : "lay"} style={{ bottom: pct(thin), height: pct(pr) }}>{plan.printing.n_layers} × {plan.printing.layer_thickness_mm}</div>
             {plan.postcoat_enabled && <div className={total > plan.feed_end_mm ? "over" : "post"} style={{ bottom: pct(thin + pr), height: pct(post) }}>{post > 0 ? `postcoat ${post}` : ""}</div>}
           </div>
           <div className="legend" style={{ lineHeight: 1.7, fontSize: 14 }}><b>{total.toFixed(1)} mm</b> of {plan.feed_end_mm}<br /><b>{layers}</b> layers<br />heater <b>{plan.heater_enabled ? `${plan.n_heater_passes}×` : "off"}</b></div>
         </div>
         <div className="fields" style={{ marginTop: 16, maxWidth: "none" }}>
+          <span>precoat</span><span className="row"><NumberField value={plan.thin_precoat.n_layers} disabled={running} onChange={(v) => editPh("thin_precoat", { n_layers: v })} style={{ width: 56 }} /> × <NumberField step="0.05" value={plan.thin_precoat.layer_thickness_mm} disabled={running} onChange={(v) => editPh("thin_precoat", { layer_thickness_mm: v })} style={{ width: 72 }} /> mm <span className="hint">(thin precoat — thick precoats now live in Priming)</span></span>
           <span>postcoat</span><label className="row"><input type="checkbox" checked={plan.postcoat_enabled} disabled={running} onChange={(e) => edit({ postcoat_enabled: e.target.checked })} /> <b>{plan.postcoat_enabled ? "ON" : "OFF"}</b>{plan.postcoat_enabled && <> · <input type="number" step="0.5" value={post} disabled={running} onChange={(e) => editPh("postcoat", { layer_thickness_mm: num(e.target.value, post), n_layers: 1 })} style={{ width: 72 }} /> mm</>}</label>
           <span>layer height</span><label className="row">
             <span className="seg">{LAYER_HEIGHTS.map((h) => <button key={h} type="button" className={`small${Math.abs(plan.printing.layer_thickness_mm - h) < 1e-6 ? " on" : ""}`} aria-pressed={Math.abs(plan.printing.layer_thickness_mm - h) < 1e-6} disabled={running} onClick={() => editPh("printing", { layer_thickness_mm: h })}>{h}</button>)}</span>
