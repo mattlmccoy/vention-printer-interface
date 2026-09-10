@@ -128,6 +128,13 @@ button.small { height: 34px; padding: 0 12px; border: 1px solid var(--line-contr
 /* legend swatches reuse the marker classes; give the live swatch the live colour (the global
    mk-live is intentionally colourless so real markers keep their per-axis fill). */
 .el-legend .mk-live { fill: var(--live); }
+/* directional arrow above/below a piston bar, shown only while that piston moves (lib/diagram.ts
+   pistonArrow). Blinks under motion; steady when the viewer prefers reduced motion. */
+.el-arrow { fill: var(--accent); }
+@media (prefers-reduced-motion: no-preference) {
+  .el-arrow { animation: vpi-arrow-blink .6s steps(1, end) infinite; }
+}
+@keyframes vpi-arrow-blink { 50% { opacity: 0; } }
 .el-empty { fill: var(--muted); font-size: 15px; }
 .readout { display: grid; grid-template-columns: repeat(4, 1fr); gap: 14px; margin-top: 18px; }
 .readout div { font: 12px var(--font-mono); color: var(--muted); }

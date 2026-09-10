@@ -1,5 +1,6 @@
+import { useRef } from "react";
 import { layoutElevation } from "../lib/elevation.ts";
-import { markerClass, type DiagramMode } from "../lib/diagram.ts";
+import { markerClass, pistonArrow, type DiagramMode } from "../lib/diagram.ts";
 import type { StatusPayload } from "../lib/telemetry.ts";
 
 /** Front elevation of the printer: two rails with carriages on top, feed and build pistons in
@@ -9,6 +10,7 @@ import type { StatusPayload } from "../lib/telemetry.ts";
  *  as a violet preview ghost. Per-axis motion drives the moving pulse either way. */
 export function Elevation({ status, partZeroMm, mode = "live" }: { status: StatusPayload | null; partZeroMm: number | null; mode?: DiagramMode }) {
   const e = layoutElevation();
+  const prevPos = useRef<Record<number, number | null>>({ 1: null, 2: null });
   const t = status?.controller.telemetry ?? null;
   const p = (a: number) => t?.positions[String(a)] ?? null;
   const mv = (a: number) => (t ? t.motion_complete[String(a)] === false : false);
@@ -27,6 +29,10 @@ export function Elevation({ status, partZeroMm, mode = "live" }: { status: Statu
       <text className="el-lbl" x={e.railRc.x + 4} y={e.railRc.y - 6} textAnchor="start">recoater rail · home ▶</text>
       {[{ r: e.feed, mm: feed, cls: "el-feed", lbl: "feed", axis: 2 }, { r: e.build, mm: build, cls: "el-build", lbl: "build", axis: 1 }].map(({ r, mm, cls, lbl, axis }) => {
         const y = top(mm, r);
+        const dir = pistonArrow(prevPos.current[axis], mm);
+        const moving = mv(axis);
+        prevPos.current[axis] = mm;
+        const ax = r.x + r.w / 2;
         return (
           <g key={lbl}>
             <rect className="el-well" x={r.x} y={r.y} width={r.w} height={r.h} />
@@ -35,6 +41,12 @@ export function Elevation({ status, partZeroMm, mode = "live" }: { status: Statu
               <rect className="el-part" x={r.x + r.w * 0.25} y={e.pistonTopY(1, partZeroMm)} width={r.w * 0.5} height={Math.max(0, e.pistonTopY(1, mm) - e.pistonTopY(1, partZeroMm))} />
             )}
             <rect className={`${cls} ${mk(axis)}`} x={r.x + 2} y={y - 3} width={r.w - 4} height={6} />
+            {moving && dir === "up" && (
+              <polygon className="el-arrow up" aria-hidden="true" points={`${ax},${y - 12} ${ax - 4},${y - 6} ${ax + 4},${y - 6}`} />
+            )}
+            {moving && dir === "down" && (
+              <polygon className="el-arrow down" aria-hidden="true" points={`${ax},${y + 12} ${ax - 4},${y + 6} ${ax + 4},${y + 6}`} />
+            )}
             <text className="el-lbl" x={r.x + r.w / 2} y={r.y + r.h + 18} textAnchor="middle">{lbl} piston</text>
           </g>
         );
