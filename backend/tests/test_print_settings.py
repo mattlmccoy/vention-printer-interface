@@ -131,6 +131,29 @@ def test_script_faithful_position_defaults() -> None:
     assert p.printhead_end_mm == 900.0
 
 
+def test_multipass_printhead_returns_to_midpoint_then_home() -> None:
+    # During multipass the printhead shuttles to printhead_multipass_return_mm (250) between passes
+    # to save travel, and only returns fully home on the LAST pass to clear for the next recoat.
+    assert PrintSettings().printhead_multipass_return_mm == 250.0
+    p = dataclasses.replace(one_layer(), n_jet_passes=3)
+    returns = [
+        s.value
+        for s in compile_print(p)
+        if s.phase == "printing" and s.kind == "move_abs" and s.axis == PRINTHEAD
+        and s.value != p.printhead_end_mm
+    ]
+    assert returns == [250.0, 250.0, 5.0]
+    # single pass unchanged: one return, straight home
+    p1 = dataclasses.replace(one_layer(), n_jet_passes=1)
+    returns1 = [
+        s.value
+        for s in compile_print(p1)
+        if s.phase == "printing" and s.kind == "move_abs" and s.axis == PRINTHEAD
+        and s.value != p1.printhead_end_mm
+    ]
+    assert returns1 == [5.0]
+
+
 def test_bounded_clamps_new_position_fields() -> None:
     lim = SafetyLimits()
     p = PrintSettings.bounded(
@@ -301,12 +324,15 @@ def test_compile_one_printing_layer_full_sequence() -> None:
 # ---- (e) multi-pass jetting ----------------------------------------------------------------------
 
 
-def test_printing_multipass_adds_extra_printhead_end_home_pairs() -> None:
+def test_printing_multipass_shuttles_to_midpoint_then_home() -> None:
     p = dataclasses.replace(one_layer(), n_jet_passes=3, heater_enabled=False)
     ks = kinds_of(p)
     ends = [k for k in ks if k == ("move_abs", PRINTHEAD, 900.0)]
+    mids = [k for k in ks if k == ("move_abs", PRINTHEAD, 250.0)]
     homes = [k for k in ks if k == ("move_abs", PRINTHEAD, 5.0)]
-    assert len(ends) == 3 and len(homes) == 3  # 1 concurrent pass + 2 extra passes
+    assert len(ends) == 3  # 3 jet passes out to the end
+    assert len(mids) == 2  # between-pass returns stop at the midpoint (save travel)
+    assert len(homes) == 1  # only the last pass returns fully home to clear the recoat
     # heater disabled -> no heater sweep at all
     assert not any(k[0] == "heater" for k in ks)
     assert not any(k == ("move_abs", RECOATER, 600.0) for k in ks)

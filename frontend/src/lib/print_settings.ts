@@ -45,6 +45,7 @@ export interface PrintSettings {
   heater_end_mm: number;
   printhead_home_mm: number;
   printhead_end_mm: number;
+  printhead_multipass_return_mm: number;
   part_max_mm: number;
   heater_speed: number;
   heater_accel: number;
@@ -68,7 +69,7 @@ export const DEFAULT_PLAN: PrintSettings = {
   n_jet_passes: 1, pre_heater_drop_mm: 0, postcoat_enabled: true,
   feed_end_mm: 145, recoater_home_mm: 5, recoater_return_mm: 350, recoater_end_mm: 950,
   heater_home_mm: 5, heater_start_mm: 425, heater_end_mm: 600,
-  printhead_home_mm: 5, printhead_end_mm: 900, part_max_mm: 72,
+  printhead_home_mm: 5, printhead_end_mm: 900, printhead_multipass_return_mm: 250, part_max_mm: 72,
   heater_speed: 50, heater_accel: 250, n_heater_passes: 1,
   heater_enabled: false, settle_s: 1, feed_fast_speed: 5, feed_fast_accel: 30,
 };
@@ -196,15 +197,14 @@ export function compilePrint(plan: PrintSettings): Step[] {
 
       // ---- printing ----
       // Concurrent jet + retract: recoater home WHILE the printhead jets; ONE wait covers both.
+      // Multipass shuttles the printhead back only to printhead_multipass_return_mm between passes
+      // (saves travel), and home on the LAST pass to clear the next recoat.
       add(name, layerNo, "move_abs", RECOATER, plan.recoater_home_mm);
-      add(name, layerNo, "move_abs", PRINTHEAD, plan.printhead_end_mm);
-      add(name, layerNo, "wait");
-      add(name, layerNo, "move_abs", PRINTHEAD, plan.printhead_home_mm);
-      add(name, layerNo, "wait");
-      for (let j = 0; j < plan.n_jet_passes - 1; j++) { // extra jet passes, sequential
+      for (let j = 0; j < plan.n_jet_passes; j++) {
         add(name, layerNo, "move_abs", PRINTHEAD, plan.printhead_end_mm);
         add(name, layerNo, "wait");
-        add(name, layerNo, "move_abs", PRINTHEAD, plan.printhead_home_mm);
+        const back = j === plan.n_jet_passes - 1 ? plan.printhead_home_mm : plan.printhead_multipass_return_mm;
+        add(name, layerNo, "move_abs", PRINTHEAD, back);
         add(name, layerNo, "wait");
       }
       if (plan.pre_heater_drop_mm > 0) {

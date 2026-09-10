@@ -118,6 +118,7 @@ class PrintSettings:
     heater_end_mm: float = 600.0
     printhead_home_mm: float = 5.0
     printhead_end_mm: float = 900.0
+    printhead_multipass_return_mm: float = 250.0  # between multipass passes; home only on the last
     part_max_mm: float = 72.0  # final part-cylinder drop position (= part spill-safe depth)
     heater_speed: float = 50.0
     heater_accel: float = 250.0
@@ -176,6 +177,7 @@ class PrintSettings:
             "heater_end_mm": (RECOATER, self.heater_end_mm),
             "printhead_home_mm": (PRINTHEAD, self.printhead_home_mm),
             "printhead_end_mm": (PRINTHEAD, self.printhead_end_mm),
+            "printhead_multipass_return_mm": (PRINTHEAD, self.printhead_multipass_return_mm),
         }
         for label, (axis, value) in positions.items():
             lo, hi = lim.travel_min[axis], lim.travel_max[axis]
@@ -247,6 +249,9 @@ class PrintSettings:
             ),
             printhead_end_mm=limits.clamp_position(
                 PRINTHEAD, num("printhead_end_mm", base.printhead_end_mm)
+            ),
+            printhead_multipass_return_mm=limits.clamp_position(
+                PRINTHEAD, num("printhead_multipass_return_mm", base.printhead_multipass_return_mm)
             ),
             part_max_mm=limits.clamp_position(PART, num("part_max_mm", base.part_max_mm)),
             heater_speed=limits.clamp_speed(RECOATER, num("heater_speed", base.heater_speed)),
@@ -397,16 +402,15 @@ def compile_print(plan: PrintSettings) -> tuple[Step, ...]:
 
             # ---- printing ----
             # Concurrent jet + retract: recoater retracts home WHILE the printhead jets; ONE wait
-            # covers both moves (no wait between them).
+            # covers both moves (no wait between them). Multipass shuttles the printhead back only
+            # to printhead_multipass_return_mm between passes (saves travel), home on the LAST pass.
             add(name, layer_no, "move_abs", RECOATER, plan.recoater_home_mm)
-            add(name, layer_no, "move_abs", PRINTHEAD, plan.printhead_end_mm)
-            add(name, layer_no, "wait")
-            add(name, layer_no, "move_abs", PRINTHEAD, plan.printhead_home_mm)
-            add(name, layer_no, "wait")
-            for _ in range(plan.n_jet_passes - 1):  # extra jet passes (enhancement), sequential
+            for pass_no in range(plan.n_jet_passes):
                 add(name, layer_no, "move_abs", PRINTHEAD, plan.printhead_end_mm)
                 add(name, layer_no, "wait")
-                add(name, layer_no, "move_abs", PRINTHEAD, plan.printhead_home_mm)
+                last = pass_no == plan.n_jet_passes - 1
+                back = plan.printhead_home_mm if last else plan.printhead_multipass_return_mm
+                add(name, layer_no, "move_abs", PRINTHEAD, back)
                 add(name, layer_no, "wait")
             if plan.pre_heater_drop_mm > 0:  # drop before heating (net descent stays one layer)
                 add(name, layer_no, "move_rel", PART, plan.pre_heater_drop_mm, "pre-heater drop")
