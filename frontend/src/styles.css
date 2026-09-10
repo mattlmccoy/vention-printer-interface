@@ -1,7 +1,36 @@
 /* Binder Jet Console — calm pass. Tokens only (theme.css owns every colour). */
+
+/* ---- redesign/ux-visual re-skin ----
+   Repoint the shared design tokens to the approved mockup (calm, high-contrast,
+   readable dark). Same variable NAMES as theme.css so every component inherits the
+   new look unchanged; styles.css is imported AFTER theme.css in main.tsx, so these
+   :root values win by cascade order. Only values change here — no class renames. */
+:root {
+  /* surfaces */
+  --bg: #0a0e14;          /* ground */
+  --bg-deep: #0d131c;     /* panel-2 (deeper surface: inputs, top/status bars, wells) */
+  --panel: #111823;       /* panel */
+  --line: #212b38;        /* hairline */
+  --line-strong: #2c3948; /* hairline-2 */
+  /* text */
+  --fg: #dce3ec;          /* ink (primary) */
+  --muted: #98a5b3;       /* dim (secondary) */
+  --label: #adb9c6;       /* uppercase mono labels (lighter/more legible than dim) */
+  --faint: #66727f;       /* faintest text */
+  /* accents (amber stays primary) */
+  --accent: #ffb454;      /* amber */
+  --live: #5cff8a;        /* live-green */
+  --err: #ff5f56;         /* danger */
+  --violet: #b98cff;      /* model / preview */
+  --trace-rc: #5cc8ff;    /* recoater-blue */
+  /* --fg-strong, --line-control, --err-btn, and the alias tokens (--accent-ink,
+     --focus, --warn*, --rec, --trace-part/feed/ph) inherit from theme.css; the
+     aliases resolve against the overridden bases above at use time. */
+}
+
 * { box-sizing: border-box; }
 html, body, #root { height: 100%; }
-body { margin: 0; background: var(--bg); color: var(--fg); font-family: var(--font-ui); font-size: 14px; line-height: 1.45; }
+body { margin: 0; background: var(--bg); color: var(--fg); font-family: var(--font-ui); font-size: 15px; line-height: 1.5; }
 .mono, .v { font-family: var(--font-mono); font-variant-numeric: tabular-nums; }
 button, select, input { font: inherit; }
 :focus-visible { outline: 2px solid var(--focus); outline-offset: 2px; }
@@ -12,7 +41,7 @@ input:disabled, button:disabled { opacity: .35; cursor: default; }
 .hint { color: var(--muted); font-size: 13px; }
 .spacer { flex: 1; }
 details { margin-top: 18px; }
-details > summary { cursor: pointer; color: var(--muted); font: 12px var(--font-mono); letter-spacing: .1em; text-transform: uppercase; list-style: none; }
+details > summary { cursor: pointer; color: var(--label); font: 12px var(--font-mono); letter-spacing: .09em; text-transform: uppercase; list-style: none; }
 details > summary::before { content: "▸ "; }
 details[open] > summary::before { content: "▾ "; }
 details > .body { margin-top: 12px; }
@@ -55,7 +84,7 @@ details > .body { margin-top: 12px; }
 .control { grid-template-columns: repeat(2, minmax(0, 1fr)); }
 .control > .col + .col { border-left: 1px solid var(--line); }
 .runs { grid-template-columns: minmax(0, 1fr); }
-.h { font: 12px var(--font-mono); letter-spacing: .12em; text-transform: uppercase; color: var(--muted); margin-bottom: 14px; }
+.h { font: 12px var(--font-mono); letter-spacing: .09em; text-transform: uppercase; color: var(--label); margin-bottom: 14px; }
 .kv { display: grid; grid-template-columns: auto 1fr; gap: 8px 18px; margin-top: 22px; font-size: 14px; }
 .kv span:nth-child(odd) { color: var(--muted); }
 .kv span:nth-child(even) { font-family: var(--font-mono); text-align: right; color: var(--fg-strong); }
@@ -125,7 +154,7 @@ button.small { height: 34px; padding: 0 12px; border: 1px solid var(--line-contr
 .fields { display: grid; grid-template-columns: auto 1fr; gap: 12px 18px; align-items: center; margin-top: 26px; font-size: 14px; max-width: 460px; }
 .fields.adv { max-width: 720px; grid-template-columns: auto 1fr auto 1fr; }
 .est { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
-.est div .l { font: 12px var(--font-mono); letter-spacing: .1em; text-transform: uppercase; color: var(--muted); }
+.est div .l { font: 12px var(--font-mono); letter-spacing: .09em; text-transform: uppercase; color: var(--label); }
 .est div .v { font: 700 30px var(--font-mono); color: var(--fg-strong); margin-top: 6px; }
 .est div .v small { font-size: 14px; color: var(--muted); font-weight: 400; }
 .chk { display: flex; flex-direction: column; gap: 10px; margin: 24px 0; font-size: 14px; color: var(--fg); }
@@ -193,7 +222,7 @@ button.small { height: 34px; padding: 0 12px; border: 1px solid var(--line-contr
 .module.s { width: 320px; } .module.m { width: 460px; } .module.l { width: 640px; } .module.xl { width: 940px; max-width: 100%; }
 .module.sized { max-width: 100%; overflow: hidden; }
 .module.sized .mb { overflow: auto; flex: 1; }
-.module .mh { display: flex; justify-content: space-between; align-items: center; padding: 10px 14px; border-bottom: 1px solid var(--line); font: 12px var(--font-mono); letter-spacing: .12em; text-transform: uppercase; color: var(--muted); cursor: grab; user-select: none; }
+.module .mh { display: flex; justify-content: space-between; align-items: center; padding: 10px 14px; border-bottom: 1px solid var(--line); font: 12px var(--font-mono); letter-spacing: .09em; text-transform: uppercase; color: var(--label); cursor: grab; user-select: none; }
 .module .mh .grip { opacity: .5; }
 .module .mh-r { display: inline-flex; align-items: center; gap: 8px; }
 .module .mh-reset { background: none; border: 0; color: var(--muted); cursor: pointer; font-size: 13px; padding: 0; line-height: 1; }
