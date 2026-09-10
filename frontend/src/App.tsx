@@ -119,8 +119,10 @@ export function App() {
           {g.faulted && (
             <div className="banner err">
               <b>FAULT</b><span>{c?.fault_reasons.join("; ")}</span>
-              <span className="step"><span className="n">1</span>{estopStillAsserted ? <button onClick={() => call("release e-stop", api.estopRelease)}>release e-stop + reset drives</button> : <span>e-stop released</span>}</span>
-              <span className="step"><span className="n">2</span><button onClick={clearFault}>clear fault{ui.readOnlyConnect ? "" : " and take control"}</button></span>
+              <span className="step"><span className="n">1</span>{estopStillAsserted ? (
+                <span>Twist out the physical <b>E-STOP</b>, then press <b>RESET</b> on the MachineMotion. An e-stop can only be released by hand at the machine — the firmware does not allow a software release. <button className="linklike" onClick={() => call("try software release", api.estopRelease)}>try software release anyway</button></span>
+              ) : <span>e-stop released ✓</span>}</span>
+              <span className="step"><span className="n">2</span><button onClick={clearFault}>clear fault{ui.readOnlyConnect ? "" : " and take control"}</button> <span className="hint">(after the physical reset above)</span></span>
               {err && <span className="apierr">{err}</span>}
             </div>
           )}
