@@ -68,7 +68,7 @@ export function ControlView({ status, gates, call, gantryStep, pistonStep, setGa
         <div className="hint" style={{ marginTop: 10 }}>Home one gantry at a time. Pistons are never auto-homed — homing a piston ejects powder.</div>
       </>
     ) },
-    { id: "priming", title: "priming (powder prep)", size: "m", node: <PrimingPanel gates={gates} call={call} /> },
+    { id: "priming", title: "priming (powder prep)", size: "m", node: <PrimingPanel gates={gates} call={call} printState={status?.print.state} /> },
     { id: "heater", title: "heater", size: "s", node: (
       <>
         <div className="kv" style={{ marginTop: 0 }}><span>relay</span><span className={c?.heater.on ? "bad" : ""}>{tri(c?.heater.on, `ON ${fmtSecs(c?.heater.on_s)}`, "off", "not observed")}</span><span>watchdog</span><span>{fmtSecs(c?.heater.max_on_s)}</span><span>io module</span><span className="warnv">{Array.isArray(status?.device.heater_io) ? (status!.device.heater_io as number[]).join(" / ") : "—"} unverified</span></div>
