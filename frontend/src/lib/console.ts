@@ -1,6 +1,6 @@
 /** Console UI state persisted under localStorage["vpi.console.v1"]: active view, jog steps,
  *  module order per view, read-only-connect preference. */
-export const VIEWS = ["print", "job", "control", "runs"] as const;
+export const VIEWS = ["control", "priming", "print", "job", "runs"] as const;
 export type View = (typeof VIEWS)[number];
 export const JOG_STEPS = [0.1, 1, 10, 100] as const;
 export interface ModuleSize { w: number; h: number }

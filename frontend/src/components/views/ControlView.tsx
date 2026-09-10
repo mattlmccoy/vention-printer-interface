@@ -4,7 +4,6 @@ import { JOG_STEPS } from "../../lib/console.ts";
 import { fmtAccel, fmtSecs, fmtSpeed, gantryJogLabels, tri, type Gates } from "../../lib/format.ts";
 import { AXIS_NAMES, GANTRY_HOME_SIDE, type AxisNo, type StatusPayload } from "../../lib/telemetry.ts";
 import { ModuleGrid, type Module } from "../Modules.tsx";
-import { PrimingPanel } from "../PrimingPanel.tsx";
 import type { Call } from "./types.ts";
 
 const SW: Record<AxisNo, string> = { 1: "sw-part", 2: "sw-feed", 3: "sw-ph", 4: "sw-rc" };
@@ -68,7 +67,6 @@ export function ControlView({ status, gates, call, gantryStep, pistonStep, setGa
         <div className="hint" style={{ marginTop: 10 }}>Home one gantry at a time. Pistons are never auto-homed — homing a piston ejects powder.</div>
       </>
     ) },
-    { id: "priming", title: "priming (powder prep)", size: "m", node: <PrimingPanel gates={gates} call={call} printState={status?.print.state} /> },
     { id: "heater", title: "heater", size: "s", node: (
       <>
         <div className="kv" style={{ marginTop: 0 }}><span>relay</span><span className={c?.heater.on ? "bad" : ""}>{tri(c?.heater.on, `ON ${fmtSecs(c?.heater.on_s)}`, "off", "not observed")}</span><span>watchdog</span><span>{fmtSecs(c?.heater.max_on_s)}</span><span>io module</span><span className="warnv">{Array.isArray(status?.device.heater_io) ? (status!.device.heater_io as number[]).join(" / ") : "—"} unverified</span></div>
