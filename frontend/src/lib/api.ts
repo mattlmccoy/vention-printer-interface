@@ -38,6 +38,7 @@ export interface Discovery { candidates: Array<{ backend: string; ip: string | n
 export interface PrintSettingsPayload { plan: Record<string, unknown>; validation: string[]; n_steps: number; estimated_duration_s: number; total_layers: number; total_thickness_mm: number; bounds: Record<string, unknown>; limits: Record<string, unknown>; exposure: { energy_j: number; time_s: number; sweep_speed_mm_s: number } }
 export interface AxisMotion { max_speed: number | null; max_accel: number | null; bounds: { max_speed: [number, number]; max_accel: [number, number] }; limit_speed: number; limit_accel: number }
 export interface PrimingPayload { settings: Record<string, number>; validation: string[]; n_steps: number; n_level_passes: number; limits: Record<string, unknown> }
+export interface PrimedPayload { primed: { part_mm: number; feed_mm: number; captured_at: number } | null }
 
 export const api = {
   health: () => req<Health>("GET", "/api/health"),
@@ -77,6 +78,8 @@ export const api = {
   priming: () => req<PrimingPayload>("GET", "/api/priming"),
   setPriming: (patch: Record<string, number>) => req<PrimingPayload>("PUT", "/api/priming", patch),
   primingRun: () => req<StatusPayload["print"]>("POST", "/api/priming/run"),
+  primed: () => req<PrimedPayload>("GET", "/api/primed"),
+  primedCapture: () => req<PrimedPayload>("POST", "/api/primed/capture"),
   events: () => req<{ events: StatusPayload["events"] }>("GET", "/api/events"),
   autoLog: () => req<{ enabled: boolean }>("GET", "/api/auto-log"),
   setAutoLog: (enabled: boolean) => req<{ enabled: boolean }>("PUT", "/api/auto-log", { enabled }),

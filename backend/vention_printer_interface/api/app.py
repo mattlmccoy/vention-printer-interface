@@ -10,6 +10,7 @@ import asyncio
 import logging
 import platform
 import socket
+import time
 from collections.abc import AsyncIterator, Callable
 from contextlib import asynccontextmanager
 from pathlib import Path
@@ -27,6 +28,7 @@ from vention_printer_interface.control.events import EventLog
 from vention_printer_interface.control.heater_model import exposure
 from vention_printer_interface.control.limits_store import load_limits, save_limits
 from vention_printer_interface.control.macros import MACROS, macro_steps
+from vention_printer_interface.control.primed_state import PrimedState, load_primed, save_primed
 from vention_printer_interface.control.priming import PrimingSettings, compile_priming_setup
 from vention_printer_interface.control.priming_store import load_priming, save_priming
 from vention_printer_interface.control.print_controller import PrintController, PrintState
@@ -222,6 +224,7 @@ def create_app(
         app.state.controller, app.state.recorder, app.state.printer = controller, recorder, printer
         app.state.print_settings = load_print_settings(root, controller.limits)
         app.state.priming = load_priming(root, controller.limits)
+        app.state.primed = load_primed(root)
         app.state.job = None
         app.state.backend = "none"
         app.state.default_heater_io = heater_io or DEFAULT_HEATER_IO
@@ -666,6 +669,28 @@ def create_app(
             raise HTTPException(409, "priming settings invalid: " + "; ".join(reasons))
         guarded(printer().start_macro, "priming", compile_priming_setup(settings, ctrl().limits))
         return printer().snapshot()
+
+    # ---- primed bed state (piston snapshot a print starts from) ----------------------------
+    @app.get("/api/primed")
+    def get_primed() -> dict[str, Any]:
+        primed: PrimedState | None = app.state.primed
+        return {"primed": primed.to_dict() if primed is not None else None}
+
+    @app.post("/api/primed/capture")
+    def capture_primed() -> dict[str, Any]:
+        tel = ctrl().snapshot()["telemetry"]
+        positions = tel["positions"] if tel else None
+        if not positions or "1" not in positions or "2" not in positions:
+            raise HTTPException(
+                409, "connect and read positions before capturing the primed bed state"
+            )
+        state = PrimedState(
+            part_mm=positions["1"], feed_mm=positions["2"], captured_at=time.time()
+        )
+        save_primed(root, state)
+        app.state.primed = state
+        ev("primed_captured", state.to_dict())
+        return {"primed": state.to_dict()}
 
     @app.get("/api/events")
     def get_events() -> dict[str, Any]:
