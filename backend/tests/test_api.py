@@ -65,7 +65,7 @@ def test_connect_simulated_and_arm_flow(client: TestClient) -> None:
     assert client.post("/api/motion/home", json={"axes": []}).status_code == 200
     wait_tel(client)
     r = client.post("/api/motion/move", json={"axis": 3, "mode": "abs", "mm": 9999})
-    assert r.status_code == 200 and r.json()["applied_mm"] == 840.0
+    assert r.status_code == 200 and r.json()["applied_mm"] == 970.0
     assert client.post("/api/motion/stop", json={}).status_code == 200
     assert client.post("/api/disconnect").status_code == 200
     assert client.get("/api/status").json()["controller"]["state"] == "disconnected"
