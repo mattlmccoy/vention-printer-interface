@@ -112,6 +112,13 @@ class PrintSettings:
     settle_s: float = 1.0  # V1.py's time.sleep(1) after the feed piston move
     feed_fast_speed: float = 5.0  # V1.py:95 used 1000 mm/s; bounded to the feed limit
     feed_fast_accel: float = 30.0  # V1.py:96 used 500
+    # Heater-exposure model inputs (spec §8; consumed by heater_model.exposure).
+    target_carbon_wt: float = 0.15
+    part_area_mm2: float = 900.0
+    powder_density_g_cm3: float = 1.01
+    ink_carbon_wt: float = 0.25
+    ipa_dhvap_j_g: float = 663.0
+    heater_section_power_w: float = 75.0
 
     @property
     def total_thickness_mm(self) -> float:
@@ -240,6 +247,18 @@ class PrintSettings:
             settle_s=_clamp(num("settle_s", base.settle_s), 0.0, 30.0),
             feed_fast_speed=limits.clamp_speed(FEED, num("feed_fast_speed", base.feed_fast_speed)),
             feed_fast_accel=limits.clamp_accel(FEED, num("feed_fast_accel", base.feed_fast_accel)),
+            target_carbon_wt=_clamp(
+                num("target_carbon_wt", base.target_carbon_wt), 0.0, 0.95
+            ),
+            part_area_mm2=_clamp(num("part_area_mm2", base.part_area_mm2), 1e-6, 1e6),
+            powder_density_g_cm3=_clamp(
+                num("powder_density_g_cm3", base.powder_density_g_cm3), 1e-6, 1e3
+            ),
+            ink_carbon_wt=_clamp(num("ink_carbon_wt", base.ink_carbon_wt), 0.0, 0.95),
+            ipa_dhvap_j_g=_clamp(num("ipa_dhvap_j_g", base.ipa_dhvap_j_g), 1e-6, 1e5),
+            heater_section_power_w=_clamp(
+                num("heater_section_power_w", base.heater_section_power_w), 1e-6, 1e5
+            ),
         )
 
 

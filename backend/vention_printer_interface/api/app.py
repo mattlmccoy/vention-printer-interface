@@ -24,6 +24,7 @@ from pydantic import BaseModel, Field
 from vention_printer_interface import __version__
 from vention_printer_interface.control.controller import Controller
 from vention_printer_interface.control.events import EventLog
+from vention_printer_interface.control.heater_model import exposure
 from vention_printer_interface.control.limits_store import load_limits, save_limits
 from vention_printer_interface.control.macros import MACROS, macro_steps
 from vention_printer_interface.control.priming import PrimingSettings, compile_priming_setup
@@ -268,6 +269,17 @@ def create_app(
 
     def print_settings_payload() -> dict[str, Any]:
         plan: PrintSettings = app.state.print_settings
+        ex = exposure(
+            layer_mm=plan.printing.layer_thickness_mm,
+            area_mm2=plan.part_area_mm2,
+            carbon_wt=plan.target_carbon_wt,
+            powder_density_g_cm3=plan.powder_density_g_cm3,
+            ink_carbon_wt=plan.ink_carbon_wt,
+            ipa_dhvap_j_g=plan.ipa_dhvap_j_g,
+            section_power_w=plan.heater_section_power_w,
+            passes=plan.n_jet_passes,
+        )
+        pass_len = plan.printhead_end_mm - plan.printhead_home_mm
         return {
             "plan": plan.to_dict(),
             "validation": plan.validate(ctrl().limits),
@@ -275,6 +287,11 @@ def create_app(
             "estimated_duration_s": estimate_duration_s(plan, print_min_wait_s),
             "total_layers": plan.total_layers,
             "total_thickness_mm": plan.total_thickness_mm,
+            "exposure": {
+                "energy_j": ex.energy_j,
+                "time_s": ex.time_s,
+                "sweep_speed_mm_s": round(ex.sweep_speed_mm_s(pass_len), 2),
+            },
             "bounds": HARD_BOUNDS,
             "limits": ctrl().limits.to_dict(),
         }

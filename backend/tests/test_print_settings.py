@@ -243,3 +243,10 @@ def test_estimate_duration_is_positive_and_scales_with_layers() -> None:
     # the default V1 plan: setup feed 145 mm at 5 mm/s = 29 s alone; whole print well under 2 h
     total = estimate_duration_s(PrintSettings())
     assert 29 < total < 7200
+
+
+def test_heater_exposure_input_defaults() -> None:
+    p = PrintSettings()
+    assert p.target_carbon_wt == 0.15 and p.part_area_mm2 == 900.0
+    assert p.powder_density_g_cm3 == 1.01 and p.ink_carbon_wt == 0.25
+    assert p.ipa_dhvap_j_g == 663.0 and p.heater_section_power_w == 75.0

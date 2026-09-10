@@ -171,3 +171,9 @@ def test_estop_aborts_print_settings(client: TestClient) -> None:
     client.post("/api/estop")
     s = wait_print(client, "aborted", timeout=5)
     assert "fault" in s["reason"]
+
+
+def test_print_settings_payload_has_exposure(client: TestClient) -> None:
+    d = client.get("/api/print-settings").json()
+    ex = d["exposure"]
+    assert ex["energy_j"] > 0 and ex["time_s"] > 0 and ex["sweep_speed_mm_s"] > 0
