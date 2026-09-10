@@ -1,9 +1,10 @@
 """compile_print must reproduce the async lab script's cycle order exactly (Plan 7 / fidelity spec).
 
 The compiled ``Step`` sequence is the safety-critical contract; these tests pin it cycle-by-cycle:
-primed-start setup (home gantries only), thick/thin precoat cover passes, a printing layer with the
-concurrent recoater-retract + printhead-jet, the heater 425->600 sweep, the feed-exhaustion stop,
-and the part->max finish.
+primed-start setup (home gantries only), the thin (nominal) precoat cover passes, a printing layer
+with the concurrent recoater-retract + printhead-jet, the heater 425->600 sweep, the feed-exhaustion
+stop, and the part->max finish. The THICK precoats now live in the priming routine
+(test_priming.py), so the print begins at the thin precoats, where the part piston first drops.
 """
 
 import dataclasses
@@ -13,6 +14,7 @@ import pytest
 from vention_printer_interface.control.print_settings import (
     FEED,
     PART,
+    PHASES,
     PRINTHEAD,
     RECOATER,
     PhasePlan,
@@ -27,7 +29,6 @@ def one_layer() -> PrintSettings:
     p = PrintSettings()
     return dataclasses.replace(
         p,
-        thick_precoat=dataclasses.replace(p.thick_precoat, n_layers=0),
         thin_precoat=dataclasses.replace(p.thin_precoat, n_layers=0),
         printing=dataclasses.replace(p.printing, n_layers=1),
         postcoat=dataclasses.replace(p.postcoat, n_layers=0),
@@ -36,24 +37,11 @@ def one_layer() -> PrintSettings:
 
 
 def thin_only() -> PrintSettings:
-    """One nominal (thin) precoat layer only."""
+    """One nominal (thin) precoat layer only — the print's first phase."""
     p = PrintSettings()
     return dataclasses.replace(
         p,
-        thick_precoat=dataclasses.replace(p.thick_precoat, n_layers=0),
         thin_precoat=dataclasses.replace(p.thin_precoat, n_layers=1),
-        printing=dataclasses.replace(p.printing, n_layers=0),
-        postcoat=dataclasses.replace(p.postcoat, n_layers=0),
-    )
-
-
-def thick_only() -> PrintSettings:
-    """One thick precoat layer only."""
-    p = PrintSettings()
-    return dataclasses.replace(
-        p,
-        thick_precoat=dataclasses.replace(p.thick_precoat, n_layers=1),
-        thin_precoat=dataclasses.replace(p.thin_precoat, n_layers=0),
         printing=dataclasses.replace(p.printing, n_layers=0),
         postcoat=dataclasses.replace(p.postcoat, n_layers=0),
     )
@@ -63,12 +51,18 @@ def kinds_of(plan: PrintSettings) -> list[tuple[str, int | None, float | None]]:
     return [(s.kind, s.axis, s.value) for s in compile_print(plan)]
 
 
-# ---- field / default / bounds (Task 1; unchanged by the rewrite) ---------------------------------
+# ---- phases + field / default / bounds -----------------------------------------------------------
+
+
+def test_phases_have_no_thick_precoat() -> None:
+    # thick precoats moved to priming; the print starts at thin_precoat.
+    assert PHASES == ("thin_precoat", "printing", "postcoat")
+    assert "thick_precoat" not in PHASES
+    assert not hasattr(PrintSettings(), "thick_precoat")
 
 
 def test_defaults_match_v1() -> None:
     p = PrintSettings()
-    assert (p.thick_precoat.layer_thickness_mm, p.thick_precoat.n_layers) == (5.0, 3)
     assert (p.thin_precoat.layer_thickness_mm, p.thin_precoat.n_layers) == (0.2, 2)
     assert (p.printing.layer_thickness_mm, p.printing.n_layers) == (2.0, 10)
     assert (p.postcoat.layer_thickness_mm, p.postcoat.n_layers) == (5.0, 1)
@@ -83,13 +77,12 @@ def test_defaults_match_v1() -> None:
     assert p.heater_speed == 50 and p.heater_accel == 250 and p.n_heater_passes == 1
     assert p.heater_enabled is False  # heater is opt-in
     assert p.n_jet_passes == 1 and p.pre_heater_drop_mm == 0.0 and p.postcoat_enabled is True
-    # thick 5.0*3 + thin 0.2*2 + printing 2.0*10 + postcoat 5.0*1 = 40.4 mm over 16 layers
-    assert p.total_thickness_mm == pytest.approx(40.4) and p.total_layers == 16
+    # thin 0.2*2 + printing 2.0*10 + postcoat 5.0*1 = 25.4 mm over 13 layers (no thick precoat)
+    assert p.total_thickness_mm == pytest.approx(25.4) and p.total_layers == 13
 
 
 def test_new_fields_defaults() -> None:
     p = PrintSettings()
-    assert p.thick_precoat.n_layers == 3 and p.thick_precoat.layer_thickness_mm == 5.0
     assert p.thin_precoat.n_layers == 2 and p.thin_precoat.layer_thickness_mm == 0.2
     assert p.n_jet_passes == 1 and p.pre_heater_drop_mm == 0.0
     assert p.postcoat_enabled is True
@@ -122,10 +115,8 @@ def test_round_trip_dict() -> None:
 
 def test_feed_thickness_defaults() -> None:
     # Feed-piston advance per layer is distinct from the part-piston drop (V1.py):
-    # thick precoat backfills 7 mm of feed while the part is fixed; thin/print advance 0.4 mm
-    # (part 0.2); postcoat is a cover pass with no feed advance.
+    # thin/print advance 0.4 mm (part 0.2/2.0); postcoat is a cover pass with no feed advance.
     p = PrintSettings()
-    assert p.thick_precoat.feed_thickness_mm == 7.0
     assert p.thin_precoat.feed_thickness_mm == 0.4
     assert p.printing.feed_thickness_mm == 0.4
     assert p.postcoat.feed_thickness_mm == 0.0
@@ -179,36 +170,20 @@ def test_setup_homes_gantries_only_no_piston_move() -> None:
     assert not any(s.kind in ("move_abs", "move_rel") for s in setup)
 
 
-# ---- (b) thick precoat layer ---------------------------------------------------------------------
+# ---- (b) print starts at the thin (nominal) precoat, not a thick precoat --------------------
 
 
-def test_thick_precoat_layer_spreads_feeds_and_returns_without_part_move() -> None:
-    all_steps = [s for s in compile_print(thick_only()) if s.phase == "thick_precoat"]
-    # drop the per-phase profile steps; assert the layer body cycle
-    steps = [s for s in all_steps if s.kind not in ("set_speed", "set_accel")]
-    ks = [(s.kind, s.axis, s.value) for s in steps]
-    # spread -> 925, feed advance -7.0 (thick), NO part move, recoater return -> 350
-    body = [
-        ("mark", None, None),
-        ("move_abs", RECOATER, 925.0),
-        ("wait", None, None),
-        ("move_rel", FEED, -7.0),
-        ("wait", None, None),
-        ("dwell", None, 1.0),
-        ("move_abs", RECOATER, 350.0),
-        ("wait", None, None),
-        ("mark", None, None),
-    ]
-    assert ks == body
-    assert not any(s.kind == "move_rel" and s.axis == PART for s in steps)  # part piston fixed
-    assert not any(s.axis == PRINTHEAD and s.kind.startswith("move") for s in all_steps)  # no jet
-    assert not any(s.kind == "heater" for s in all_steps)
-    first_mark = steps[0]
-    assert first_mark.label == "layer_start" and first_mark.part_height_mm == 0.0
-    assert steps[-1].label == "layer_end"
-
-
-# ---- (c) thin (nominal) precoat layer ------------------------------------------------------------
+def test_print_first_phase_is_thin_precoat_no_thick_steps() -> None:
+    p = dataclasses.replace(
+        PrintSettings(),
+        thin_precoat=dataclasses.replace(PrintSettings().thin_precoat, n_layers=2),
+    )
+    steps = compile_print(p)
+    # No step is ever tagged with the removed thick_precoat phase.
+    assert not any(s.phase == "thick_precoat" for s in steps)
+    # The first non-setup phase to appear is thin_precoat.
+    phases_in_order = [s.phase for s in steps if s.phase not in ("setup", "finish")]
+    assert phases_in_order[0] == "thin_precoat"
 
 
 def test_thin_precoat_layer_spreads_feeds_drops_part_and_returns() -> None:
@@ -222,7 +197,7 @@ def test_thin_precoat_layer_spreads_feeds_drops_part_and_returns() -> None:
         ("move_rel", FEED, -0.4),  # feed advance 0.4 (nominal)
         ("wait", None, None),
         ("dwell", None, 1.0),
-        ("move_rel", PART, 0.2),  # part drop 0.2 (nominal layer)
+        ("move_rel", PART, 0.2),  # part drop 0.2 (nominal layer) — the print's FIRST part drop
         ("wait", None, None),
         ("move_abs", RECOATER, 350.0),  # precoat return, NOT home
         ("wait", None, None),
@@ -359,7 +334,7 @@ def test_pre_heater_drop_brackets_the_heater() -> None:
     assert max(jet) < i_drop < i_heater_on < i_up  # jets -> drop -> heat -> raise back up
 
 
-# ---- (g) postcoat toggle + finish still drives part -> max ---------------------------------------
+# ---- (g) postcoat toggle: off drops the phase AND validates clean --------------------------------
 
 
 def test_postcoat_toggle_off_but_finish_still_drives_part_to_max() -> None:
@@ -373,11 +348,27 @@ def test_postcoat_toggle_off_but_finish_still_drives_part_to_max() -> None:
     assert off_steps[-2].axis == PART and off_steps[-2].value == 75.0
 
 
+def test_disabled_postcoat_validates_clean() -> None:
+    # A disabled postcoat must NOT produce a validation reason, even with degenerate fields.
+    p = dataclasses.replace(
+        PrintSettings(),
+        postcoat_enabled=False,
+        postcoat=PhasePlan(layer_thickness_mm=0.0, n_layers=1),
+    )
+    assert p.validate() == []
+    # An enabled postcoat with a zero thickness but positive layers is still flagged.
+    p_on = dataclasses.replace(
+        PrintSettings(),
+        postcoat_enabled=True,
+        postcoat=PhasePlan(layer_thickness_mm=0.0, n_layers=1),
+    )
+    assert any("layer_thickness" in r for r in p_on.validate())
+
+
 def test_postcoat_is_a_precoat_style_cover_pass() -> None:
     # postcoat: spread -> (no feed, thickness 0) -> return 350; no part drop, no jet, no heater.
     p = dataclasses.replace(
         PrintSettings(),
-        thick_precoat=PhasePlan(n_layers=0),
         thin_precoat=PhasePlan(n_layers=0),
         printing=PhasePlan(n_layers=0),
         postcoat=dataclasses.replace(PrintSettings().postcoat, n_layers=1),
@@ -400,7 +391,6 @@ def test_feed_exhaustion_homes_recoater_marks_and_stops() -> None:
     # 1.0 -> 0.6 (layer 1), 0.6 -> 0.2 (layer 2); layer 3 would go 0.2 - 0.4 = -0.2 <= 0 -> exhaust.
     p = dataclasses.replace(
         PrintSettings(),
-        thick_precoat=PhasePlan(n_layers=0),
         thin_precoat=PhasePlan(n_layers=0),
         printing=dataclasses.replace(
             PrintSettings().printing, n_layers=5, feed_thickness_mm=0.4, layer_thickness_mm=0.2
@@ -445,15 +435,14 @@ def test_steps_are_frozen() -> None:
 def test_layer_numbers_and_heights_over_a_full_plan() -> None:
     p = dataclasses.replace(PrintSettings(), heater_enabled=True)
     steps = compile_print(p)
-    # 16 layers total numbered 1..16: thick 3 + thin 2 + printing 10 + postcoat 1
-    assert [s.layer for s in steps if s.label == "layer_start"] == list(range(1, 17))
+    # 13 layers total numbered 1..13: thin 2 + printing 10 + postcoat 1 (thick precoats now prime)
+    assert [s.layer for s in steps if s.label == "layer_start"] == list(range(1, 14))
     heights = [s.part_height_mm for s in steps if s.label == "layer_end"]
-    # thick precoat holds the part fixed (3 x 0.0); thin adds 0.2 each; printing adds 2.0 each;
+    # thin adds 0.2 each (2 layers); printing adds 2.0 each (10 layers);
     # postcoat is a cover pass (no part drop) so the last layer_end keeps the printing stack height.
-    assert heights[:3] == [0.0, 0.0, 0.0]
-    assert heights[3] == pytest.approx(0.2)
-    assert heights[4] == pytest.approx(0.4)
-    assert heights[5] == pytest.approx(2.4)  # first printing layer (+2.0)
+    assert heights[0] == pytest.approx(0.2)
+    assert heights[1] == pytest.approx(0.4)
+    assert heights[2] == pytest.approx(2.4)  # first printing layer (+2.0)
     # thin 0.4 + printing 2.0*10 = 20.4 mm; postcoat adds no part height
     assert heights[-1] == pytest.approx(20.4)
 

@@ -306,7 +306,7 @@ def create_app(
             "settings": s.to_dict(),
             "validation": s.validate(ctrl().limits),
             "n_steps": len(steps),
-            "n_level_passes": s.n_level_passes,
+            "n_thick_precoats": s.n_thick_precoats,
             "limits": ctrl().limits.to_dict(),
         }
 

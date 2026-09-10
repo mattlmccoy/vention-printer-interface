@@ -33,8 +33,8 @@ def connect_arm(c: TestClient) -> None:
 def test_priming_get_put_persists(client: TestClient) -> None:
     p = client.get("/api/priming").json()
     assert p["validation"] == []
-    assert p["settings"]["feed_cavity_mm"] == 30.0 and p["n_level_passes"] == 1
-    r = client.put("/api/priming", json={"feed_cavity_mm": 22.0, "n_level_passes": 2})
+    assert p["settings"]["feed_cavity_mm"] == 30.0 and p["n_thick_precoats"] == 3
+    r = client.put("/api/priming", json={"feed_cavity_mm": 22.0, "n_thick_precoats": 2})
     assert r.status_code == 200 and r.json()["settings"]["feed_cavity_mm"] == 22.0
     assert client.get("/api/priming").json()["settings"]["feed_cavity_mm"] == 22.0
 

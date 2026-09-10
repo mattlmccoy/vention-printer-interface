@@ -31,7 +31,6 @@ def fast_plan(n_print: int = 1, heater: bool = True) -> PrintSettings:
         recoater_accel=2000,
     )
     return PrintSettings(
-        thick_precoat=dataclasses.replace(fast, n_layers=0),
         thin_precoat=dataclasses.replace(fast, n_layers=0),
         printing=dataclasses.replace(fast, n_layers=n_print),
         postcoat=dataclasses.replace(fast, n_layers=0),

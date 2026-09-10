@@ -19,7 +19,7 @@ FEED = 2
 PRINTHEAD = 3
 RECOATER = 4  # the recoater gantry also carries the IR heater (V1.py HEATER_* use recoater_axis)
 
-PHASES = ("thick_precoat", "thin_precoat", "printing", "postcoat")
+PHASES = ("thin_precoat", "printing", "postcoat")
 MAX_LAYERS = 500
 MAX_HEATER_PASSES = 10
 
@@ -85,13 +85,12 @@ class PhasePlan:
 
 @dataclass(frozen=True)
 class PrintSettings:
-    """The whole print (V1.py lines 12-66). Heater is opt-in; V1.py never switched it."""
+    """The whole print (V1.py lines 12-66). Heater is opt-in; V1.py never switched it.
 
-    thick_precoat: PhasePlan = field(
-        default_factory=lambda: PhasePlan(
-            layer_thickness_mm=5.0, feed_thickness_mm=7.0, n_layers=3
-        )
-    )
+    The thick precoats now live in the priming routine (they fill the runway + part cavity with the
+    part piston fixed). The print begins at the thin precoats, where the part piston first drops.
+    """
+
     thin_precoat: PhasePlan = field(
         default_factory=lambda: PhasePlan(
             layer_thickness_mm=0.2, feed_thickness_mm=0.4, n_layers=2
@@ -138,26 +137,15 @@ class PrintSettings:
     @property
     def total_thickness_mm(self) -> float:
         postcoat = self.postcoat.thickness_mm if self.postcoat_enabled else 0.0
-        return (
-            self.thick_precoat.thickness_mm
-            + self.thin_precoat.thickness_mm
-            + self.printing.thickness_mm
-            + postcoat
-        )
+        return self.thin_precoat.thickness_mm + self.printing.thickness_mm + postcoat
 
     @property
     def total_layers(self) -> int:
         postcoat = self.postcoat.n_layers if self.postcoat_enabled else 0
-        return (
-            self.thick_precoat.n_layers
-            + self.thin_precoat.n_layers
-            + self.printing.n_layers
-            + postcoat
-        )
+        return self.thin_precoat.n_layers + self.printing.n_layers + postcoat
 
     def phase(self, name: str) -> PhasePlan:
         return {
-            "thick_precoat": self.thick_precoat,
             "thin_precoat": self.thin_precoat,
             "printing": self.printing,
             "postcoat": self.postcoat,
@@ -173,6 +161,10 @@ class PrintSettings:
                 f"{self.feed_end_mm:.1f} mm (V1.py printability check)"
             )
         for name in PHASES:
+            # A disabled postcoat is dropped from the compiled plan and excluded from the totals,
+            # so its degenerate fields must not raise a validation reason.
+            if name == "postcoat" and not self.postcoat_enabled:
+                continue
             ph = self.phase(name)
             if ph.n_layers > 0 and ph.layer_thickness_mm <= 0:
                 reasons.append(f"{name}.layer_thickness_mm must be > 0 when n_layers > 0")
@@ -200,12 +192,10 @@ class PrintSettings:
     def from_dict(cls, data: dict[str, Any]) -> PrintSettings:
         d = dict(data)
         base = cls()
-        thick = PhasePlan(**d.pop("thick_precoat")) if "thick_precoat" in d else base.thick_precoat
         thin = PhasePlan(**d.pop("thin_precoat")) if "thin_precoat" in d else base.thin_precoat
         printing = PhasePlan(**d.pop("printing")) if "printing" in d else base.printing
         postcoat = PhasePlan(**d.pop("postcoat")) if "postcoat" in d else base.postcoat
         return cls(
-            thick_precoat=thick,
             thin_precoat=thin,
             printing=printing,
             postcoat=postcoat,
@@ -227,9 +217,6 @@ class PrintSettings:
         jet_passes = d.get("n_jet_passes", base.n_jet_passes)
         jet_passes = int(jet_passes) if isinstance(jet_passes, int | float) else base.n_jet_passes
         return cls(
-            thick_precoat=PhasePlan.bounded(
-                d.get("thick_precoat"), limits, base.thick_precoat
-            ),
             thin_precoat=PhasePlan.bounded(d.get("thin_precoat"), limits, base.thin_precoat),
             printing=PhasePlan.bounded(d.get("printing"), limits, base.printing),
             postcoat=PhasePlan.bounded(d.get("postcoat"), limits, base.postcoat),
@@ -304,9 +291,9 @@ class Step:
 FEED_FLOOR_MM = 0.0
 
 # Precoat-style phases lay a cover layer only: spread -> feed advance -> recoater return to 350.
-# thick_precoat holds the part fixed (backfill); thin_precoat drops the part one nominal layer;
-# postcoat is a post-job cover pass that also holds the part fixed (the FINISH drives part->max).
-_PRECOAT_PHASES = ("thick_precoat", "thin_precoat", "postcoat")
+# thin_precoat drops the part one nominal layer; postcoat is a post-job cover pass that holds the
+# part fixed (the FINISH drives part->max). The thick precoats now live in the priming routine.
+_PRECOAT_PHASES = ("thin_precoat", "postcoat")
 # Phases that drop the build/part piston one layer (grow the part height).
 _PART_DROP_PHASES = ("thin_precoat", "printing")
 
@@ -338,7 +325,7 @@ def compile_print(plan: PrintSettings) -> tuple[Step, ...]:
     add("setup", 0, "wait")
     add("setup", 0, "home", RECOATER)
     add("setup", 0, "wait")
-    base = plan.thick_precoat  # a representative base profile for all four axes
+    base = plan.thin_precoat  # a representative base profile for all four axes
     add("setup", 0, "set_speed", PART, base.part_speed)
     add("setup", 0, "set_accel", PART, base.part_accel)
     add("setup", 0, "set_speed", FEED, base.feed_speed)
@@ -396,7 +383,7 @@ def compile_print(plan: PrintSettings) -> tuple[Step, ...]:
                 add(name, layer_no, "dwell", value=plan.settle_s)  # script's time.sleep(1)
                 feed_pos -= ph.feed_thickness_mm
 
-            # 3) PART DROP — thin_precoat & printing only (thick precoat / postcoat hold the part).
+            # 3) PART DROP — thin_precoat & printing only (postcoat holds the part fixed).
             if name in _PART_DROP_PHASES:
                 add(name, layer_no, "move_rel", PART, ph.layer_thickness_mm)  # part piston down
                 add(name, layer_no, "wait")

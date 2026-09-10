@@ -1,8 +1,11 @@
 """Priming = job SETUP (spec §6): build/part piston UP (flush), feed piston DOWN to open a powder
-cavity, HOLD for the operator to load powder, then a calibrated leveling spread across the runway.
-NOT a layer loop (the thick/thin precoats live in the Print routine). Never homes a piston.
+cavity, HOLD for the operator to load powder, then the THICK PRECOATS that fill the runway and the
+part-piston cavity. The part piston is FIXED throughout the thick precoats (backfill) — the thin
+precoats, where the part piston first drops, are the start of the Print routine. Never homes a
+piston.
 
-Sign conventions: part/feed move_abs to a SMALL value = UP/flush, LARGE = DOWN.
+Sign conventions: part/feed move_abs to a SMALL value = UP/flush, LARGE = DOWN; a feed move_rel of a
+NEGATIVE amount advances the feed piston UP (supplies powder), matching compile_print.
 Defaults are calibration-pending starting points, not validated values.
 """
 
@@ -15,7 +18,7 @@ from typing import Any
 from vention_printer_interface.control.print_settings import FEED, PART, RECOATER, Step
 from vention_printer_interface.control.safety import SafetyLimits
 
-MAX_LEVEL_PASSES = 20
+MAX_THICK_PRECOATS = 20
 
 
 def _clamp(v: float, lo: float, hi: float) -> float:
@@ -28,7 +31,8 @@ class PrimingSettings:
     feed_cavity_mm: float = 30.0
     level_recoat_end_mm: float = 925.0
     level_recoat_start_mm: float = 350.0
-    n_level_passes: int = 1
+    n_thick_precoats: int = 3
+    thick_feed_mm: float = 7.0
     part_speed: float = 2.5
     part_accel: float = 15.0
     feed_speed: float = 2.5
@@ -50,8 +54,8 @@ class PrimingSettings:
             lo, hi = lim.travel_min[axis], lim.travel_max[axis]
             if not lo <= v <= hi:
                 reasons.append(f"{label}={v} outside axis {axis} travel [{lo}, {hi}]")
-        if self.n_level_passes <= 0:
-            reasons.append("n_level_passes must be > 0")
+        if self.n_thick_precoats <= 0:
+            reasons.append("n_thick_precoats must be > 0")
         return reasons
 
     def to_dict(self) -> dict[str, Any]:
@@ -73,14 +77,15 @@ class PrimingSettings:
                 return float(v)
             return float(getattr(base, name))
 
-        passes = d.get("n_level_passes", base.n_level_passes)
-        passes = int(passes) if isinstance(passes, int | float) else base.n_level_passes
+        passes = d.get("n_thick_precoats", base.n_thick_precoats)
+        passes = int(passes) if isinstance(passes, int | float) else base.n_thick_precoats
         return cls(
             part_top_mm=limits.clamp_position(PART, num("part_top_mm")),
             feed_cavity_mm=limits.clamp_position(FEED, num("feed_cavity_mm")),
             level_recoat_end_mm=limits.clamp_position(RECOATER, num("level_recoat_end_mm")),
             level_recoat_start_mm=limits.clamp_position(RECOATER, num("level_recoat_start_mm")),
-            n_level_passes=int(_clamp(passes, 1, MAX_LEVEL_PASSES)),
+            n_thick_precoats=int(_clamp(passes, 1, MAX_THICK_PRECOATS)),
+            thick_feed_mm=_clamp(num("thick_feed_mm"), 0.0, 50.0),
             part_speed=limits.clamp_speed(PART, num("part_speed")),
             part_accel=limits.clamp_accel(PART, num("part_accel")),
             feed_speed=limits.clamp_speed(FEED, num("feed_speed")),
@@ -92,8 +97,10 @@ class PrimingSettings:
 
 
 def compile_priming_setup(s: PrimingSettings, limits: SafetyLimits) -> tuple[Step, ...]:
-    """Position pistons -> HOLD for the powder load -> calibrated leveling spread. Never homes a
-    piston."""
+    """Position pistons -> HOLD for the powder load -> THICK PRECOATS that fill the runway and the
+    part cavity. Each thick precoat spreads powder across the bed and advances the feed piston; the
+    part piston NEVER moves (it stays fixed to backfill). The spread IS the leveling — there is no
+    separate level step. Never homes a piston."""
     out: list[Step] = []
 
     def add(kind: str, axis: int | None = None, value: float | None = None,
@@ -112,10 +119,14 @@ def compile_priming_setup(s: PrimingSettings, limits: SafetyLimits) -> tuple[Ste
     add("move_abs", FEED, s.feed_cavity_mm, "feed piston down (open powder cavity)")
     add("wait")
     add("hold", None, None, "Load powder into the feed cavity, then Resume")
-    for _ in range(s.n_level_passes):
+    for _ in range(s.n_thick_precoats):
+        # Part piston stays FIXED for every thick precoat — the feed advance backfills the runway
+        # and fills the part cavity; the part piston first drops only in the print's thin precoats.
         add("move_abs", RECOATER, s.level_recoat_start_mm, "move to start (past feed piston)")
         add("wait")
         add("move_abs", RECOATER, s.level_recoat_end_mm, "spread across the bed")
+        add("wait")
+        add("move_rel", FEED, -s.thick_feed_mm, "feed up — supply powder")  # part FIXED
         add("wait")
         add("dwell", value=s.settle_s)
     add("mark", label="priming_done")

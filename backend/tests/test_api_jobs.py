@@ -59,7 +59,6 @@ def test_status_job_tracks_current_layer_during_print(client: TestClient) -> Non
     client.put(
         "/api/print-settings",
         json={
-            "thick_precoat": {"n_layers": 0},
             "thin_precoat": {"n_layers": 0},
             "postcoat": {"n_layers": 0},
             "feed_end_mm": 10,
