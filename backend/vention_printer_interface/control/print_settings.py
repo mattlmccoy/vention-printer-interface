@@ -118,7 +118,7 @@ class PrintSettings:
     heater_end_mm: float = 600.0
     printhead_home_mm: float = 5.0
     printhead_end_mm: float = 900.0
-    part_max_mm: float = 75.0  # V1.py MAX_TRAVEL: final part-cylinder drop position
+    part_max_mm: float = 72.0  # final part-cylinder drop position (= part spill-safe depth)
     heater_speed: float = 50.0
     heater_accel: float = 250.0
     n_heater_passes: int = 1

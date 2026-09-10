@@ -21,6 +21,19 @@ def tel(**kw: Any) -> Telemetry:
     return Telemetry(**base)
 
 
+def test_spill_warning_when_piston_past_safe_depth() -> None:
+    # Pistons unseat from their cylinders past a safe depth (DOWN = larger mm): part 72, feed 80.
+    # Past that, powder can spill — a WARNING (not a fault), like the other position warnings.
+    lim = SafetyLimits()
+    part_deep = evaluate(tel(positions={1: 73.0, 2: 10.0, 3: 10.0, 4: 10.0}), lim, 0.1, 0, False)
+    assert any("spill" in w for w in part_deep.warnings)
+    assert part_deep.trip is False
+    feed_deep = evaluate(tel(positions={1: 10.0, 2: 81.0, 3: 10.0, 4: 10.0}), lim, 0.1, 0, False)
+    assert any("spill" in w for w in feed_deep.warnings)
+    safe = evaluate(tel(positions={1: 70.0, 2: 78.0, 3: 10.0, 4: 10.0}), lim, 0.1, 0, False)
+    assert not any("spill" in w for w in safe.warnings)
+
+
 def test_clean_sample_no_trip() -> None:
     d = evaluate(tel(), SafetyLimits(), telemetry_age_s=0.1, heater_on_s=0.0, move_pending=False)
     assert d.trip is False and d.reasons == () and d.warnings == ()

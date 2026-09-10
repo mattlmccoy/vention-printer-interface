@@ -126,7 +126,7 @@ def test_script_faithful_position_defaults() -> None:
     p = PrintSettings()
     assert p.recoater_return_mm == 350.0
     assert p.heater_start_mm == 425.0
-    assert p.part_max_mm == 75.0
+    assert p.part_max_mm == 72.0
     assert p.recoater_end_mm == 925.0
     assert p.printhead_end_mm == 900.0
 
@@ -284,17 +284,17 @@ def test_compile_one_printing_layer_full_sequence() -> None:
     assert kinds[j + 1] == ("move_abs", PRINTHEAD, 900.0)
     assert kinds[j + 2] == ("wait", None, None)
 
-    # (d) finish: home printhead, home recoater, drive part -> part_max (75)
+    # (d) finish: home printhead, home recoater, drive part -> part_max (72)
     finish = kinds[i:]
     assert finish == [
         ("home", PRINTHEAD, None),
         ("wait", None, None),
         ("home", RECOATER, None),
         ("wait", None, None),
-        ("move_abs", PART, 75.0),
+        ("move_abs", PART, 72.0),
         ("wait", None, None),
     ]
-    assert steps[-2].kind == "move_abs" and steps[-2].axis == PART and steps[-2].value == 75.0
+    assert steps[-2].kind == "move_abs" and steps[-2].axis == PART and steps[-2].value == 72.0
     assert [s.index for s in steps] == list(range(len(steps)))
 
 
@@ -345,7 +345,7 @@ def test_postcoat_toggle_off_but_finish_still_drives_part_to_max() -> None:
     assert not any(s.phase == "postcoat" for s in off_steps)
     # finish still ends with part -> part_max
     assert off_steps[-2].kind == "move_abs"
-    assert off_steps[-2].axis == PART and off_steps[-2].value == 75.0
+    assert off_steps[-2].axis == PART and off_steps[-2].value == 72.0
 
 
 def test_disabled_postcoat_validates_clean() -> None:

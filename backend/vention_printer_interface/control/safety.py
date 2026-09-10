@@ -83,6 +83,9 @@ class SafetyLimits:
     stale_fault_s: float = 6.0  # blind period before a FAULT (tolerates HTTP stalls during motion)
     near_limit_mm: float = 5.0  # warning band
     travel_tolerance_mm: float = 2.0  # a hard fault only past the ends by more than this
+    # Depth (mm; DOWN = larger) past which a piston risks unseating from its cylinder and spilling
+    # powder. Pistons only (part 1, feed 2); measured on our rig 2026-09-10. A WARNING, not a fault.
+    spill_depth: dict[int, float] = field(default_factory=lambda: {1: 72.0, 2: 80.0})
 
     @classmethod
     def bounded(cls, **kw: Any) -> SafetyLimits:
@@ -113,6 +116,7 @@ class SafetyLimits:
             stale_fault_s=stale_fault,
             near_limit_mm=scalar("near_limit_mm", NEAR_LIMIT_BOUNDS),
             travel_tolerance_mm=scalar("travel_tolerance_mm", TRAVEL_TOLERANCE_BOUNDS),
+            spill_depth=_per_axis(base.spill_depth, kw.get("spill_depth"), None),
         )
 
     def _axis(self, table: dict[int, float], axis: int) -> float:
@@ -140,6 +144,7 @@ class SafetyLimits:
             "stale_fault_s": self.stale_fault_s,
             "near_limit_mm": self.near_limit_mm,
             "travel_tolerance_mm": self.travel_tolerance_mm,
+            "spill_depth": {str(k): v for k, v in self.spill_depth.items()},
         }
 
 
@@ -193,6 +198,14 @@ def evaluate(
                 )
             elif (lo > 0.0 and pos - lo < limits.near_limit_mm) or hi - pos < limits.near_limit_mm:
                 warnings.append(f"axis {axis} near travel limit ({pos:.1f} mm)")
+        # Piston spill guard: a piston commanded/driven past its safe depth can unseat from the
+        # cylinder and spill powder. Warn (not fault) so the operator can back it off.
+        for axis, depth in limits.spill_depth.items():
+            pos = telemetry.positions.get(axis)
+            if pos is not None and pos > depth:
+                warnings.append(
+                    f"axis {axis} past safe depth ({pos:.1f} > {depth:.0f} mm) — powder may spill"
+                )
     # heater_on_s is measured from the earlier of "commanded on" and "observed on", so the
     # watchdog works even when the relay state is never echoed back (review C1).
     if heater_on_s > limits.heater_max_on_s:
