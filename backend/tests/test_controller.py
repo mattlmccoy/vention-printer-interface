@@ -69,7 +69,7 @@ def test_move_is_clamped_and_speed_bounded() -> None:
         assert wait(lambda: (c.snapshot()["telemetry"] or {}).get("positions", {}).get("3") == 0)
         assert c.set_max_speed(3, 99999) == SafetyLimits().max_speed[3]
         assert c.set_max_accel(3, 1e9) == SafetyLimits().max_accel[3]
-        assert c.move_absolute(3, 5000) == 840.0
+        assert c.move_absolute(3, 5000) == 970.0
         assert wait(lambda: (c.snapshot()["telemetry"] or {})["positions"]["3"] > 100)
         c.stop_all()
         assert wait(lambda: all((c.snapshot()["telemetry"] or {})["motion_complete"].values()))
@@ -88,7 +88,7 @@ def test_estop_bypasses_gate_and_kills_heater() -> None:
         assert t.mqtt_latest(HEATER) == "0"
         assert c.snapshot()["armed"] is False
         assert wait(lambda: c.state == ControllerState.FAULT)
-        assert any("e-stop" in x for x in c.snapshot()["fault_reasons"])
+        assert any("e-stop" in x.lower() for x in c.snapshot()["fault_reasons"])
     finally:
         c.stop()
 

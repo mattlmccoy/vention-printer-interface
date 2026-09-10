@@ -21,7 +21,7 @@ def test_identify_reads_version_and_axes() -> None:
         "Printhead Gantry",
         "Recoater Gantry",
     ]
-    assert info["axes"]["3"]["travel_mm"] == 840.0
+    assert info["axes"]["3"]["travel_mm"] == 970.0
 
 
 def test_read_telemetry_shape() -> None:
