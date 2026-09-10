@@ -215,6 +215,19 @@ def exposure(*, layer_mm: float, area_mm2: float, carbon_wt: float, powder_densi
 
 ---
 
+## Task 7: Priming as its own page (nav restructure)
+
+Spec §3 puts Priming on its own tab; it currently lives as a module inside Control. Give it a page.
+
+**Files:** `frontend/src/lib/console.ts` (VIEWS), `frontend/src/App.tsx` (route the new view), create `frontend/src/components/views/PrimingView.tsx`, modify `frontend/src/components/views/ControlView.tsx` (remove the priming module).
+
+- [ ] **Step 1** — In `console.ts`, add `"priming"` to `VIEWS` (order per spec §3: `["control","priming","print","job","runs"]`, or keep `print` first if that's the current landing — match the existing default sensibly). Ensure `DEFAULT_CONSOLE.view` still valid.
+- [ ] **Step 2** — Create `PrimingView.tsx`: a `view` wrapper that renders the existing `<PrimingPanel gates=... call=... printState=... />` (reuse it verbatim — it already has the setup params, plain-language sequence, RUN/RESUME/ABORT). Give it the same `status/gates/call` props signature as the other views so `App.tsx` can render it.
+- [ ] **Step 3** — In `ControlView.tsx`, REMOVE the `priming` module from the `modules` array (and the `PrimingPanel` import if now unused). Control is manual driving only.
+- [ ] **Step 4** — In `App.tsx`, render `<PrimingView .../>` when `ui.view === "priming"` (mirror how `control`/`runs` are routed, passing `status`, `gates`, `call`, and the print state for resume).
+- [ ] **Step 5** — Verify `npm run build` tsc-clean + full lib suite; browser-smoke: a **Priming tab** appears, opens the priming page, and Control no longer shows a priming module.
+- [ ] **Step 6: Commit** — `feat(nav): priming is its own page (spec §3 page structure)`.
+
 ## Self-review notes
 - Spec §7 (4 phases, multi-pass, pre-heater drop) → Tasks 1–3; §8 (IPA exposure) → Tasks 4–6.
 - Highest-risk task is Task 3 (thick-precoat phase) and the step-order test updates in Tasks 2–3 — the implementer must update the exact expected sequences to match the intended mechanics in the "Reference" section above; if the intended mechanics are wrong, that's a spec issue to escalate, not a test to force green.
