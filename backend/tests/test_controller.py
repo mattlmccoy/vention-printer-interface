@@ -56,17 +56,30 @@ def test_positions_unreferenced_until_homed() -> None:
         c.stop()
 
 
-def test_reference_cleared_on_read_failure() -> None:
-    # A telemetry read failure means the controller lost contact (a power-cycle always does this);
-    # reference cannot survive that gap, so every axis reverts to unreferenced.
+def test_reconcile_reference_keeps_matching_drops_moved() -> None:
+    from vention_printer_interface.control.controller import reconcile_reference
+
+    ref = {1, 2, 3, 4}
+    saved = {1: 0.0, 2: 20.0, 3: 0.0, 4: 930.0}
+    # MM stayed powered across a reconnect: positions unchanged -> keep every axis referenced.
+    assert reconcile_reference(ref, saved, {1: 0.0, 2: 20.0, 3: 0.0, 4: 930.0}, 2.0) == {1, 2, 3, 4}
+    # power-cycle: incremental drives collapse to ~0 -> only the axes that stayed put keep ref.
+    assert reconcile_reference(ref, saved, {1: 0.0, 2: 0.1, 3: 0.0, 4: 0.1}, 2.0) == {1, 3}
+
+
+def test_reference_survives_a_reconnect_when_positions_unchanged() -> None:
+    # A telemetry blip while the MM keeps power (positions unchanged on recovery) must NOT drop
+    # reference — the "shows unref every reconnect" annoyance.
     c, t = make()
     try:
         c.arm()
         c.home_all()
         assert wait(lambda: all(c.snapshot()["telemetry"]["referenced"].values()), timeout=6.0)
-        t._unreachable = True  # the MM goes away (power-cycle / disconnect)
+        t._unreachable = True  # reconnect gap
         assert wait(lambda: c.snapshot()["read_error"] is not None)
-        assert not any(c.snapshot()["telemetry"]["referenced"].values())
+        t._unreachable = False  # back, positions unchanged (sim never power-cycles)
+        assert wait(lambda: c.snapshot()["read_error"] is None)
+        assert all(c.snapshot()["telemetry"]["referenced"].values())
     finally:
         c.stop()
 

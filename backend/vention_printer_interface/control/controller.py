@@ -33,6 +33,24 @@ Listener = Callable[[dict[str, Any]], None]
 # (health_refresh_s=0). It is fetched once at connect; a slow refresh can be enabled explicitly.
 ESTOP_READY_WAIT_S = 10.0  # SDK resetSystem waits for areSmartDrivesReady (MachineMotion.py:2459)
 HOMING_WINDOW_S = 30.0  # position limits are suspended for this long after a home is issued
+REFERENCE_MATCH_TOL_MM = 2.0  # a reconnect keeps reference only if positions return within this
+
+
+def reconcile_reference(
+    referenced: set[int],
+    saved: dict[int, float],
+    current: dict[int, float],
+    tol: float,
+) -> set[int]:
+    """After telemetry recovers (a reconnect), keep an axis referenced only if its position came
+    back within `tol` of the last good value. A real MM power-cycle collapses incremental drives
+    to ~0, so those axes fail the match and drop; a mere disconnect leaves positions unchanged."""
+    kept: set[int] = set()
+    for axis in referenced:
+        s, c = saved.get(axis), current.get(axis)
+        if s is not None and c is not None and abs(c - s) <= tol:
+            kept.add(axis)
+    return kept
 
 
 class ControllerState(enum.StrEnum):
@@ -81,6 +99,8 @@ class Controller:
         # asserts. Unreferenced positions must never be presented as truth (data-contract §5).
         self._referenced_axes: set[int] = set()
         self._homing_axes: set[int] = set()
+        self._reference_positions: dict[int, float] = {}  # last good positions, for reconnect match
+        self._reference_suspect = False  # a read failed; reconcile reference on the next good read
 
     # ---- lifecycle --------------------------------------------------------------------------
     def attach_device(self, device: PrinterDevice, *, backend: str) -> None:
@@ -101,6 +121,7 @@ class Controller:
             self._last_read_done = self._last_health = time.monotonic()
             self._homing_until = self._home_issued_at = 0.0
             self._referenced_axes, self._homing_axes = set(), set()  # a fresh link is unreferenced
+            self._reference_positions, self._reference_suspect = {}, False
             self._stop = stop
         self._thread = threading.Thread(
             target=self._loop, args=(device, stop), name="vpi-poll", daemon=True
@@ -158,7 +179,10 @@ class Controller:
                 return  # orphaned thread: its device is gone, its result is meaningless
             with self._lock:
                 self._read_error = str(exc)
-                self._referenced_axes.clear()  # lost contact -> reference cannot be trusted
+                # Lost contact: don't drop reference yet — a reconnect where the MM kept power comes
+                # back with positions unchanged. Reconcile on the next good read (drop only axes
+                # whose position moved, i.e. a real power-cycle). Homing can't survive the gap.
+                self._reference_suspect = True
                 self._homing_axes.clear()
             if self.state != ControllerState.FAULT:
                 self._enter_fault((f"telemetry read failed: {exc}",))
@@ -176,6 +200,13 @@ class Controller:
         with self._lock:
             self._read_error = None
             self._telemetry = tel
+            if self._reference_suspect:  # first good read after a gap: keep only unmoved axes
+                self._referenced_axes = reconcile_reference(
+                    self._referenced_axes, self._reference_positions, tel.positions,
+                    REFERENCE_MATCH_TOL_MM,
+                )
+                self._reference_suspect = False
+            self._reference_positions = dict(tel.positions)
             if tel.heater_on and self._heater_on_since is None:
                 self._heater_on_since = now
             if tel.heater_on is False:
