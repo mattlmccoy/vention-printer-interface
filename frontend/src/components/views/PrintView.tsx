@@ -57,6 +57,9 @@ export function PrintView({ status, gates, call, order, sizes, onOrder, onResize
   const [mdirty, setMdirty] = useState(false);
   const [mdry, setMdry] = useState(true);
   const [msingle, setMsingle] = useState(false);
+  // The manual-print controls are revealed on demand by a button beneath CHOOSE A JOB, not
+  // auto-shown — so the entry point is discoverable right where the operator looks to start.
+  const [manualOpen, setManualOpen] = useState(false);
   useEffect(() => {
     if (!showManual) return;
     let live = true;
@@ -146,11 +149,14 @@ export function PrintView({ status, gates, call, order, sizes, onOrder, onResize
           {r?.state === "running" && <button className="cta" disabled={!gates.connected} onClick={() => call("pause", api.printPause)}>PAUSE</button>}
           {r?.state === "paused" && <button className="cta primary" disabled={!gates.controllable} onClick={() => call(r.single_step ? "step" : "resume", r.single_step ? api.printStep : api.printResume)}>{r.single_step ? "NEXT STEP" : "RESUME"}</button>}
           {active ? <button className="cta danger" disabled={!gates.connected} onClick={() => call("abort", api.printAbort)}>ABORT</button>
-            : <button className="cta primary" style={{ gridColumn: "1 / -1" }} onClick={onJob}>{job ? "START THIS JOB" : "CHOOSE A JOB"}</button>}
+            : <>
+                <button className="cta primary" style={{ gridColumn: "1 / -1" }} onClick={onJob}>{job ? "START THIS JOB" : "CHOOSE A JOB"}</button>
+                {!job && <button className="cta" style={{ gridColumn: "1 / -1" }} aria-expanded={manualOpen} onClick={() => setManualOpen((v) => !v)}>{manualOpen ? "HIDE MANUAL PRINT" : "MANUAL PRINT (NO JOB)"}</button>}
+              </>}
         </div>
       </>
     ) },
-    { id: "manual", title: "manual print", size: "s", hidden: !showManual, node: mplan ? (
+    { id: "manual", title: "manual print", size: "s", hidden: !(showManual && manualOpen), node: mplan ? (
       <>
         <div className="hint" style={{ marginTop: 0 }}>Run the print routine straight from these parameters — no sliced job needed.</div>
         <div className="fields" style={{ marginTop: 16, maxWidth: "none" }}>
