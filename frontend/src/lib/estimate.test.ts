@@ -4,7 +4,7 @@ import { estimateDurationS, heaterOnTimeS } from "./estimate.ts";
 import { DEFAULT_PLAN } from "./print_settings.ts";
 
 test("estimate scales with layers and is in a sane range", () => {
-  const one = { ...DEFAULT_PLAN, thick_precoat: { ...DEFAULT_PLAN.thick_precoat, n_layers: 0 }, thin_precoat: { ...DEFAULT_PLAN.thin_precoat, n_layers: 0 }, printing: { ...DEFAULT_PLAN.printing, n_layers: 1 }, postcoat: { ...DEFAULT_PLAN.postcoat, n_layers: 0 } };
+  const one = { ...DEFAULT_PLAN, thin_precoat: { ...DEFAULT_PLAN.thin_precoat, n_layers: 0 }, printing: { ...DEFAULT_PLAN.printing, n_layers: 1 }, postcoat: { ...DEFAULT_PLAN.postcoat, n_layers: 0 } };
   const ten = { ...one, printing: { ...one.printing, n_layers: 10 } };
   const t1 = estimateDurationS(one), t10 = estimateDurationS(ten);
   // fixed homing/finish overhead (two gantry homes at setup + finish + part->max) means < 10x

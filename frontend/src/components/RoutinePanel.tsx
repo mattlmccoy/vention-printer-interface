@@ -4,13 +4,13 @@ import type { Gates } from "../lib/format.ts";
 import type { Call } from "./views/types.ts";
 import { NumberField } from "./NumberField.tsx";
 
-/** Edit the 4-phase print routine (thick/thin precoat, printing multi-pass, postcoat) plus the
- *  heater-exposure inputs, and show the backend-computed IPA exposure readout. Fetches the resolved
- *  print_settings, patches with api.setPrintSettings, and re-reads the exposure from each response. */
+/** Edit the print routine (thin precoat, printing multi-pass, postcoat) plus the heater-exposure
+ *  inputs, and show the backend-computed IPA exposure readout. The thick precoats live in the
+ *  priming routine now, so they are not edited here. Fetches the resolved print_settings, patches
+ *  with api.setPrintSettings, and re-reads the exposure from each response. */
 
 interface PhaseDraft { n_layers: number; layer_thickness_mm: number; feed_thickness_mm: number }
 interface Draft {
-  thick_precoat: PhaseDraft;
   thin_precoat: PhaseDraft;
   printing_feed_thickness_mm: number; // feed advance per printing layer (the powder supply)
   recoater_return_mm: number;
@@ -32,7 +32,6 @@ function phaseOf(plan: Record<string, unknown>, key: string): PhaseDraft {
 }
 function readDraft(plan: Record<string, unknown>): Draft {
   return {
-    thick_precoat: phaseOf(plan, "thick_precoat"),
     thin_precoat: phaseOf(plan, "thin_precoat"),
     printing_feed_thickness_mm: phaseOf(plan, "printing").feed_thickness_mm,
     recoater_return_mm: n(plan.recoater_return_mm, 350),
@@ -58,10 +57,9 @@ export function RoutinePanel({ gates, call }: { gates: Gates; call: Call }) {
   }, [gates.reachable]);
   const ok = gates.controllable && !gates.printActive;
   const setD = (patch: Partial<Draft>) => d && (setDraft({ ...d, ...patch }), setDirty(true));
-  const setPh = (key: "thick_precoat" | "thin_precoat", patch: Partial<PhaseDraft>) => d && setD({ [key]: { ...d[key], ...patch } } as Partial<Draft>);
+  const setPh = (key: "thin_precoat", patch: Partial<PhaseDraft>) => d && setD({ [key]: { ...d[key], ...patch } } as Partial<Draft>);
   const save = () => d && call("set routine", () => {
     const patch = {
-      thick_precoat: d.thick_precoat,
       thin_precoat: d.thin_precoat,
       printing: { feed_thickness_mm: d.printing_feed_thickness_mm },
       recoater_return_mm: d.recoater_return_mm,
@@ -81,15 +79,13 @@ export function RoutinePanel({ gates, call }: { gates: Gates; call: Call }) {
   return (
     <>
       <div className="fields" style={{ marginTop: 0, maxWidth: "none" }}>
-        <span>thick precoat</span>
-        <label className="row"><NumberField value={d.thick_precoat.n_layers} disabled={!ok} style={{ width: 64 }} onChange={(v) => setPh("thick_precoat", { n_layers: v })} /> × <NumberField step="0.1" value={d.thick_precoat.layer_thickness_mm} disabled={!ok} style={{ width: 72 }} onChange={(v) => setPh("thick_precoat", { layer_thickness_mm: v })} /> mm · feed <NumberField step="0.1" value={d.thick_precoat.feed_thickness_mm} disabled={!ok} style={{ width: 72 }} onChange={(v) => setPh("thick_precoat", { feed_thickness_mm: v })} /> mm</label>
         <span>thin precoat</span>
         <label className="row"><NumberField value={d.thin_precoat.n_layers} disabled={!ok} style={{ width: 64 }} onChange={(v) => setPh("thin_precoat", { n_layers: v })} /> × <NumberField step="0.1" value={d.thin_precoat.layer_thickness_mm} disabled={!ok} style={{ width: 72 }} onChange={(v) => setPh("thin_precoat", { layer_thickness_mm: v })} /> mm · feed <NumberField step="0.1" value={d.thin_precoat.feed_thickness_mm} disabled={!ok} style={{ width: 72 }} onChange={(v) => setPh("thin_precoat", { feed_thickness_mm: v })} /> mm</label>
         <span>printing feed</span><span className="row"><NumberField step="0.1" value={d.printing_feed_thickness_mm} disabled={!ok} onChange={(v) => setD({ printing_feed_thickness_mm: v })} /> mm / layer</span>
         <span>recoater return</span><span className="row"><NumberField value={d.recoater_return_mm} disabled={!ok} onChange={(v) => setD({ recoater_return_mm: v })} /> mm</span>
         <span>heater start</span><span className="row"><NumberField value={d.heater_start_mm} disabled={!ok} onChange={(v) => setD({ heater_start_mm: v })} /> mm</span>
         <span>part max</span><span className="row"><NumberField value={d.part_max_mm} disabled={!ok} onChange={(v) => setD({ part_max_mm: v })} /> mm</span>
-        <span>jet passes</span><span className="row"><NumberField value={d.n_jet_passes} disabled={!ok} onChange={(v) => setD({ n_jet_passes: v })} /></span>
+        <span title="prints each layer N times without dropping the part piston">multipass (passes / layer)</span><span className="row"><NumberField value={d.n_jet_passes} disabled={!ok} onChange={(v) => setD({ n_jet_passes: v })} /></span>
         <span>pre-heater drop</span><span className="row"><NumberField step="0.1" value={d.pre_heater_drop_mm} disabled={!ok} onChange={(v) => setD({ pre_heater_drop_mm: v })} /> mm</span>
         <span>postcoat</span><label className="row"><input type="checkbox" checked={d.postcoat_enabled} disabled={!ok} onChange={(e) => setD({ postcoat_enabled: e.target.checked })} /> enabled</label>
         <span>target carbon</span><span className="row"><NumberField step="0.01" value={d.target_carbon_wt} disabled={!ok} onChange={(v) => setD({ target_carbon_wt: v })} /> wt</span>

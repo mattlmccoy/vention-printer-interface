@@ -12,7 +12,7 @@ export const WALKTHROUGH_STEPS: readonly WalkStep[] = [
   { id: "build-up", title: "Build piston up" },
   { id: "open-feed", title: "Open feed cavity" },
   { id: "load", title: "Load powder" },
-  { id: "level", title: "Level" },
+  { id: "level", title: "Thick precoats" },
   { id: "finish", title: "Finish" },
 ];
 

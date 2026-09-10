@@ -3,12 +3,14 @@
  *  show the printability verdict before asking the operator. The backend is the authority. */
 
 export const PART = 1, FEED = 2, PRINTHEAD = 3, RECOATER = 4;
-export const PHASES = ["thick_precoat", "thin_precoat", "printing", "postcoat"] as const;
+// The thick precoats now live in the priming routine (they fill the runway + part cavity with the
+// part piston fixed). The print begins at the thin precoats, where the part piston first drops.
+export const PHASES = ["thin_precoat", "printing", "postcoat"] as const;
 export type Phase = (typeof PHASES)[number];
 
 // Precoat-style phases lay a cover layer only (spread -> feed advance -> recoater return to 350);
 // part-drop phases drop the build/part piston one layer (grow the part height). Mirrors the backend.
-const PRECOAT_PHASES = new Set<string>(["thick_precoat", "thin_precoat", "postcoat"]);
+const PRECOAT_PHASES = new Set<string>(["thin_precoat", "postcoat"]);
 const PART_DROP_PHASES = new Set<string>(["thin_precoat", "printing"]);
 // The feed piston's hard floor (script FEED_HOME_POS): an advance to/below it cannot supply a layer.
 const FEED_FLOOR_MM = 0;
@@ -28,7 +30,6 @@ export interface PhasePlan {
 }
 
 export interface PrintSettings {
-  thick_precoat: PhasePlan;
   thin_precoat: PhasePlan;
   printing: PhasePlan;
   postcoat: PhasePlan;
@@ -61,7 +62,6 @@ const basePhase: PhasePlan = {
 };
 
 export const DEFAULT_PLAN: PrintSettings = {
-  thick_precoat: { ...basePhase, layer_thickness_mm: 5, feed_thickness_mm: 7, n_layers: 3 },
   thin_precoat: { ...basePhase, layer_thickness_mm: 0.2, feed_thickness_mm: 0.4, n_layers: 2 },
   printing: { ...basePhase, layer_thickness_mm: 2, feed_thickness_mm: 0.4, n_layers: 10 },
   postcoat: { ...basePhase, layer_thickness_mm: 5, feed_thickness_mm: 0, n_layers: 1 },
@@ -129,7 +129,7 @@ export function compilePrint(plan: PrintSettings): Step[] {
   add("setup", 0, "wait");
   add("setup", 0, "home", RECOATER);
   add("setup", 0, "wait");
-  const base = plan.thick_precoat;
+  const base = plan.thin_precoat; // a representative base profile for all four axes
   add("setup", 0, "set_speed", PART, base.part_speed);
   add("setup", 0, "set_accel", PART, base.part_accel);
   add("setup", 0, "set_speed", FEED, base.feed_speed);

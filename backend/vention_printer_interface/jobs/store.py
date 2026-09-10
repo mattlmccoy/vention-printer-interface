@@ -44,10 +44,14 @@ class JobInfo:
         return not self.missing_pages and len(self.pages) == self.layer_count
 
     def print_settings_patch(self) -> dict[str, Any]:
-        """What the job dictates: the print phase's layer count and thickness."""
-        return {
-            "printing": {"n_layers": self.layer_count, "layer_thickness_mm": self.layer_height_mm}
-        }
+        """What the job dictates: ONLY the print phase's layer COUNT.
+
+        The slicer's ``height_mm / layer_count`` is a derived, non-standard value (e.g. 0.3013 mm),
+        so selecting a job must NOT force it onto the print. The operator's selected/standard
+        ``layer_thickness_mm`` is kept; ``layer_height_mm`` stays on JobInfo only for the
+        informational "slicer: X mm" display.
+        """
+        return {"printing": {"n_layers": self.layer_count}}
 
     def to_dict(self) -> dict[str, Any]:
         return {

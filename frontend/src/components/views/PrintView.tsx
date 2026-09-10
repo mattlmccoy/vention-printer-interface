@@ -44,9 +44,9 @@ export function PrintView({ status, gates, call, order, sizes, onOrder, onResize
   const isMacro = !!r?.macro;
   const total = plan ? estimateDurationS(plan) : 0;
   const remaining = r && total ? Math.max(0, total * (1 - r.step_index / Math.max(r.n_steps, 1))) : null;
-  const thickness = plan && r ? (plan[r.phase as "thick_precoat" | "thin_precoat" | "printing" | "postcoat"]?.layer_thickness_mm ?? 2) : 2;
+  const thickness = plan && r ? (plan[r.phase as "thin_precoat" | "printing" | "postcoat"]?.layer_thickness_mm ?? 2) : 2;
   const mismatch = r ? heightMismatch(r.part_height_measured_mm, r.part_height_mm, thickness) : false;
-  const printLayer = r && r.phase === "printing" ? r.layer - ((plan?.thick_precoat.n_layers ?? 0) + (plan?.thin_precoat.n_layers ?? 0)) : 0;
+  const printLayer = r && r.phase === "printing" ? r.layer - (plan?.thin_precoat.n_layers ?? 0) : 0;
   const shownLayer = active && printLayer > 0 ? printLayer : (job ? 1 : 0);
   const pct = r && r.n_steps ? Math.round((100 * r.step_index) / r.n_steps) : 0;
   const label = !status ? "OFFLINE" : isMacro && active ? r!.macro!.replace("_", " ").toUpperCase() : r?.state === "running" ? (r.dry_run ? "DRY RUN" : "PRINTING") : r?.state === "paused" ? "PAUSED" : (r?.state ?? "idle").toUpperCase();

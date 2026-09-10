@@ -178,8 +178,11 @@ export function PrimingView({ status, gates, call, onJob }: { status: StatusPayl
 
           {cur.id === "level" && (
             <>
-              <div className="hint">First move the recoater to the start position (past the feed piston), then spread across the bed. Repeat until the layer is even.</div>
+              <div className="step-head">Thick precoats — fill the runway + part cavity, then it's level</div>
+              <div className="hint">Each thick precoat moves the recoater to the start position (past the feed piston), then spreads across the bed to fill the runway and the part-piston cavity. The part piston stays fixed. Repeat for each precoat until the bed is even.</div>
               <div className="kv">
+                <span>thick precoats</span><span>{target("n_thick_precoats") ?? "—"}</span>
+                <span>feed / precoat</span><span>{fmt(target("thick_feed_mm"))}</span>
                 <span>start (past feed)</span><span>{fmt(target("level_recoat_start_mm"))}</span>
                 <span>spread to</span><span>{fmt(target("level_recoat_end_mm"))}</span>
               </div>

@@ -37,9 +37,11 @@ def test_list_select_and_preview(client: TestClient) -> None:
     job = client.get("/api/status").json()["job"]
     assert job["layer_count"] == 4 and job["layer_height_mm"] == 0.1 and job["complete"] is True
     print_settings = client.get("/api/print-settings").json()["plan"]
+    # Selecting a job sets ONLY the layer count; the layer thickness keeps its (default/selected)
+    # standard value rather than being forced to the slicer-derived height.
     assert (
         print_settings["printing"]["n_layers"] == 4
-        and print_settings["printing"]["layer_thickness_mm"] == 0.1
+        and print_settings["printing"]["layer_thickness_mm"] == 2.0
     )
     png = client.get("/api/jobs/current/layers/2.png")
     assert png.status_code == 200 and png.headers["content-type"] == "image/png"

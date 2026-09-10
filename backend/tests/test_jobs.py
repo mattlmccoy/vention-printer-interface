@@ -91,6 +91,10 @@ def test_layer_png_renders_ink_and_is_cached(tmp_path: Path) -> None:
 
 
 def test_job_to_print_settings_patch(tmp_path: Path) -> None:
+    # The job dictates ONLY the layer COUNT; the layer thickness stays the operator's selected
+    # (standard) value. The slicer-derived layer_height_mm is kept for informational display only.
     job = load_job(make_job(tmp_path, layers=50))
     patch = job.print_settings_patch()
-    assert patch == {"printing": {"n_layers": 50, "layer_thickness_mm": 0.1}}
+    assert patch == {"printing": {"n_layers": 50}}
+    assert "layer_thickness_mm" not in patch["printing"]
+    assert job.layer_height_mm == pytest.approx(0.1)  # still available for the "slicer: X mm" label
