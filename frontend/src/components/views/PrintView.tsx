@@ -69,7 +69,11 @@ export function PrintView({ status, gates, call, order, sizes, onOrder, onResize
   }, [showManual, gates.reachable]);
   const medit = (patch: Partial<PrintSettings>) => mplan && (setMplan({ ...mplan, ...patch }), setMdirty(true));
   const meditPrinting = (patch: Partial<PrintSettings["printing"]>) => mplan && medit({ printing: { ...mplan.printing, ...patch } });
-  const msave = async () => { if (!mplan) return; await call("save print_settings", () => api.setPrintSettings(mplan as unknown as Record<string, unknown>).then((x) => { setMplan(x.plan as unknown as PrintSettings); setMdirty(false); })); };
+  // Send ONLY the fields this module owns as a partial patch (the backend deep-merges one level).
+  // Sending the full plan would clobber routine fields set elsewhere — e.g. n_jet_passes (multipass)
+  // and pre_heater_drop_mm from Routine Parameters — back to their loaded values.
+  const mpatch = (p: PrintSettings) => ({ printing: { n_layers: p.printing.n_layers, layer_thickness_mm: p.printing.layer_thickness_mm }, postcoat_enabled: p.postcoat_enabled, heater_enabled: p.heater_enabled });
+  const msave = async () => { if (!mplan) return; await call("save print_settings", () => api.setPrintSettings(mpatch(mplan)).then((x) => { setMplan(x.plan as unknown as PrintSettings); setMdirty(false); })); };
   const mReasons = mplan ? validate(mplan) : [];
   const mLayers = mplan ? totalLayers(mplan) : 0;
   const mTotal = mplan ? totalThickness(mplan) : 0;

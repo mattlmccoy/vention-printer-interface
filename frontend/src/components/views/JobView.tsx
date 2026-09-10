@@ -28,14 +28,17 @@ export function JobView({ status, gates, call, order, sizes, onOrder, onResize, 
   useEffect(() => { refresh(); }, [gates.reachable, job?.path]);
   const edit = (patch: Partial<PrintSettings>) => plan && (setPlan({ ...plan, ...patch }), setDirty(true));
   const editPh = (ph: "thin_precoat" | "printing" | "postcoat", patch: Partial<PrintSettings["printing"]>) => plan && edit({ [ph]: { ...plan[ph], ...patch } } as Partial<PrintSettings>);
-  const save = async () => { if (!plan) return; await call("save print_settings", () => api.setPrintSettings(plan as unknown as Record<string, unknown>).then((r) => { setPlan(r.plan as unknown as PrintSettings); setDirty(false); })); };
+  // Job tab does NOT own the routine-only fields (multipass n_jet_passes, pre_heater_drop_mm) — those
+  // live in Routine Parameters. Strip them from every save so navigating Job never clobbers them.
+  const jobPatch = (p: PrintSettings): Record<string, unknown> => { const { n_jet_passes: _a, pre_heater_drop_mm: _b, ...rest } = p as unknown as Record<string, unknown>; return rest; };
+  const save = async () => { if (!plan) return; await call("save print_settings", () => api.setPrintSettings(jobPatch(plan)).then((r) => { setPlan(r.plan as unknown as PrintSettings); setDirty(false); })); };
   // Persist unsaved edits when leaving the Job tab, so a manual print configured here carries
   // through to Priming and the Print tab without having to hit START PRINT from this page.
   const planRef = useRef<PrintSettings | null>(null); const dirtyRef = useRef(false); const runningRef = useRef(false);
   useEffect(() => { planRef.current = plan; dirtyRef.current = dirty; runningRef.current = running; }, [plan, dirty, running]);
   useEffect(() => () => {
     if (dirtyRef.current && planRef.current && !runningRef.current) {
-      api.setPrintSettings(planRef.current as unknown as Record<string, unknown>).catch(() => undefined);
+      api.setPrintSettings(jobPatch(planRef.current)).catch(() => undefined);
     }
   }, []);
   const reasons = plan ? validate(plan) : [];

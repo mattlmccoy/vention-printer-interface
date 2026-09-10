@@ -94,6 +94,16 @@ def test_put_print_settings_rebounds_validates_and_persists(
     assert bad.status_code == 200 and any("thickness" in v for v in bad.json()["validation"])
 
 
+def test_partial_patch_preserves_unmentioned_routine_fields(client: TestClient) -> None:
+    # The UI editors send partial patches; a later partial patch must NOT reset routine fields it
+    # omits (multipass n_jet_passes, pre_heater_drop_mm) — the clobber that silently disabled them.
+    client.put("/api/print-settings", json={"n_jet_passes": 3, "pre_heater_drop_mm": 4.0})
+    body = client.put("/api/print-settings", json={"printing": {"n_layers": 5}}).json()
+    assert body["plan"]["n_jet_passes"] == 3
+    assert body["plan"]["pre_heater_drop_mm"] == 4.0
+    assert body["plan"]["printing"]["n_layers"] == 5
+
+
 def connect_arm_no_prime(c: TestClient) -> None:
     """Connect + arm but do NOT capture the primed bed (for the require-primed guard test)."""
     assert c.post("/api/connect", json={"backend": "simulated"}).status_code == 200
