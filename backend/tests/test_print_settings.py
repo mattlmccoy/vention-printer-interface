@@ -20,7 +20,8 @@ def one_layer() -> PrintSettings:
     p = PrintSettings()
     return dataclasses.replace(
         p,
-        precoat=dataclasses.replace(p.precoat, n_layers=0),
+        thick_precoat=dataclasses.replace(p.thick_precoat, n_layers=0),
+        thin_precoat=dataclasses.replace(p.thin_precoat, n_layers=0),
         printing=dataclasses.replace(p.printing, n_layers=1),
         postcoat=dataclasses.replace(p.postcoat, n_layers=0),
         heater_enabled=True,
@@ -29,7 +30,8 @@ def one_layer() -> PrintSettings:
 
 def test_defaults_match_v1() -> None:
     p = PrintSettings()
-    assert (p.precoat.layer_thickness_mm, p.precoat.n_layers) == (5.0, 1)
+    assert (p.thick_precoat.layer_thickness_mm, p.thick_precoat.n_layers) == (5.0, 3)
+    assert (p.thin_precoat.layer_thickness_mm, p.thin_precoat.n_layers) == (0.2, 2)
     assert (p.printing.layer_thickness_mm, p.printing.n_layers) == (2.0, 10)
     assert (p.postcoat.layer_thickness_mm, p.postcoat.n_layers) == (5.0, 1)
     assert p.printing.part_speed == 2.5 and p.printing.part_accel == 15
@@ -42,7 +44,17 @@ def test_defaults_match_v1() -> None:
     )
     assert p.heater_speed == 50 and p.heater_accel == 250 and p.n_heater_passes == 1
     assert p.heater_enabled is False  # heater is opt-in
-    assert p.total_thickness_mm == 30.0 and p.total_layers == 12
+    assert p.n_jet_passes == 1 and p.pre_heater_drop_mm == 0.0 and p.postcoat_enabled is True
+    # thick 5.0*3 + thin 0.2*2 + printing 2.0*10 + postcoat 5.0*1 = 40.4 mm over 16 layers
+    assert p.total_thickness_mm == pytest.approx(40.4) and p.total_layers == 16
+
+
+def test_new_fields_defaults() -> None:
+    p = PrintSettings()
+    assert p.thick_precoat.n_layers == 3 and p.thick_precoat.layer_thickness_mm == 5.0
+    assert p.thin_precoat.n_layers == 2 and p.thin_precoat.layer_thickness_mm == 0.2
+    assert p.n_jet_passes == 1 and p.pre_heater_drop_mm == 0.0
+    assert p.postcoat_enabled is True
 
 
 def test_validate_defaults_ok_and_printability() -> None:
@@ -131,10 +143,10 @@ def test_compile_one_print_layer_matches_v1_order() -> None:
 def test_compile_precoat_has_no_printhead_or_heater_steps() -> None:
     p = dataclasses.replace(
         one_layer(),
-        precoat=PhasePlan(layer_thickness_mm=5, n_layers=1),
+        thick_precoat=PhasePlan(layer_thickness_mm=5, n_layers=1),
         printing=PhasePlan(layer_thickness_mm=2, n_layers=0),
     )
-    steps = [s for s in compile_print(p) if s.phase == "precoat"]
+    steps = [s for s in compile_print(p) if s.phase == "thick_precoat"]
     assert steps and not any(s.axis == PRINTHEAD and s.kind.startswith("move") for s in steps)
     assert not any(s.kind == "heater" for s in steps)
     first_mark = next(s for s in steps if s.kind == "mark")
@@ -151,13 +163,20 @@ def test_compile_heater_disabled_emits_no_heater_steps_but_still_passes() -> Non
 def test_compile_multiple_heater_passes_and_layer_heights() -> None:
     p = dataclasses.replace(PrintSettings(), n_heater_passes=3)
     steps = compile_print(p)
+    # printing has 10 layers x 3 heater passes = 30 moves to heater_end (precoats never heat)
     assert sum(1 for s in steps if s.kind == "move_abs" and s.value == 600.0) == 30
     # V1.py resets recoater speed at the top of print layers 2..N (the heater changed it)
     resets = [s for s in steps if s.kind == "set_speed" and s.axis == RECOATER and s.value == 100.0]
-    assert len(resets) == 3 + 9  # three phase setups + 9 per-layer resets (print layers 2..10)
+    # four non-empty phase setups (thick/thin precoat, printing, postcoat) + 9 per-layer resets
+    assert len(resets) == 4 + 9
+    # TODO Task 3: layer heights/numbering below reflect the INTERIM uniform-body compiler that
+    # still runs the new thick_precoat/thin_precoat phases through the old per-layer body. The
+    # thick-precoat body is rewritten in Task 3; update these expectations then.
     heights = [s.part_height_mm for s in steps if s.label == "layer_end"]
-    assert heights[0] == 5.0 and heights[1] == 7.0 and heights[-1] == 30.0
-    assert [s.layer for s in steps if s.label == "layer_start"] == list(range(1, 13))
+    assert heights[0] == 5.0  # first thick_precoat layer (5.0 mm)
+    assert heights[-1] == pytest.approx(40.4)  # last postcoat layer, total stack
+    # 16 layers total: thick 3 + thin 2 + printing 10 + postcoat 1
+    assert [s.layer for s in steps if s.label == "layer_start"] == list(range(1, 17))
 
 
 def test_steps_are_frozen() -> None:

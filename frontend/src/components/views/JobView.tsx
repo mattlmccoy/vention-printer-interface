@@ -26,13 +26,13 @@ export function JobView({ status, gates, call, order, sizes, onOrder, onResize, 
   const refresh = () => { api.jobs().then((r) => { setJobs(r.jobs as JobRow[]); setRoots(r.roots); }).catch(() => undefined); api.printSettings().then((r) => { setPlan(r.plan as unknown as PrintSettings); setDirty(false); }).catch(() => undefined); };
   useEffect(() => { refresh(); }, [gates.reachable, job?.path]);
   const edit = (patch: Partial<PrintSettings>) => plan && (setPlan({ ...plan, ...patch }), setDirty(true));
-  const editPh = (ph: "precoat" | "printing" | "postcoat", patch: Partial<PrintSettings["precoat"]>) => plan && edit({ [ph]: { ...plan[ph], ...patch } } as Partial<PrintSettings>);
+  const editPh = (ph: "thick_precoat" | "thin_precoat" | "printing" | "postcoat", patch: Partial<PrintSettings["thick_precoat"]>) => plan && edit({ [ph]: { ...plan[ph], ...patch } } as Partial<PrintSettings>);
   const save = async () => { if (!plan) return; await call("save print_settings", () => api.setPrintSettings(plan as unknown as Record<string, unknown>).then((r) => { setPlan(r.plan as unknown as PrintSettings); setDirty(false); })); };
   const reasons = plan ? validate(plan) : [];
   const total = plan ? totalThickness(plan) : 0;
   const layers = plan ? totalLayers(plan) : 0;
   const pct = (mm: number) => `${Math.min(100, (100 * mm) / BUDGET)}%`;
-  const pre = plan ? plan.precoat.layer_thickness_mm * plan.precoat.n_layers : 0, pr = plan ? plan.printing.layer_thickness_mm * plan.printing.n_layers : 0, post = plan ? plan.postcoat.layer_thickness_mm * plan.postcoat.n_layers : 0;
+  const pre = plan ? plan.thick_precoat.layer_thickness_mm * plan.thick_precoat.n_layers : 0, pr = plan ? plan.printing.layer_thickness_mm * plan.printing.n_layers : 0, post = plan && plan.postcoat_enabled ? plan.postcoat.layer_thickness_mm * plan.postcoat.n_layers : 0;
   const mismatch = job && plan && (plan.printing.n_layers !== job.layer_count || Math.abs(plan.printing.layer_thickness_mm - job.layer_height_mm) > 1e-6);
   const start = async () => {
     if (!plan) return;
@@ -77,14 +77,14 @@ export function JobView({ status, gates, call, order, sizes, onOrder, onResize, 
         <div className="stack compact">
           <div className="scale">{[0, 50, 100, 145].map((mm) => <span key={mm} style={{ bottom: pct(mm) }}>{mm}</span>)}</div>
           <div className="col">
-            <div className={total > plan.feed_end_mm ? "over" : "pre"} style={{ bottom: 0, height: pct(pre) }}>{pre > 0 ? `precoat ${pre}` : ""}</div>
+            <div className={total > plan.feed_end_mm ? "over" : "pre"} style={{ bottom: 0, height: pct(pre) }}>{pre > 0 ? `precoat ${pre}` : ""}</div>{/* TODO Task 3: thin_precoat not yet shown in stack */}
             <div className={total > plan.feed_end_mm ? "over" : "lay"} style={{ bottom: pct(pre), height: pct(pr) }}>{plan.printing.n_layers} × {plan.printing.layer_thickness_mm}</div>
             <div className={total > plan.feed_end_mm ? "over" : "post"} style={{ bottom: pct(pre + pr), height: pct(post) }}>{post > 0 ? `postcoat ${post}` : ""}</div>
           </div>
           <div className="legend" style={{ lineHeight: 1.7, fontSize: 14 }}><b>{total.toFixed(1)} mm</b> of {plan.feed_end_mm}<br /><b>{layers}</b> layers<br />heater <b>{plan.heater_enabled ? `${plan.n_heater_passes}×` : "off"}</b></div>
         </div>
         <div className="fields" style={{ marginTop: 16, maxWidth: "none" }}>
-          <span>precoat</span><span className="row"><input type="number" step="0.5" value={pre} disabled={running} onChange={(e) => editPh("precoat", { layer_thickness_mm: num(e.target.value, pre), n_layers: 1 })} /> mm</span>
+          <span>precoat</span><span className="row"><input type="number" step="0.5" value={pre} disabled={running} onChange={(e) => editPh("thick_precoat", { layer_thickness_mm: num(e.target.value, pre), n_layers: 1 })} /> mm</span>
           <span>postcoat</span><span className="row"><input type="number" step="0.5" value={post} disabled={running} onChange={(e) => editPh("postcoat", { layer_thickness_mm: num(e.target.value, post), n_layers: 1 })} /> mm</span>
           {!job && <><span>print layers</span><input type="number" value={plan.printing.n_layers} disabled={running} onChange={(e) => editPh("printing", { n_layers: num(e.target.value, plan.printing.n_layers) })} />
             <span>layer thickness</span><span className="row"><input type="number" step="0.1" value={plan.printing.layer_thickness_mm} disabled={running} onChange={(e) => editPh("printing", { layer_thickness_mm: num(e.target.value, plan.printing.layer_thickness_mm) })} /> mm</span></>}
@@ -111,8 +111,8 @@ export function JobView({ status, gates, call, order, sizes, onOrder, onResize, 
     ) : null },
     { id: "advanced", title: "print_settings · speeds and positions", size: "m", node: plan ? (
       <div className="fields adv" style={{ marginTop: 0 }}>
-        <span>piston speed</span><span className="row"><input type="number" step="0.1" value={plan.printing.part_speed} disabled={running} onChange={(e) => { const s = num(e.target.value, plan.printing.part_speed); const u = (p: PrintSettings["precoat"]) => ({ ...p, part_speed: s, feed_speed: s }); edit({ precoat: u(plan.precoat), printing: u(plan.printing), postcoat: u(plan.postcoat) }); }} /> mm/s</span>
-        <span>recoater speed</span><span className="row"><input type="number" value={plan.printing.recoater_speed} disabled={running} onChange={(e) => { const s = num(e.target.value, plan.printing.recoater_speed); edit({ precoat: { ...plan.precoat, recoater_speed: s }, printing: { ...plan.printing, recoater_speed: s }, postcoat: { ...plan.postcoat, recoater_speed: s } }); }} /> mm/s</span>
+        <span>piston speed</span><span className="row"><input type="number" step="0.1" value={plan.printing.part_speed} disabled={running} onChange={(e) => { const s = num(e.target.value, plan.printing.part_speed); const u = (p: PrintSettings["thick_precoat"]) => ({ ...p, part_speed: s, feed_speed: s }); edit({ thick_precoat: u(plan.thick_precoat), thin_precoat: u(plan.thin_precoat), printing: u(plan.printing), postcoat: u(plan.postcoat) }); }} /> mm/s</span>
+        <span>recoater speed</span><span className="row"><input type="number" value={plan.printing.recoater_speed} disabled={running} onChange={(e) => { const s = num(e.target.value, plan.printing.recoater_speed); edit({ thick_precoat: { ...plan.thick_precoat, recoater_speed: s }, thin_precoat: { ...plan.thin_precoat, recoater_speed: s }, printing: { ...plan.printing, recoater_speed: s }, postcoat: { ...plan.postcoat, recoater_speed: s } }); }} /> mm/s</span>
         <span>printhead speed</span><span className="row"><input type="number" value={plan.printing.printhead_speed} disabled={running} onChange={(e) => editPh("printing", { printhead_speed: num(e.target.value, plan.printing.printhead_speed) })} /> mm/s</span>
         <span>heater speed</span><span className="row"><input type="number" value={plan.heater_speed} disabled={running} onChange={(e) => edit({ heater_speed: num(e.target.value, plan.heater_speed) })} /> mm/s</span>
         <span>recoater end</span><span className="row"><input type="number" value={plan.recoater_end_mm} disabled={running} onChange={(e) => edit({ recoater_end_mm: num(e.target.value, plan.recoater_end_mm) })} /> mm</span>

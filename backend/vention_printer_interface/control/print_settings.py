@@ -19,7 +19,7 @@ FEED = 2
 PRINTHEAD = 3
 RECOATER = 4  # the recoater gantry also carries the IR heater (V1.py HEATER_* use recoater_axis)
 
-PHASES = ("precoat", "printing", "postcoat")
+PHASES = ("thick_precoat", "thin_precoat", "printing", "postcoat")
 MAX_LAYERS = 500
 MAX_HEATER_PASSES = 10
 
@@ -83,8 +83,11 @@ class PhasePlan:
 class PrintSettings:
     """The whole print (V1.py lines 12-66). Heater is opt-in; V1.py never switched it."""
 
-    precoat: PhasePlan = field(
-        default_factory=lambda: PhasePlan(layer_thickness_mm=5.0, n_layers=1)
+    thick_precoat: PhasePlan = field(
+        default_factory=lambda: PhasePlan(layer_thickness_mm=5.0, n_layers=3)
+    )
+    thin_precoat: PhasePlan = field(
+        default_factory=lambda: PhasePlan(layer_thickness_mm=0.2, n_layers=2)
     )
     printing: PhasePlan = field(
         default_factory=lambda: PhasePlan(layer_thickness_mm=2.0, n_layers=10)
@@ -92,6 +95,9 @@ class PrintSettings:
     postcoat: PhasePlan = field(
         default_factory=lambda: PhasePlan(layer_thickness_mm=5.0, n_layers=1)
     )
+    n_jet_passes: int = 1
+    pre_heater_drop_mm: float = 0.0
+    postcoat_enabled: bool = True
     feed_end_mm: float = 145.0  # V1.py:48 (pendant says ~151)
     recoater_home_mm: float = 5.0
     recoater_end_mm: float = 930.0
@@ -109,14 +115,31 @@ class PrintSettings:
 
     @property
     def total_thickness_mm(self) -> float:
-        return self.precoat.thickness_mm + self.printing.thickness_mm + self.postcoat.thickness_mm
+        postcoat = self.postcoat.thickness_mm if self.postcoat_enabled else 0.0
+        return (
+            self.thick_precoat.thickness_mm
+            + self.thin_precoat.thickness_mm
+            + self.printing.thickness_mm
+            + postcoat
+        )
 
     @property
     def total_layers(self) -> int:
-        return self.precoat.n_layers + self.printing.n_layers + self.postcoat.n_layers
+        postcoat = self.postcoat.n_layers if self.postcoat_enabled else 0
+        return (
+            self.thick_precoat.n_layers
+            + self.thin_precoat.n_layers
+            + self.printing.n_layers
+            + postcoat
+        )
 
     def phase(self, name: str) -> PhasePlan:
-        return {"precoat": self.precoat, "printing": self.printing, "postcoat": self.postcoat}[name]
+        return {
+            "thick_precoat": self.thick_precoat,
+            "thin_precoat": self.thin_precoat,
+            "printing": self.printing,
+            "postcoat": self.postcoat,
+        }[name]
 
     def validate(self, limits: SafetyLimits | None = None) -> list[str]:
         """Printability + travel checks (V1.py:74-78). Empty list = valid."""
@@ -155,10 +178,17 @@ class PrintSettings:
     def from_dict(cls, data: dict[str, Any]) -> PrintSettings:
         d = dict(data)
         base = cls()
-        precoat = PhasePlan(**d.pop("precoat")) if "precoat" in d else base.precoat
+        thick = PhasePlan(**d.pop("thick_precoat")) if "thick_precoat" in d else base.thick_precoat
+        thin = PhasePlan(**d.pop("thin_precoat")) if "thin_precoat" in d else base.thin_precoat
         printing = PhasePlan(**d.pop("printing")) if "printing" in d else base.printing
         postcoat = PhasePlan(**d.pop("postcoat")) if "postcoat" in d else base.postcoat
-        return cls(precoat=precoat, printing=printing, postcoat=postcoat, **d)
+        return cls(
+            thick_precoat=thick,
+            thin_precoat=thin,
+            printing=printing,
+            postcoat=postcoat,
+            **d,
+        )
 
     @classmethod
     def bounded(cls, data: dict[str, Any] | None, limits: SafetyLimits) -> PrintSettings:
@@ -172,10 +202,20 @@ class PrintSettings:
 
         passes = d.get("n_heater_passes", base.n_heater_passes)
         passes = int(passes) if isinstance(passes, int | float) else base.n_heater_passes
+        jet_passes = d.get("n_jet_passes", base.n_jet_passes)
+        jet_passes = int(jet_passes) if isinstance(jet_passes, int | float) else base.n_jet_passes
         return cls(
-            precoat=PhasePlan.bounded(d.get("precoat"), limits, base.precoat),
+            thick_precoat=PhasePlan.bounded(
+                d.get("thick_precoat"), limits, base.thick_precoat
+            ),
+            thin_precoat=PhasePlan.bounded(d.get("thin_precoat"), limits, base.thin_precoat),
             printing=PhasePlan.bounded(d.get("printing"), limits, base.printing),
             postcoat=PhasePlan.bounded(d.get("postcoat"), limits, base.postcoat),
+            n_jet_passes=int(_clamp(jet_passes, 1, 10)),
+            pre_heater_drop_mm=_clamp(
+                num("pre_heater_drop_mm", base.pre_heater_drop_mm), 0.0, 50.0
+            ),
+            postcoat_enabled=bool(d.get("postcoat_enabled", base.postcoat_enabled)),
             feed_end_mm=limits.clamp_position(FEED, num("feed_end_mm", base.feed_end_mm)),
             recoater_home_mm=limits.clamp_position(
                 RECOATER, num("recoater_home_mm", base.recoater_home_mm)

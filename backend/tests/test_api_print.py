@@ -9,7 +9,8 @@ from fastapi.testclient import TestClient
 from vention_printer_interface.api.app import create_app
 
 FAST: dict[str, Any] = {
-    "precoat": {"n_layers": 0},
+    "thick_precoat": {"n_layers": 0},
+    "thin_precoat": {"n_layers": 0},
     "printing": {
         "layer_thickness_mm": 1.0,
         "n_layers": 1,
@@ -71,7 +72,7 @@ def wait_print(c: TestClient, state: str, timeout: float = 30.0) -> dict[str, An
 def test_get_print_settings_has_plan_bounds_validation_and_steps(client: TestClient) -> None:
     r = client.get("/api/print-settings").json()
     assert r["plan"]["printing"]["n_layers"] == 10
-    assert r["validation"] == [] and r["n_steps"] > 0 and r["total_layers"] == 12
+    assert r["validation"] == [] and r["n_steps"] > 0 and r["total_layers"] == 16
     assert "bounds" in r and "max_speed" in r["bounds"]
 
 

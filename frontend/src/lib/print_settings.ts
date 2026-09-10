@@ -3,7 +3,7 @@
  *  show the printability verdict before asking the operator. The backend is the authority. */
 
 export const PART = 1, FEED = 2, PRINTHEAD = 3, RECOATER = 4;
-export const PHASES = ["precoat", "printing", "postcoat"] as const;
+export const PHASES = ["thick_precoat", "thin_precoat", "printing", "postcoat"] as const;
 export type Phase = (typeof PHASES)[number];
 
 export interface PhasePlan {
@@ -20,9 +20,13 @@ export interface PhasePlan {
 }
 
 export interface PrintSettings {
-  precoat: PhasePlan;
+  thick_precoat: PhasePlan;
+  thin_precoat: PhasePlan;
   printing: PhasePlan;
   postcoat: PhasePlan;
+  n_jet_passes: number;
+  pre_heater_drop_mm: number;
+  postcoat_enabled: boolean;
   feed_end_mm: number;
   recoater_home_mm: number;
   recoater_end_mm: number;
@@ -45,9 +49,11 @@ const basePhase: PhasePlan = {
 };
 
 export const DEFAULT_PLAN: PrintSettings = {
-  precoat: { ...basePhase, layer_thickness_mm: 5, n_layers: 1 },
+  thick_precoat: { ...basePhase, layer_thickness_mm: 5, n_layers: 3 },
+  thin_precoat: { ...basePhase, layer_thickness_mm: 0.2, n_layers: 2 },
   printing: { ...basePhase, layer_thickness_mm: 2, n_layers: 10 },
   postcoat: { ...basePhase, layer_thickness_mm: 5, n_layers: 1 },
+  n_jet_passes: 1, pre_heater_drop_mm: 0, postcoat_enabled: true,
   feed_end_mm: 145, recoater_home_mm: 5, recoater_end_mm: 930, heater_home_mm: 5, heater_end_mm: 600,
   printhead_home_mm: 5, printhead_end_mm: 840, heater_speed: 50, heater_accel: 250, n_heater_passes: 1,
   heater_enabled: false, settle_s: 1, feed_fast_speed: 5, feed_fast_accel: 30,
@@ -65,11 +71,12 @@ export interface Step {
   part_height_mm: number;
 }
 
+const counts = (p: PrintSettings, ph: Phase): boolean => ph !== "postcoat" || p.postcoat_enabled;
 export function totalThickness(p: PrintSettings): number {
-  return PHASES.reduce((s, ph) => s + p[ph].layer_thickness_mm * p[ph].n_layers, 0);
+  return PHASES.reduce((s, ph) => (counts(p, ph) ? s + p[ph].layer_thickness_mm * p[ph].n_layers : s), 0);
 }
 export function totalLayers(p: PrintSettings): number {
-  return PHASES.reduce((s, ph) => s + p[ph].n_layers, 0);
+  return PHASES.reduce((s, ph) => (counts(p, ph) ? s + p[ph].n_layers : s), 0);
 }
 
 /** Same reasons as PrintSettings.validate() (travel window defaults to the axis extents). */

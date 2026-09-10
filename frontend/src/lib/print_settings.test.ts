@@ -3,8 +3,9 @@ import assert from "node:assert/strict";
 import { DEFAULT_PLAN, compilePrint, describeStep, totalLayers, totalThickness, validate } from "./print_settings.ts";
 
 test("defaults match V1.py and the backend", () => {
-  assert.equal(totalThickness(DEFAULT_PLAN), 30);
-  assert.equal(totalLayers(DEFAULT_PLAN), 12);
+  // thick 5*3 + thin 0.2*2 + printing 2*10 + postcoat 5*1 = 40.4 mm over 16 layers
+  assert.ok(Math.abs(totalThickness(DEFAULT_PLAN) - 40.4) < 1e-9);
+  assert.equal(totalLayers(DEFAULT_PLAN), 16);
   assert.deepEqual(validate(DEFAULT_PLAN), []);
 });
 
@@ -15,7 +16,8 @@ test("printability and travel reasons", () => {
 });
 
 test("compile matches the backend order for one print layer (37 steps, heater on)", () => {
-  const one = { ...DEFAULT_PLAN, precoat: { ...DEFAULT_PLAN.precoat, n_layers: 0 },
+  const one = { ...DEFAULT_PLAN, thick_precoat: { ...DEFAULT_PLAN.thick_precoat, n_layers: 0 },
+    thin_precoat: { ...DEFAULT_PLAN.thin_precoat, n_layers: 0 },
     printing: { ...DEFAULT_PLAN.printing, n_layers: 1 }, postcoat: { ...DEFAULT_PLAN.postcoat, n_layers: 0 }, heater_enabled: true };
   const steps = compilePrint(one);
   assert.equal(steps.length, 37);
@@ -25,13 +27,20 @@ test("compile matches the backend order for one print layer (37 steps, heater on
   assert.deepEqual(steps.map((s) => s.index), [...Array(37).keys()]);
 });
 
-test("compile of the full default plan: 12 layers, heights, resets", () => {
+test("compile of the full default plan: 16 layers, heights, resets", () => {
   const steps = compilePrint({ ...DEFAULT_PLAN, n_heater_passes: 3 });
+  // printing 10 layers x 3 heater passes = 30 moves to heater_end (precoats never heat)
   assert.equal(steps.filter((s) => s.kind === "move_abs" && s.value === 600).length, 30);
-  const ends = steps.filter((s) => s.label === "layer_end").map((s) => s.part_height_mm);
-  assert.deepEqual([ends[0], ends[1], ends.at(-1)], [5, 7, 30]);
-  assert.equal(steps.filter((s) => s.kind === "set_speed" && s.axis === 4 && s.value === 100).length, 12);
+  // four non-empty phase setups + 9 per-layer printing resets
+  assert.equal(steps.filter((s) => s.kind === "set_speed" && s.axis === 4 && s.value === 100).length, 13);
   assert.equal(steps.filter((s) => s.kind === "heater").length, 0);
+  // TODO Task 3: layer_end heights below reflect the INTERIM uniform-body compiler that still runs the
+  // new thick_precoat/thin_precoat phases through the old per-layer body; the thick-precoat body is
+  // rewritten in Task 3. Update these expectations then.
+  const ends = steps.filter((s) => s.label === "layer_end").map((s) => s.part_height_mm);
+  assert.equal(ends[0], 5); // first thick_precoat layer
+  assert.ok(Math.abs((ends.at(-1) ?? 0) - 40.4) < 1e-9); // last postcoat layer, total stack
+  assert.equal(steps.filter((s) => s.label === "layer_start").length, 16);
 });
 
 test("describeStep", () => {
