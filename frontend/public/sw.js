@@ -7,8 +7,15 @@
 
    It deliberately does NOT cache the app shell or /api,/ws: a cached SPA shell goes stale after a
    deploy (offline you'd then load a broken shell instead of a clear page), and API/WebSocket traffic
-   must always be live. offline.html links to the local operator, which serves a fresh, working app. */
-const CACHE = "vpi-offline-v1";
+   must always be live. offline.html links to the local operator, which serves a fresh, working app.
+
+   SHARED-ORIGIN SAFETY: this app, the FLIR tool, and the T&C tool are all served from
+   mattlmccoy.github.io under different paths, and CacheStorage is shared per-ORIGIN (not per-scope).
+   So the activate cleanup must delete only OUR OWN caches (the CACHE_PREFIX), never every non-matching
+   cache — a bare `k !== CACHE` filter deletes the sibling tools' offline caches (and theirs deletes
+   ours), so whichever tool was opened last leaves the others with no offline page. */
+const CACHE_PREFIX = "vpi-offline-";
+const CACHE = CACHE_PREFIX + "v2";
 const OFFLINE_URL = new URL("offline.html", self.registration.scope).href;
 
 self.addEventListener("install", (event) => {
@@ -18,10 +25,12 @@ self.addEventListener("install", (event) => {
 });
 
 self.addEventListener("activate", (event) => {
-  // Drop caches from older worker versions, then take control.
+  // Drop only OUR OWN older caches (CACHE_PREFIX), never a sibling app's on this shared origin.
   event.waitUntil(
     caches.keys()
-      .then((keys) => Promise.all(keys.filter((k) => k !== CACHE).map((k) => caches.delete(k))))
+      .then((keys) => Promise.all(
+        keys.filter((k) => k.startsWith(CACHE_PREFIX) && k !== CACHE).map((k) => caches.delete(k)),
+      ))
       .then(() => self.clients.claim()),
   );
 });
