@@ -136,6 +136,11 @@ button.small { height: 34px; padding: 0 12px; border: 1px solid var(--line-contr
 }
 @keyframes vpi-arrow-blink { 50% { opacity: 0; } }
 .el-empty { fill: var(--muted); font-size: 15px; }
+.el-ctl { cursor: pointer; }
+.el-ctl rect { fill: var(--panel); stroke: var(--line-control); }
+.el-ctl:hover rect, .el-ctl:focus-visible rect { stroke: var(--accent); }
+.el-ctl text { fill: var(--fg); font-family: var(--font-mono); }
+.el-ctl[aria-disabled="true"] { opacity: .35; pointer-events: none; }
 .readout { display: grid; grid-template-columns: repeat(4, 1fr); gap: 14px; margin-top: 18px; }
 .readout div { font: 12px var(--font-mono); color: var(--muted); }
 .readout b { display: block; font: 600 20px var(--font-mono); color: var(--fg-strong); margin-top: 2px; }

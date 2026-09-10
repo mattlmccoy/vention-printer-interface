@@ -8,8 +8,47 @@ import type { StatusPayload } from "../lib/telemetry.ts";
  *  four captions, no numbers — the readout row under it carries the values.
  *  `mode` styles the axis markers: "live" keeps each axis colour (solid), "model" draws them
  *  as a violet preview ghost. Per-axis motion drives the moving pulse either way. */
-export function Elevation({ status, partZeroMm, mode = "live" }: { status: StatusPayload | null; partZeroMm: number | null; mode?: DiagramMode }) {
+export function Elevation({
+  status,
+  partZeroMm,
+  mode = "live",
+  onNudge,
+  nudgeStepMm = 1,
+  recoaterStepMm = 20,
+  controlsEnabled = true,
+}: {
+  status: StatusPayload | null;
+  partZeroMm: number | null;
+  mode?: DiagramMode;
+  /** undefined => render NO controls (read-only diagram for Print/Job/Runs). */
+  onNudge?: (axis: number, deltaMm: number) => void;
+  nudgeStepMm?: number;
+  recoaterStepMm?: number;
+  /** false => controls render greyed and non-interactive. */
+  controlsEnabled?: boolean;
+}) {
   const e = layoutElevation();
+  // One in-SVG accessible nudge button: rounded hit-rect + centered glyph. Scales with the viewBox.
+  const ctl = (key: string, cx: number, cy: number, glyph: string, label: string, axis: number, delta: number) => {
+    const en = controlsEnabled;
+    const fire = () => onNudge?.(axis, delta);
+    const s = 18;
+    return (
+      <g
+        key={key}
+        className="el-ctl"
+        role="button"
+        tabIndex={en ? 0 : -1}
+        aria-label={label}
+        aria-disabled={en ? undefined : true}
+        onClick={en ? fire : undefined}
+        onKeyDown={en ? (ev) => { if (ev.key === "Enter" || ev.key === " ") { ev.preventDefault(); fire(); } } : undefined}
+      >
+        <rect x={cx - s / 2} y={cy - s / 2} width={s} height={s} rx={4} />
+        <text x={cx} y={cy} textAnchor="middle" dominantBaseline="central">{glyph}</text>
+      </g>
+    );
+  };
   const prevPos = useRef<Record<number, number | null>>({ 1: null, 2: null });
   const t = status?.controller.telemetry ?? null;
   const p = (a: number) => t?.positions[String(a)] ?? null;
@@ -48,6 +87,10 @@ export function Elevation({ status, partZeroMm, mode = "live" }: { status: Statu
               <polygon className="el-arrow down" aria-hidden="true" points={`${ax},${y + 12} ${ax - 4},${y + 6} ${ax + 4},${y + 6}`} />
             )}
             <text className="el-lbl" x={r.x + r.w / 2} y={r.y + r.h + 18} textAnchor="middle">{lbl} piston</text>
+            {/* fixed nudge pair, clear of the moving Task-3 arrow: ▲ above the well's top edge (r.y),
+                ▼ below the caption. Up = flush/negative mm, down = open cavity/positive mm. */}
+            {onNudge && ctl(`${lbl}-up`, ax, r.y - 22, "▲", `${lbl} piston up ${nudgeStepMm} mm`, axis, -nudgeStepMm)}
+            {onNudge && ctl(`${lbl}-down`, ax, r.y + r.h + 38, "▼", `${lbl} piston down ${nudgeStepMm} mm`, axis, nudgeStepMm)}
           </g>
         );
       })}
@@ -57,6 +100,20 @@ export function Elevation({ status, partZeroMm, mode = "live" }: { status: Statu
         <rect className="el-blade" x={e.gantryX(4, rc) - 23} y={e.railRc.y + 20} width={46} height={4} />
         <rect className={hcls} x={e.gantryX(4, rc) + 25} y={e.railRc.y - 6} width={30} height={16} rx={3} />
       </g>}
+      {/* recoater nudge pair, centered on the rail. ◀ left of the carriage → toward home,
+          ▶ right of it (past the heater box) → away. If rc is null, flank the rail midpoint.
+          Centers are clamped into the frame so a homed carriage's control never clips off-screen. */}
+      {onNudge && (() => {
+        const carX = rc !== null ? e.gantryX(4, rc) : e.railRc.x + e.railRc.w / 2;
+        const railCy = e.railRc.y + e.railRc.h / 2;
+        const clampX = (x: number) => Math.min(Math.max(x, e.frame.x + 12), e.frame.x + e.frame.w - 12);
+        return (
+          <g>
+            {ctl("rec-left", clampX(carX - 40), railCy, "◀", `recoater toward home ${recoaterStepMm} mm`, 4, -recoaterStepMm)}
+            {ctl("rec-right", clampX(carX + (rc !== null ? 68 : 40)), railCy, "▶", `recoater away ${recoaterStepMm} mm`, 4, recoaterStepMm)}
+          </g>
+        );
+      })()}
       {/* legend: solid = live axis, violet ghost = model/preview — makes the marker styling self-explanatory */}
       <g className="el-legend" transform={`translate(${e.frame.x + 4}, ${e.frame.y + e.frame.h + 16})`} aria-hidden="true">
         <circle className="mk-live" cx={5} cy={-4} r={5} />
