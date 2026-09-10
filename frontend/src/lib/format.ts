@@ -76,7 +76,7 @@ export function heightMismatch(measured: number | null, expected: number, layerM
 
 /** Layer-cycle step (1-6) for the current print_settings step, from its kind/axis/value sequence. */
 export function cycleIndex(step: { kind: string; axis: number | null; value: number | null; phase: string } | null, plan: { recoater_end_mm: number; heater_end_mm: number; printhead_end_mm: number } | null): number {
-  if (!step || !plan || step.phase === "setup") return 0;
+  if (!step || !plan || step.phase === "setup" || step.phase === "finish" || step.kind === "home") return 0;
   if (step.kind === "heater" || (step.axis === 4 && step.kind === "move_abs" && step.value === plan.heater_end_mm)) return 6;
   if (step.axis === 3) return 5;
   if (step.axis === 4 && step.kind === "move_abs") return step.value === plan.recoater_end_mm ? 2 : 4;

@@ -16,7 +16,7 @@ export function phrase(step: ReturnType<typeof compilePrint>[number] | null, pla
   if (!step || !plan) return "";
   const v = step.value ?? 0;
   switch (step.kind) {
-    case "home_all": return "homing every axis";
+    case "home": return step.axis ? `homing ${({ 1: "build", 2: "feed", 3: "printhead", 4: "recoater" } as Record<number, string>)[step.axis]}` : "homing";
     case "move_rel": return step.axis === 1 ? `build piston down ${v} mm` : `feed piston up ${Math.abs(v)} mm`;
     case "move_abs":
       if (step.axis === 4) return v === plan.recoater_end_mm ? "spreading powder" : v === plan.heater_end_mm ? "heater pass" : "recoater returning";

@@ -15,16 +15,17 @@ test("printability and travel reasons", () => {
   assert.match(validate({ ...DEFAULT_PLAN, recoater_end_mm: 5000 })[0], /recoater_end_mm/);
 });
 
-test("compile matches the backend order for one print layer (37 steps, heater on)", () => {
+test("compile matches the backend order for one print layer (52 steps, heater on)", () => {
   const one = { ...DEFAULT_PLAN, thick_precoat: { ...DEFAULT_PLAN.thick_precoat, n_layers: 0 },
     thin_precoat: { ...DEFAULT_PLAN.thin_precoat, n_layers: 0 },
     printing: { ...DEFAULT_PLAN.printing, n_layers: 1 }, postcoat: { ...DEFAULT_PLAN.postcoat, n_layers: 0 }, heater_enabled: true };
   const steps = compilePrint(one);
-  assert.equal(steps.length, 37);
-  assert.equal(steps[14].label, "layer_start");
-  assert.equal(steps[36].label, "layer_end");
-  assert.equal(steps[36].part_height_mm, 2);
-  assert.deepEqual(steps.map((s) => s.index), [...Array(37).keys()]);
+  // 12 setup (gantry homes + profiles) + 8 phase setup + 26 layer body + 6 finish = 52
+  assert.equal(steps.length, 52);
+  assert.equal(steps[20].label, "layer_start");
+  assert.equal(steps[45].label, "layer_end");
+  assert.equal(steps[45].part_height_mm, 2);
+  assert.deepEqual(steps.map((s) => s.index), [...Array(52).keys()]);
 });
 
 test("printing layer: multi-pass jetting + pre-heater drop and return-up", () => {
@@ -45,22 +46,29 @@ test("printing layer: multi-pass jetting + pre-heater drop and return-up", () =>
 });
 
 test("compile of the full default plan: 16 layers, heights, resets", () => {
-  const steps = compilePrint({ ...DEFAULT_PLAN, n_heater_passes: 3 });
-  // printing 10 layers x 3 heater passes = 30 moves to heater_end (precoats never heat)
-  assert.equal(steps.filter((s) => s.kind === "move_abs" && s.value === 600).length, 30);
-  // four non-empty phase setups + 9 per-layer printing resets
-  assert.equal(steps.filter((s) => s.kind === "set_speed" && s.axis === 4 && s.value === 100).length, 13);
+  const steps = compilePrint(DEFAULT_PLAN);
+  // heater disabled by default -> no 425->600 sweep and no heater toggles anywhere
+  assert.equal(steps.filter((s) => s.kind === "move_abs" && s.value === 600).length, 0);
   assert.equal(steps.filter((s) => s.kind === "heater").length, 0);
-  // thick_precoat holds the build/part piston fixed, so its 3 layers add no part height; the part
-  // height only grows through thin (0.2*2) + printing (2.0*10) + postcoat (5.0*1) = 25.4 mm.
+  // recoater set to 100 mm/s: setup profile + four non-empty phase setups = 5 (no per-layer resets)
+  assert.equal(steps.filter((s) => s.kind === "set_speed" && s.axis === 4 && s.value === 100).length, 5);
+  // thick_precoat holds the part piston fixed (3 x 0.0); part height grows through thin (0.2*2) +
+  // printing (2.0*10) = 20.4 mm; postcoat is a cover pass (no part drop) so the stack stays 20.4.
   const ends = steps.filter((s) => s.label === "layer_end").map((s) => s.part_height_mm);
   assert.deepEqual(ends.slice(0, 3), [0, 0, 0]); // 3 thick_precoat layers: part piston fixed
   assert.ok(Math.abs(ends[3] - 0.2) < 1e-9); // first thin_precoat layer (part down 0.2 mm)
   assert.ok(Math.abs(ends[5] - 2.4) < 1e-9); // first printing layer (+2.0 mm)
-  assert.ok(Math.abs((ends.at(-1) ?? 0) - 25.4) < 1e-9); // last postcoat layer, part stack
+  assert.ok(Math.abs((ends.at(-1) ?? 0) - 20.4) < 1e-9); // last (postcoat) layer keeps the stack
   // thick_precoat never moves the part piston
   assert.equal(steps.filter((s) => s.phase === "thick_precoat" && s.kind === "move_rel" && s.axis === 1).length, 0);
   assert.equal(steps.filter((s) => s.label === "layer_start").length, 16);
+});
+
+test("heater-on full plan sweeps 425->600 once per printing layer", () => {
+  const steps = compilePrint({ ...DEFAULT_PLAN, heater_enabled: true });
+  // one 425->600 sweep per printing layer (10); heater toggles on+off each = 20 (precoats never heat)
+  assert.equal(steps.filter((s) => s.kind === "move_abs" && s.value === 600).length, 10);
+  assert.equal(steps.filter((s) => s.kind === "heater").length, 20);
 });
 
 test("postcoat toggle off emits no postcoat steps", () => {
@@ -70,7 +78,7 @@ test("postcoat toggle off emits no postcoat steps", () => {
 
 test("describeStep", () => {
   const s = compilePrint(DEFAULT_PLAN);
-  assert.equal(describeStep(s[0]), "home all");
-  assert.equal(describeStep(s[4]), "feed → 145 mm");
+  assert.equal(describeStep(s[0]), "home printhead"); // primed start homes the gantries only
+  assert.equal(describeStep(s[4]), "part speed 2.5 mm/s");
   assert.equal(describeStep(null), "—");
 });

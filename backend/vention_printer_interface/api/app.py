@@ -530,6 +530,11 @@ def create_app(
 
     @app.post("/api/print/start")
     def print_start(body: PrintStartBody) -> dict[str, Any]:
+        if getattr(app.state, "primed", None) is None:
+            raise HTTPException(
+                409,
+                "prime the bed first — no primed bed state; run priming and capture positions",
+            )
         plan: PrintSettings = app.state.print_settings
         # Open the auto-log run BEFORE starting so the print's own start event lands in it.
         opened = False

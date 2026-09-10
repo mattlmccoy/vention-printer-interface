@@ -57,6 +57,8 @@ def connect_arm(c: TestClient) -> None:
             break
         time.sleep(0.02)
     assert c.post("/api/arm").status_code == 200
+    # A print now requires a captured primed bed; capture it once the controller is live.
+    assert c.post("/api/primed/capture").status_code == 200
 
 
 def wait_print(c: TestClient, state: str, timeout: float = 30.0) -> dict[str, Any]:
@@ -91,6 +93,28 @@ def test_put_print_settings_rebounds_validates_and_persists(
         "/api/print-settings", json={"printing": {"n_layers": 200, "layer_thickness_mm": 2}}
     )
     assert bad.status_code == 200 and any("thickness" in v for v in bad.json()["validation"])
+
+
+def connect_arm_no_prime(c: TestClient) -> None:
+    """Connect + arm but do NOT capture the primed bed (for the require-primed guard test)."""
+    assert c.post("/api/connect", json={"backend": "simulated"}).status_code == 200
+    for _ in range(100):
+        if c.get("/api/status").json()["controller"]["telemetry"]:
+            break
+        time.sleep(0.02)
+    assert c.post("/api/arm").status_code == 200
+
+
+def test_start_requires_primed_bed(client: TestClient) -> None:
+    client.put("/api/print-settings", json=FAST)
+    connect_arm_no_prime(client)
+    # armed + valid settings, but no primed bed captured yet -> refused with a prime-the-bed detail
+    r = client.post("/api/print/start", json={"dry_run": True})
+    assert r.status_code == 409 and "prime" in r.json()["detail"].lower()
+    # capture the primed bed, then the start proceeds (no longer a 409)
+    assert client.post("/api/primed/capture").status_code == 200
+    ok = client.post("/api/print/start", json={"dry_run": True})
+    assert ok.status_code != 409
 
 
 def test_start_refused_when_not_armed_or_invalid(client: TestClient) -> None:

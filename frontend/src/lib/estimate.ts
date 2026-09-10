@@ -9,7 +9,8 @@ export function estimateDurationS(plan: PrintSettings, minWaitS = 0.5): number {
   const pos: Record<number, number> = { 1: 0, 2: 0, 3: 0, 4: 0 };
   let total = 0, pending = 0;
   for (const s of compilePrint(plan)) {
-    if (s.kind === "home_all") pending = Math.max(...Object.keys(speed).map((a) => TRAVEL[+a] / HOMING[+a])) * 0.5;
+    // primed start homes only gantries; charge ~half that axis's travel at its homing speed
+    if (s.kind === "home" && s.axis) pending = Math.max(pending, (TRAVEL[s.axis] / HOMING[s.axis]) * 0.5);
     else if (s.kind === "set_speed" && s.axis) speed[s.axis] = Math.max(s.value ?? 0.1, 0.1);
     else if ((s.kind === "move_abs" || s.kind === "move_rel") && s.axis) {
       const target = s.kind === "move_abs" ? (s.value ?? 0) : pos[s.axis] + (s.value ?? 0);
@@ -21,9 +22,10 @@ export function estimateDurationS(plan: PrintSettings, minWaitS = 0.5): number {
   return Math.round((total + pending) * 10) / 10;
 }
 
-/** Heater on-time over the whole print: passes × (2 × heater travel / heater speed). */
+/** Heater on-time over the whole print: one 425->600 sweep per printing layer (heater on at
+ *  heater_start, off at heater_end), at the heater sweep speed — mirrors the faithful compiler. */
 export function heaterOnTimeS(plan: PrintSettings): number {
   if (!plan.heater_enabled) return 0;
-  const per = (2 * (plan.heater_end_mm - plan.heater_home_mm)) / Math.max(plan.heater_speed, 0.1);
-  return Math.round(plan.printing.n_layers * plan.n_heater_passes * per);
+  const per = (plan.heater_end_mm - plan.heater_start_mm) / Math.max(plan.heater_speed, 0.1);
+  return Math.round(plan.printing.n_layers * per);
 }
