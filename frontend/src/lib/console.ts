@@ -1,6 +1,7 @@
 /** Console UI state persisted under localStorage["vpi.console.v1"]: active view, jog steps,
  *  module order per view, read-only-connect preference. */
-export const VIEWS = ["control", "priming", "print", "job", "runs"] as const;
+// Order follows the operator flow: set up → pick a job → prime the bed → print → review runs.
+export const VIEWS = ["control", "job", "priming", "print", "runs"] as const;
 export type View = (typeof VIEWS)[number];
 export const JOG_STEPS = [0.1, 1, 10, 100] as const;
 export interface ModuleSize { w: number; h: number }

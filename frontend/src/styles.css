@@ -48,6 +48,13 @@ details > .body { margin-top: 12px; }
 .banner button { height: 30px; padding: 0 12px; border: 1px solid currentColor; background: transparent; color: inherit; font: 13px var(--font-mono); border-radius: var(--radius); cursor: pointer; }
 .banner .apierr { margin-left: auto; font-family: var(--font-mono); font-size: 12px; max-width: 50%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .banner input, .banner select { padding: 5px 8px; font-size: 13px; }
+/* compact e-stop / fault recovery banner — short labels, no overflow */
+.banner.recovery { overflow: hidden; gap: 14px; }
+.banner .reason { font-family: var(--font-mono); font-size: 12px; color: var(--fg); max-width: 28ch; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.rstep { display: inline-flex; align-items: center; gap: 7px; white-space: nowrap; }
+.rstep .n { width: 19px; height: 19px; border-radius: 50%; border: 1px solid currentColor; display: grid; place-items: center; font: 11px var(--font-mono); flex: none; }
+.rstep.done { color: var(--live); }
+.rstep .muted { color: var(--faint); }
 
 /* ---- operator-not-found setup help (site mode) ---- */
 .setup-help { margin: 20px 32px; padding: 22px 26px; border: 1px solid var(--accent); border-radius: var(--radius); background: var(--warn-bg); max-width: 780px; }

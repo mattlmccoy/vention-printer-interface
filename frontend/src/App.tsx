@@ -117,18 +117,24 @@ export function App() {
         </header>
         <div>
           {g.faulted && (
-            <div className="banner err">
-              <b>FAULT</b><span>{c?.fault_reasons.join("; ")}</span>
-              <span className="step"><span className="n">1</span>{estopStillAsserted ? (
-                <span>Twist out the physical <b>E-STOP</b> — an e-stop can only be released by hand at the machine (the firmware does not allow a software release). <button className="linklike" onClick={() => call("try software release", api.estopRelease)}>try software release anyway</button></span>
-              ) : <span>e-stop released ✓</span>}</span>
-              <span className="step"><span className="n">2</span>{estopStillAsserted
-                ? <span className="hint">reset the drives (available once the e-stop is released)</span>
-                : c?.telemetry?.drives_ready === true
-                  ? <span>drives ready ✓</span>
-                  : <><button onClick={() => call("reset drives", api.estopResetDrives)}>reset drives</button> <span className="hint">(re-energize in software, or press RESET on the MachineMotion)</span></>}</span>
-              <span className="step"><span className="n">3</span><button onClick={clearFault} disabled={estopStillAsserted || c?.telemetry?.drives_ready !== true}>clear fault{ui.readOnlyConnect ? "" : " and take control"}</button></span>
-              {err && <span className="apierr">{err}</span>}
+            <div className="banner err recovery">
+              <b>FAULT</b>
+              <span className="reason" title={c?.fault_reasons.join("; ")}>{c?.fault_reasons.join("; ")}</span>
+              <span className={`rstep${estopStillAsserted ? "" : " done"}`}
+                title="An E-STOP can only be released by hand at the machine (ISO 13850). Software cannot release it.">
+                <span className="n">1</span>{estopStillAsserted ? <>release <b>E-STOP</b> by hand</> : <>E-STOP released</>}
+              </span>
+              <span className={`rstep${c?.telemetry?.drives_ready === true ? " done" : ""}`}>
+                <span className="n">2</span>{c?.telemetry?.drives_ready === true
+                  ? <>drives ready</>
+                  : estopStillAsserted
+                    ? <span className="muted">reset drives</span>
+                    : <button className="small" onClick={() => call("reset drives", api.estopResetDrives)}>reset drives</button>}
+              </span>
+              <span className="rstep">
+                <span className="n">3</span><button className="small" onClick={clearFault} disabled={estopStillAsserted || c?.telemetry?.drives_ready !== true}>clear fault{ui.readOnlyConnect ? "" : " + take control"}</button>
+              </span>
+              {err && <span className="apierr" title={err}>{err}</span>}
             </div>
           )}
           {!g.faulted && (err || (c && c.warnings.length > 0)) && <div className={`banner ${err ? "err" : "warn"}`}>{err ? <span className="apierr" style={{ marginLeft: 0, maxWidth: "100%" }}>{err}</span> : c?.warnings.join("; ")}{err && <button style={{ marginLeft: "auto" }} onClick={() => setErr(null)}>dismiss</button>}</div>}
