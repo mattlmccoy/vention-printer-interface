@@ -6,6 +6,32 @@ IR heater). Third sibling of the [FLIR Research Interface](../../../../FLIR) and
 [T&C Power Interface](../TC-POWER); it mirrors their architecture and conventions so the three
 read as one family.
 
+## Get it running on a new computer (one command)
+
+**macOS / Linux:**
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/mattlmccoy/vention-printer-interface/main/install.sh | bash
+```
+
+**Windows (PowerShell):**
+
+```powershell
+irm https://raw.githubusercontent.com/mattlmccoy/vention-printer-interface/main/install.ps1 | iex
+```
+
+That clones/updates the repo, sets up the Python environment (`uv sync`), builds the UI, and installs
+the operator as an **always-on background service** (macOS LaunchAgent / Linux `systemd --user` /
+Windows Task Scheduler) that **starts at login and restarts if it dies**, serving
+`http://127.0.0.1:8020`. Re-run the same command any time to update.
+
+Then open the hosted UI — **https://mattlmccoy.github.io/vention-printer-interface/** — on that
+machine; it finds the local operator automatically (site mode → `localhost:8020`, CORS-locked to the
+Pages origin). Boots idle: connect the MachineMotion from the UI's connect popover, or pin it at
+startup with `VPI_IP=192.168.0.2` (bash) / `-Ip 192.168.0.2` (PowerShell). Point the Job tab at the
+MetPrint hot folder with `VPI_JOBS_ROOT="…/Hot Folder"` / `-JobsRoot "…\Hot Folder"`. Remove the
+service with `deploy/uninstall-operator-service.sh` (or `.ps1`).
+
 **Status (2026-09-09): backend, print settings engine and Studio UI working against a built-in simulator;
 NOT yet run against the physical controller.** Protocol layer, simulator, real HTTP+MQTT
 transport, supervisory controller (ARM gate, E-STOP, pure protection, heater watchdog), the V1.py
