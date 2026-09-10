@@ -5,6 +5,7 @@ import { compilePrint, describeStep, type PrintSettings } from "../../lib/print_
 import { estimateDurationS } from "../../lib/estimate.ts";
 import { CrossSection } from "../CrossSection.tsx";
 import { MachineImage } from "../MachineImage.tsx";
+import { RoutinePanel } from "../RoutinePanel.tsx";
 import { ModuleGrid, type Module } from "../Modules.tsx";
 import type { Call } from "./types.ts";
 
@@ -93,6 +94,7 @@ export function PrintView({ status, gates, call, order, sizes, onOrder, onResize
         <div className="narr" style={{ marginTop: 14, fontSize: 14 }}>{narr}{active && next && <div className="next">next: {phrase(next, plan)}</div>}</div>
       </>
     ) },
+    { id: "routine", title: "routine parameters", size: "m", node: <RoutinePanel gates={gates} call={call} /> },
     { id: "problems", title: "attention", size: "s", hidden: problems.length === 0 && !mismatch, node: (
       <div className="chips" style={{ marginTop: 0 }}>{problems.map(([txt, cls]) => <span key={txt} className={`chip ${cls}`}>{txt}</span>)}{mismatch && <span className="chip warn">part height differs from the print_settings ({fmtMm(r?.part_height_mm, 1)})</span>}</div>
     ) },

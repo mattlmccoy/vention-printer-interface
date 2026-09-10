@@ -1,0 +1,92 @@
+import { useEffect, useState } from "react";
+import { api, type PrintSettingsPayload } from "../lib/api.ts";
+import type { Gates } from "../lib/format.ts";
+import type { Call } from "./views/types.ts";
+
+/** Edit the 4-phase print routine (thick/thin precoat, printing multi-pass, postcoat) plus the
+ *  heater-exposure inputs, and show the backend-computed IPA exposure readout. Fetches the resolved
+ *  print_settings, patches with api.setPrintSettings, and re-reads the exposure from each response. */
+
+interface PhaseDraft { n_layers: number; layer_thickness_mm: number }
+interface Draft {
+  thick_precoat: PhaseDraft;
+  thin_precoat: PhaseDraft;
+  n_jet_passes: number;
+  pre_heater_drop_mm: number;
+  postcoat_enabled: boolean;
+  target_carbon_wt: number;
+  part_area_mm2: number;
+  heater_section_power_w: number;
+}
+
+function num(v: string, fb: number): number { const n = Number(v); return v !== "" && Number.isFinite(n) ? n : fb; }
+function n(v: unknown, fb = 0): number { return typeof v === "number" && Number.isFinite(v) ? v : fb; }
+function rnd(v: number, d = 2): number { return Number.isFinite(v) ? Number(v.toFixed(d)) : 0; }
+function phaseOf(plan: Record<string, unknown>, key: string): PhaseDraft {
+  const p = (plan[key] ?? {}) as Record<string, unknown>;
+  return { n_layers: n(p.n_layers), layer_thickness_mm: n(p.layer_thickness_mm) };
+}
+function readDraft(plan: Record<string, unknown>): Draft {
+  return {
+    thick_precoat: phaseOf(plan, "thick_precoat"),
+    thin_precoat: phaseOf(plan, "thin_precoat"),
+    n_jet_passes: n(plan.n_jet_passes, 1),
+    pre_heater_drop_mm: n(plan.pre_heater_drop_mm),
+    postcoat_enabled: typeof plan.postcoat_enabled === "boolean" ? plan.postcoat_enabled : true,
+    target_carbon_wt: n(plan.target_carbon_wt),
+    part_area_mm2: n(plan.part_area_mm2),
+    heater_section_power_w: n(plan.heater_section_power_w),
+  };
+}
+
+export function RoutinePanel({ gates, call }: { gates: Gates; call: Call }) {
+  const [p, setP] = useState<PrintSettingsPayload | null>(null);
+  const [d, setDraft] = useState<Draft | null>(null);
+  const [dirty, setDirty] = useState(false);
+  useEffect(() => {
+    let live = true;
+    api.printSettings().then((x) => { if (live) { setP(x); setDraft(readDraft(x.plan)); } }).catch(() => {});
+    return () => { live = false; };
+  }, [gates.reachable]);
+  const ok = gates.controllable && !gates.printActive;
+  const setD = (patch: Partial<Draft>) => d && (setDraft({ ...d, ...patch }), setDirty(true));
+  const setPh = (key: "thick_precoat" | "thin_precoat", patch: Partial<PhaseDraft>) => d && setD({ [key]: { ...d[key], ...patch } } as Partial<Draft>);
+  const save = () => d && call("set routine", () => {
+    const patch = {
+      thick_precoat: d.thick_precoat,
+      thin_precoat: d.thin_precoat,
+      n_jet_passes: d.n_jet_passes,
+      pre_heater_drop_mm: d.pre_heater_drop_mm,
+      postcoat_enabled: d.postcoat_enabled,
+      target_carbon_wt: d.target_carbon_wt,
+      part_area_mm2: d.part_area_mm2,
+      heater_section_power_w: d.heater_section_power_w,
+    };
+    return api.setPrintSettings(patch).then((np) => { setP(np); setDraft(readDraft(np.plan)); setDirty(false); });
+  });
+  if (!p || !d) return <div className="hint">loading routine…</div>;
+  const exp = p.exposure;
+  return (
+    <>
+      <div className="fields" style={{ marginTop: 0, maxWidth: "none" }}>
+        <span>thick precoat</span>
+        <label className="row"><input type="number" value={d.thick_precoat.n_layers} disabled={!ok} style={{ width: 64 }} onChange={(e) => setPh("thick_precoat", { n_layers: num(e.target.value, d.thick_precoat.n_layers) })} /> × <input type="number" step="0.1" value={d.thick_precoat.layer_thickness_mm} disabled={!ok} style={{ width: 72 }} onChange={(e) => setPh("thick_precoat", { layer_thickness_mm: num(e.target.value, d.thick_precoat.layer_thickness_mm) })} /> mm</label>
+        <span>thin precoat</span>
+        <label className="row"><input type="number" value={d.thin_precoat.n_layers} disabled={!ok} style={{ width: 64 }} onChange={(e) => setPh("thin_precoat", { n_layers: num(e.target.value, d.thin_precoat.n_layers) })} /> × <input type="number" step="0.1" value={d.thin_precoat.layer_thickness_mm} disabled={!ok} style={{ width: 72 }} onChange={(e) => setPh("thin_precoat", { layer_thickness_mm: num(e.target.value, d.thin_precoat.layer_thickness_mm) })} /> mm</label>
+        <span>jet passes</span><span className="row"><input type="number" value={d.n_jet_passes} disabled={!ok} onChange={(e) => setD({ n_jet_passes: num(e.target.value, d.n_jet_passes) })} /></span>
+        <span>pre-heater drop</span><span className="row"><input type="number" step="0.1" value={d.pre_heater_drop_mm} disabled={!ok} onChange={(e) => setD({ pre_heater_drop_mm: num(e.target.value, d.pre_heater_drop_mm) })} /> mm</span>
+        <span>postcoat</span><label className="row"><input type="checkbox" checked={d.postcoat_enabled} disabled={!ok} onChange={(e) => setD({ postcoat_enabled: e.target.checked })} /> enabled</label>
+        <span>target carbon</span><span className="row"><input type="number" step="0.01" value={d.target_carbon_wt} disabled={!ok} onChange={(e) => setD({ target_carbon_wt: num(e.target.value, d.target_carbon_wt) })} /> wt</span>
+        <span>part area</span><span className="row"><input type="number" value={d.part_area_mm2} disabled={!ok} onChange={(e) => setD({ part_area_mm2: num(e.target.value, d.part_area_mm2) })} /> mm²</span>
+        <span>heater power</span><span className="row"><input type="number" value={d.heater_section_power_w} disabled={!ok} onChange={(e) => setD({ heater_section_power_w: num(e.target.value, d.heater_section_power_w) })} /> W</span>
+      </div>
+      <div className="kv" style={{ marginTop: 10 }}>
+        <span>IPA exposure</span><span>{exp ? `energy ${rnd(exp.energy_j)} J · dwell ${rnd(exp.time_s)} s · sweep ${rnd(exp.sweep_speed_mm_s)} mm/s` : "exposure unavailable"}</span>
+      </div>
+      <div className="actions one tight" style={{ marginTop: 8 }}>
+        <button className="cta" disabled={!ok || !dirty} onClick={save}>SET ROUTINE</button>
+      </div>
+      {!ok && <div className="lock">{gates.printActive ? "print in progress — parameters locked" : gates.connected ? "read-only · take control from the connection pill" : "connect a controller to edit"}</div>}
+    </>
+  );
+}
