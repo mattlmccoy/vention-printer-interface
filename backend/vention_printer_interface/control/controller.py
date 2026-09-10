@@ -377,7 +377,11 @@ class Controller:
                 if dev.read_telemetry().drives_ready:
                     return
                 time.sleep(0.2)
-        raise RuntimeError(f"drives not ready {ESTOP_READY_WAIT_S:.0f}s after system reset")
+        raise RuntimeError(
+            f"controller did not release the e-stop within {ESTOP_READY_WAIT_S:.0f}s — this firmware "
+            "rejects a software release; twist out the physical E-STOP and press RESET on the "
+            "MachineMotion, then Clear Fault"
+        )
 
     # ---- safe-direction (ungated) -----------------------------------------------------------
     def stop_all(self) -> None:
@@ -402,12 +406,18 @@ class Controller:
             self.armed = False
         if dev is None:
             return {"ok": True, "steps": {}, "note": "no device attached"}
-        self._enter_fault(("operator e-stop",))
+        self._enter_fault(("operator software E-STOP — all motion halted, heater off",))
         steps = self._safe_actions(dev, "e-stop")
         with self._io_lock:
             try:
-                dev.estop_trigger("vpi operator")
-                steps["estop_trigger"] = "ok"
+                engaged = dev.estop_trigger("vpi operator")
+                # Some firmware rejects a software e-stop over MQTT (returns false): motion is still
+                # halted by stop_all above, but the controller's own safety e-stop does NOT engage.
+                steps["estop_trigger"] = (
+                    "ok"
+                    if engaged
+                    else "not engaged — controller rejected the software e-stop; motion still halted"
+                )
             except Exception as exc:  # noqa: BLE001 - report, never raise from E-STOP
                 steps["estop_trigger"] = f"failed: {exc}"
                 log.error("e-stop trigger failed: %s", exc)

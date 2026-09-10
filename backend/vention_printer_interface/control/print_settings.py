@@ -296,7 +296,7 @@ def compile_print(plan: PrintSettings) -> tuple[Step, ...]:
 
 # Homing speeds (mm/s) from vention/json/configuration.json; travel from safety.TRAVEL_MM.
 _HOMING = {PART: 68.8, FEED: 68.8, PRINTHEAD: 66.3, RECOATER: 66.3}
-_TRAVEL = {PART: 145.0, FEED: 145.0, PRINTHEAD: 840.0, RECOATER: 930.0}
+_TRAVEL = {PART: 145.0, FEED: 145.0, PRINTHEAD: 840.0, RECOATER: 972.0}
 
 
 def estimate_duration_s(plan: PrintSettings, min_wait_s: float = 0.5) -> float:

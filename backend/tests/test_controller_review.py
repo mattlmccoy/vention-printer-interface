@@ -180,12 +180,29 @@ def test_move_relative_requires_fresh_telemetry_and_idle_axis() -> None:
 
 
 # H6 ---------------------------------------------------------------------------------------------
-def test_stale_age_is_measured_after_the_read() -> None:
+def test_slow_reads_warn_but_do_not_fault() -> None:
+    # x5 GETs per sample; a 0.5 s reply delay = ~2.5 s reads: slow but SUCCESSFUL, under
+    # stale_fault_s (6.0 s). The loop must WARN and keep running — a slow read during a jog/home is
+    # not a reason to fault and abort the motion (2026-09-09 field bug).
     c, t = make()
     try:
         tel(c)
-        t.read_delay_s = 0.5  # x5 GETs per sample = 2.5 s > telemetry_timeout_s=2.0
-        assert wait(lambda: c.state == ControllerState.FAULT, timeout=8)
+        t.read_delay_s = 0.5
+        assert wait(lambda: any("slow" in w for w in c.snapshot()["warnings"]), timeout=8)
+        assert c.state == ControllerState.CONNECTED
+    finally:
+        t.read_delay_s = 0.0
+        c.stop()
+
+
+def test_persistently_blind_reads_fault() -> None:
+    # x5 GETs per sample; a 1.4 s reply delay = ~7 s reads > stale_fault_s (6.0 s): a real blind
+    # period, so the loop still latches a stale fault.
+    c, t = make()
+    try:
+        tel(c)
+        t.read_delay_s = 1.4
+        assert wait(lambda: c.state == ControllerState.FAULT, timeout=16)
         assert any("stale" in x for x in c.snapshot()["fault_reasons"])
     finally:
         t.read_delay_s = 0.0

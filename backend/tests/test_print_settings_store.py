@@ -27,4 +27,4 @@ def test_missing_or_corrupt_gives_defaults(tmp_path: Path) -> None:
 def test_hand_edited_is_rebounded(tmp_path: Path) -> None:
     (tmp_path / CONFIG_NAME).write_text('{"recoater_end_mm": 99999, "heater_speed": 99999}')
     p = load_print_settings(tmp_path, SafetyLimits())
-    assert p.recoater_end_mm == 930.0 and p.heater_speed == SafetyLimits().max_speed[4]
+    assert p.recoater_end_mm == 972.0 and p.heater_speed == SafetyLimits().max_speed[4]

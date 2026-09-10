@@ -22,7 +22,7 @@ KNOWN_AXES: dict[int, tuple[str, float, float]] = {
     1: ("Part Piston", 145.0, 68.8),
     2: ("Feed Piston", 145.0, 68.8),
     3: ("Printhead Gantry", 840.0, 66.3),
-    4: ("Recoater Gantry", 930.0, 66.3),
+    4: ("Recoater Gantry", 972.0, 66.3),
 }
 
 

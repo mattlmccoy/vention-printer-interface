@@ -31,6 +31,30 @@ def test_stale_telemetry_trips() -> None:
     assert d.trip and "stale" in d.reasons[0]
 
 
+def test_slow_read_warns_but_does_not_fault() -> None:
+    # A telemetry read that is SLOW but SUCCEEDS (the controller stalls HTTP while it services a
+    # jog/home) still yields fresh data. It must warn, never latch a fault — otherwise the machine
+    # faults on every jog and home (real controller stalled a single /complete query ~1.9 s,
+    # 2026-09-09). Warn band is telemetry_timeout_s (2.0 s); fault only past stale_fault_s (6.0 s).
+    lim = SafetyLimits()
+    d = evaluate(tel(), lim, telemetry_age_s=3.0, heater_on_s=0, move_pending=False)
+    assert not d.trip
+    assert any("slow" in w for w in d.warnings)
+
+
+def test_stale_only_faults_past_stale_fault_s() -> None:
+    lim = SafetyLimits()
+    assert not evaluate(tel(), lim, 5.5, 0, False).trip  # under the fault threshold: warn only
+    assert evaluate(tel(), lim, 7.0, 0, False).trip  # past it: a real blind period faults
+
+
+def test_stale_fault_s_is_bounded_and_never_below_the_timeout() -> None:
+    assert SafetyLimits.bounded(stale_fault_s=999).stale_fault_s == HARD_BOUNDS["stale_fault_s"][1]
+    # the fault threshold must never sit below the freshness/warn threshold
+    lim = SafetyLimits.bounded(telemetry_timeout_s=5.0, stale_fault_s=2.0)
+    assert lim.stale_fault_s >= lim.telemetry_timeout_s
+
+
 def test_estop_trips() -> None:
     d = evaluate(tel(estop_triggered=True), SafetyLimits(), 0.1, 0, False)
     assert d.trip and "e-stop" in d.reasons[0]
@@ -80,9 +104,9 @@ def test_encoder_drift_at_ends_does_not_fault() -> None:
 
 def test_soft_travel_limit_warns() -> None:
     lim = SafetyLimits()
-    over = evaluate(tel(positions={1: 10, 2: 10, 3: 10, 4: 934}), lim, 0.1, 0, False)
+    over = evaluate(tel(positions={1: 10, 2: 10, 3: 10, 4: 976}), lim, 0.1, 0, False)
     assert not over.trip and any("outside" in x for x in over.warnings)
-    near = evaluate(tel(positions={1: 10, 2: 10, 3: 10, 4: 927}), lim, 0.1, 0, False)
+    near = evaluate(tel(positions={1: 10, 2: 10, 3: 10, 4: 969}), lim, 0.1, 0, False)
     assert not near.trip and any("near" in x for x in near.warnings)
     # sitting at home (0) is normal, not a warning; a raised travel_min is warned about
     home = evaluate(tel(positions={1: 0, 2: 0, 3: 0, 4: 0}), lim, 0.1, 0, False)

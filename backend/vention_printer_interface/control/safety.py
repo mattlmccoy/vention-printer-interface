@@ -15,7 +15,7 @@ from typing import TYPE_CHECKING, Any
 if TYPE_CHECKING:
     from vention_printer_interface.device.printer import Telemetry
 
-TRAVEL_MM: dict[int, float] = {1: 145.0, 2: 145.0, 3: 840.0, 4: 930.0}  # V1.py extents
+TRAVEL_MM: dict[int, float] = {1: 145.0, 2: 145.0, 3: 840.0, 4: 972.0}  # recoater end stop 972 (2026-09-09)
 TRAVEL_FLOOR = -50.0  # axes home to negative positions (recoater ~-22 mm, 2026-09-09)
 
 Bound = tuple[float, float]
@@ -33,6 +33,7 @@ MAX_ACCEL_BOUNDS: dict[int, Bound] = {
 }
 HEATER_MAX_ON_BOUNDS: Bound = (5.0, 600.0)
 TELEMETRY_TIMEOUT_BOUNDS: Bound = (0.5, 5.0)
+STALE_FAULT_BOUNDS: Bound = (2.0, 30.0)  # blind-period fault; must clear the per-request HTTP cap
 NEAR_LIMIT_BOUNDS: Bound = (0.0, 20.0)
 TRAVEL_TOLERANCE_BOUNDS: Bound = (0.0, 5.0)  # encoder drift at the ends (real: ~0.1 mm)
 
@@ -42,6 +43,7 @@ HARD_BOUNDS: dict[str, Any] = {
     "travel": {n: (TRAVEL_FLOOR, t) for n, t in TRAVEL_MM.items()},  # mm
     "heater_max_on_s": HEATER_MAX_ON_BOUNDS,
     "telemetry_timeout_s": TELEMETRY_TIMEOUT_BOUNDS,
+    "stale_fault_s": STALE_FAULT_BOUNDS,
     "near_limit_mm": NEAR_LIMIT_BOUNDS,
     "travel_tolerance_mm": TRAVEL_TOLERANCE_BOUNDS,
 }
@@ -76,7 +78,8 @@ class SafetyLimits:
     travel_min: dict[int, float] = field(default_factory=lambda: dict.fromkeys(TRAVEL_MM, -30.0))
     travel_max: dict[int, float] = field(default_factory=lambda: dict(TRAVEL_MM))
     heater_max_on_s: float = 120.0
-    telemetry_timeout_s: float = 2.0
+    telemetry_timeout_s: float = 2.0  # freshness for commands; a slow read past this only WARNS
+    stale_fault_s: float = 6.0  # blind period before a FAULT (tolerates HTTP stalls during motion)
     near_limit_mm: float = 5.0  # warning band
     travel_tolerance_mm: float = 2.0  # a hard fault only past the ends by more than this
 
@@ -96,13 +99,17 @@ class SafetyLimits:
                 return float(getattr(base, name))
             return _clamp(float(value), *bounds)
 
+        timeout = scalar("telemetry_timeout_s", TELEMETRY_TIMEOUT_BOUNDS)
+        # the blind-fault threshold must never sit below the freshness/warn threshold
+        stale_fault = max(scalar("stale_fault_s", STALE_FAULT_BOUNDS), timeout)
         return cls(
             max_speed=_per_axis(base.max_speed, kw.get("max_speed"), MAX_SPEED_BOUNDS),
             max_accel=_per_axis(base.max_accel, kw.get("max_accel"), MAX_ACCEL_BOUNDS),
             travel_min=tmin,
             travel_max=tmax,
             heater_max_on_s=scalar("heater_max_on_s", HEATER_MAX_ON_BOUNDS),
-            telemetry_timeout_s=scalar("telemetry_timeout_s", TELEMETRY_TIMEOUT_BOUNDS),
+            telemetry_timeout_s=timeout,
+            stale_fault_s=stale_fault,
             near_limit_mm=scalar("near_limit_mm", NEAR_LIMIT_BOUNDS),
             travel_tolerance_mm=scalar("travel_tolerance_mm", TRAVEL_TOLERANCE_BOUNDS),
         )
@@ -129,6 +136,7 @@ class SafetyLimits:
             "travel_max": {str(k): v for k, v in self.travel_max.items()},
             "heater_max_on_s": self.heater_max_on_s,
             "telemetry_timeout_s": self.telemetry_timeout_s,
+            "stale_fault_s": self.stale_fault_s,
             "near_limit_mm": self.near_limit_mm,
             "travel_tolerance_mm": self.travel_tolerance_mm,
         }
@@ -151,8 +159,14 @@ def evaluate(
 ) -> SafetyDecision:
     reasons: list[str] = []
     warnings: list[str] = []
-    if telemetry_age_s > limits.telemetry_timeout_s:
-        reasons.append(f"telemetry stale ({telemetry_age_s:.1f}s > {limits.telemetry_timeout_s}s)")
+    # A read that SUCCEEDS but is slow (the controller stalls HTTP while servicing a jog/home)
+    # still delivers current data, so a slow read only WARNS; a genuinely blind period (no fresh
+    # sample for stale_fault_s) FAULTS. Read failures/timeouts fault via the poll loop separately.
+    # This is what keeps jogging and homing from faulting on every motion (2026-09-09).
+    if telemetry_age_s > limits.stale_fault_s:
+        reasons.append(f"telemetry stale ({telemetry_age_s:.1f}s > {limits.stale_fault_s:.0f}s)")
+    elif telemetry_age_s > limits.telemetry_timeout_s:
+        warnings.append(f"telemetry slow ({telemetry_age_s:.1f}s)")
     if telemetry.estop_triggered is None:
         reasons.append("controller e-stop status unknown (no estop/status message yet)")
     elif telemetry.estop_triggered:

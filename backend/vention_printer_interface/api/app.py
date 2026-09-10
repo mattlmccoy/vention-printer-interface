@@ -26,6 +26,8 @@ from vention_printer_interface.control.controller import Controller
 from vention_printer_interface.control.events import EventLog
 from vention_printer_interface.control.limits_store import load_limits, save_limits
 from vention_printer_interface.control.macros import MACROS, macro_steps
+from vention_printer_interface.control.priming import PrimingSettings, compile_priming
+from vention_printer_interface.control.priming_store import load_priming, save_priming
 from vention_printer_interface.control.print_controller import PrintController, PrintState
 from vention_printer_interface.control.print_settings import (
     PrintSettings,
@@ -218,6 +220,7 @@ def create_app(
         app.state.events = events
         app.state.controller, app.state.recorder, app.state.printer = controller, recorder, printer
         app.state.print_settings = load_print_settings(root, controller.limits)
+        app.state.priming = load_priming(root, controller.limits)
         app.state.job = None
         app.state.backend = "none"
         app.state.default_heater_io = heater_io or DEFAULT_HEATER_IO
@@ -273,6 +276,18 @@ def create_app(
             "total_layers": plan.total_layers,
             "total_thickness_mm": plan.total_thickness_mm,
             "bounds": HARD_BOUNDS,
+            "limits": ctrl().limits.to_dict(),
+        }
+
+    def priming_payload() -> dict[str, Any]:
+        s: PrimingSettings = app.state.priming
+        steps = compile_priming(s, ctrl().limits)
+        cycles = sum(1 for st in steps if st.kind == "mark" and st.label == "layer_start")
+        return {
+            "settings": s.to_dict(),
+            "validation": s.validate(ctrl().limits),
+            "n_steps": len(steps),
+            "n_cycles": cycles,
             "limits": ctrl().limits.to_dict(),
         }
 
@@ -610,6 +625,31 @@ def create_app(
     @app.get("/api/macros")
     def list_macros() -> dict[str, Any]:
         return {"macros": MACROS}
+
+    # ---- priming (powder-prep) routine -----------------------------------------------------
+    @app.get("/api/priming")
+    def get_priming() -> dict[str, Any]:
+        return priming_payload()
+
+    @app.put("/api/priming")
+    def put_priming(body: dict[str, Any]) -> dict[str, Any]:
+        if printer().state in (PrintState.RUNNING, PrintState.PAUSED):
+            raise HTTPException(409, "a routine is running; abort it before editing")
+        current = app.state.priming.to_dict()
+        current.update(body)
+        settings = PrimingSettings.bounded(current, ctrl().limits)
+        app.state.priming = settings
+        save_priming(root, settings)
+        return priming_payload()
+
+    @app.post("/api/priming/run")
+    def run_priming() -> dict[str, Any]:
+        settings: PrimingSettings = app.state.priming
+        reasons = settings.validate(ctrl().limits)
+        if reasons:
+            raise HTTPException(409, "priming settings invalid: " + "; ".join(reasons))
+        guarded(printer().start_macro, "priming", compile_priming(settings, ctrl().limits))
+        return printer().snapshot()
 
     @app.get("/api/events")
     def get_events() -> dict[str, Any]:
