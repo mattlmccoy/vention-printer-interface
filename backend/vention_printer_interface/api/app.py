@@ -26,7 +26,7 @@ from vention_printer_interface.control.controller import Controller
 from vention_printer_interface.control.events import EventLog
 from vention_printer_interface.control.limits_store import load_limits, save_limits
 from vention_printer_interface.control.macros import MACROS, macro_steps
-from vention_printer_interface.control.priming import PrimingSettings, compile_priming
+from vention_printer_interface.control.priming import PrimingSettings, compile_priming_setup
 from vention_printer_interface.control.priming_store import load_priming, save_priming
 from vention_printer_interface.control.print_controller import PrintController, PrintState
 from vention_printer_interface.control.print_settings import (
@@ -281,13 +281,12 @@ def create_app(
 
     def priming_payload() -> dict[str, Any]:
         s: PrimingSettings = app.state.priming
-        steps = compile_priming(s, ctrl().limits)
-        cycles = sum(1 for st in steps if st.kind == "mark" and st.label == "layer_start")
+        steps = compile_priming_setup(s, ctrl().limits)
         return {
             "settings": s.to_dict(),
             "validation": s.validate(ctrl().limits),
             "n_steps": len(steps),
-            "n_cycles": cycles,
+            "n_level_passes": s.n_level_passes,
             "limits": ctrl().limits.to_dict(),
         }
 
@@ -648,7 +647,7 @@ def create_app(
         reasons = settings.validate(ctrl().limits)
         if reasons:
             raise HTTPException(409, "priming settings invalid: " + "; ".join(reasons))
-        guarded(printer().start_macro, "priming", compile_priming(settings, ctrl().limits))
+        guarded(printer().start_macro, "priming", compile_priming_setup(settings, ctrl().limits))
         return printer().snapshot()
 
     @app.get("/api/events")

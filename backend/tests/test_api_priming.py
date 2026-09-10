@@ -33,25 +33,30 @@ def connect_arm(c: TestClient) -> None:
 def test_priming_get_put_persists(client: TestClient) -> None:
     p = client.get("/api/priming").json()
     assert p["validation"] == []
-    assert p["settings"]["feed_start_mm"] == 30.0 and p["n_cycles"] > 0
-    r = client.put("/api/priming", json={"feed_start_mm": 12.0})
-    assert r.status_code == 200 and r.json()["settings"]["feed_start_mm"] == 12.0
-    assert client.get("/api/priming").json()["settings"]["feed_start_mm"] == 12.0  # persisted
+    assert p["settings"]["feed_cavity_mm"] == 30.0 and p["n_level_passes"] == 1
+    r = client.put("/api/priming", json={"feed_cavity_mm": 22.0, "n_level_passes": 2})
+    assert r.status_code == 200 and r.json()["settings"]["feed_cavity_mm"] == 22.0
+    assert client.get("/api/priming").json()["settings"]["feed_cavity_mm"] == 22.0
 
 
-def test_priming_run_requires_arm_then_starts(client: TestClient) -> None:
+def test_priming_run_requires_arm_then_holds_for_powder(client: TestClient) -> None:
     assert client.post("/api/priming/run").status_code == 409  # not armed
     connect_arm(client)
-    client.put("/api/priming", json={"feed_start_mm": 5.0, "thick_precoat_count": 0})  # short
+    # sim axes start at 50 mm and pistons cap at 5 mm/s; keep the pre-hold piston targets near the
+    # start so each move's wait finishes inside the fixture's 5 s step timeout (the default part
+    # target 0 mm would take ~20 s and fault before the hold).
+    client.put("/api/priming", json={"part_top_mm": 48.0, "feed_cavity_mm": 48.0})
     r = client.post("/api/priming/run")
     assert r.status_code == 200 and r.json()["macro"] == "priming"
-    client.post("/api/print/abort")  # priming runs on the print step engine
+    for _ in range(200):
+        if client.get("/api/status").json()["print"]["state"] == "paused":
+            break
+        time.sleep(0.05)
+    assert client.get("/api/status").json()["print"]["state"] == "paused"
+    client.post("/api/print/abort")
 
 
-def test_priming_run_rejects_out_of_travel_recoater(client: TestClient) -> None:
+def test_priming_bounded_clamps_recoater(client: TestClient) -> None:
     connect_arm(client)
-    # a recoater target past the 972 mm end stop is clamped by bounded(), so validation stays clean;
-    # force an invalid one directly through the settings file path is out of scope — instead assert
-    # that bounded clamps it into range (never a move past the end stop).
-    r = client.put("/api/priming", json={"recoater_end_mm": 5000.0})
-    assert r.status_code == 200 and r.json()["settings"]["recoater_end_mm"] <= 972.0
+    r = client.put("/api/priming", json={"level_recoat_end_mm": 5000.0})
+    assert r.status_code == 200 and r.json()["settings"]["level_recoat_end_mm"] <= 972.0
