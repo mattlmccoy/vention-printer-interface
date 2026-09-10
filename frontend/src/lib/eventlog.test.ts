@@ -16,7 +16,7 @@ test("move + heater + connect read naturally", () => {
   assert.equal(describeEvent({ host_timestamp_ns: 0, label: "connected", data: { backend: "machinemotion", ip: "192.168.7.2" } }),
     "Connected to MachineMotion (192.168.7.2)");
   assert.equal(describeEvent({ host_timestamp_ns: 0, label: "move", data: { axis: 1, applied_mm: 2.5 } }),
-    "Moved Part Piston 2.5 mm");
+    "Moved Build Piston 2.5 mm");
 });
 
 test("unknown labels fall back to the raw summary", () => {

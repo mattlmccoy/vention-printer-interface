@@ -134,7 +134,7 @@ export function PrimingView({ status, gates, call, onJob }: { status: StatusPayl
                     {num(layerThicknessMm, setLayerThicknessMm, "layer thickness")}
                     {num(marginMm, setMarginMm, "margin")}
                   </div>
-                  <div className="hint">Include the precoat layers (runway + part-piston fill), not just the part slices.</div>
+                  <div className="hint">Include the precoat layers (runway + build-piston fill), not just the part slices.</div>
                 </>
               )}
               {source === "depth" && (
@@ -196,7 +196,7 @@ export function PrimingView({ status, gates, call, onJob }: { status: StatusPayl
           {cur.id === "level" && (
             <>
               <div className="step-head">Thick precoats — fill the runway + part cavity, then it's level</div>
-              <div className="hint">Each thick precoat moves the recoater to the start position (past the feed piston), then spreads across the bed to fill the runway and the part-piston cavity. The part piston stays fixed. Repeat for each precoat until the bed is even.</div>
+              <div className="hint">Each thick precoat moves the recoater to the start position (past the feed piston), then spreads across the bed to fill the runway and the build-piston cavity. The build piston stays fixed. Repeat for each precoat until the bed is even.</div>
               <div className="kv">
                 <span>thick precoats</span><span>{target("n_thick_precoats") ?? "—"}</span>
                 <span>feed / precoat</span><span>{fmt(target("thick_feed_mm"))}</span>

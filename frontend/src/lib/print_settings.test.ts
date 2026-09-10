@@ -77,6 +77,6 @@ test("postcoat toggle off emits no postcoat steps", () => {
 test("describeStep", () => {
   const s = compilePrint(DEFAULT_PLAN);
   assert.equal(describeStep(s[0]), "home printhead"); // primed start homes the gantries only
-  assert.equal(describeStep(s[4]), "part speed 2.5 mm/s");
+  assert.equal(describeStep(s[4]), "build speed 2.5 mm/s");
   assert.equal(describeStep(null), "—");
 });

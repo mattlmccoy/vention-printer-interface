@@ -4,7 +4,7 @@ export interface PrimingSettings {
 }
 /** Plain-language "what this will do" lines for the priming setup routine. Priming now OWNS the
  *  thick precoats: each one spreads powder across the bed and advances the feed piston while the
- *  part piston stays fixed (backfill). */
+ *  build piston stays fixed (backfill). */
 export function primingSteps(s: PrimingSettings): string[] {
   const lines = [
     `Raise the build piston up to the top (${s.part_top_mm} mm)`,

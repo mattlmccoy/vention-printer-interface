@@ -4,12 +4,12 @@
 
 export const PART = 1, FEED = 2, PRINTHEAD = 3, RECOATER = 4;
 // The thick precoats now live in the priming routine (they fill the runway + part cavity with the
-// part piston fixed). The print begins at the thin precoats, where the part piston first drops.
+// build piston fixed). The print begins at the thin precoats, where the build piston first drops.
 export const PHASES = ["thin_precoat", "printing", "postcoat"] as const;
 export type Phase = (typeof PHASES)[number];
 
 // Precoat-style phases lay a cover layer only (spread -> feed advance -> recoater return to 350);
-// part-drop phases drop the build/part piston one layer (grow the part height). Mirrors the backend.
+// part-drop phases drop the build piston one layer (grow the part height). Mirrors the backend.
 const PRECOAT_PHASES = new Set<string>(["thin_precoat", "postcoat"]);
 const PART_DROP_PHASES = new Set<string>(["thin_precoat", "printing"]);
 // The feed piston's hard floor (script FEED_HOME_POS): an advance to/below it cannot supply a layer.
@@ -53,6 +53,7 @@ export interface PrintSettings {
   n_heater_passes: number;
   heater_enabled: boolean;
   settle_s: number;
+  feed_backlash_mm: number;
   feed_fast_speed: number;
   feed_fast_accel: number;
 }
@@ -72,7 +73,7 @@ export const DEFAULT_PLAN: PrintSettings = {
   heater_home_mm: 5, heater_start_mm: 425, heater_end_mm: 600,
   printhead_home_mm: 5, printhead_end_mm: 900, printhead_multipass_return_mm: 250, printhead_start_mm: 250, part_max_mm: 72,
   heater_speed: 50, heater_accel: 250, n_heater_passes: 1,
-  heater_enabled: false, settle_s: 1, feed_fast_speed: 5, feed_fast_accel: 30,
+  heater_enabled: false, settle_s: 1, feed_backlash_mm: 0, feed_fast_speed: 5, feed_fast_accel: 30,
 };
 
 export type StepKind = "home" | "set_speed" | "set_accel" | "move_abs" | "move_rel" | "wait" | "dwell" | "heater" | "mark";
@@ -174,12 +175,20 @@ export function compilePrint(plan: PrintSettings): Step[] {
 
       // 1) SPREAD — recoater forward to the far end.
       add(name, layerNo, "mark", null, null, "layer_start");
+      // Optional anti-backlash: drop the feed a little BEFORE the spread so the post-spread feed-up
+      // approaches the recoat position from below, taking up mechanical slop.
+      const preload = ph.feed_thickness_mm > 0 ? plan.feed_backlash_mm : 0;
+      if (preload > 0) {
+        add(name, layerNo, "move_rel", FEED, preload, "feed backlash preload down");
+        add(name, layerNo, "wait");
+      }
       add(name, layerNo, "move_abs", RECOATER, plan.recoater_end_mm);
       add(name, layerNo, "wait");
 
       // 2) FEED ADVANCE — every phase incl. printing (the feed piston is the powder supply).
+      // Net advance stays feed_thickness; the up move also undoes the preload drop.
       if (ph.feed_thickness_mm > 0) {
-        add(name, layerNo, "move_rel", FEED, -ph.feed_thickness_mm);
+        add(name, layerNo, "move_rel", FEED, -(ph.feed_thickness_mm + preload), "feed up");
         add(name, layerNo, "wait");
         add(name, layerNo, "dwell", null, plan.settle_s);
         feedPos -= ph.feed_thickness_mm;
@@ -254,7 +263,7 @@ export function compilePrint(plan: PrintSettings): Step[] {
 /** Human label for a step, for the print_settings cursor. */
 export function describeStep(s: Step | null | undefined): string {
   if (!s) return "—";
-  const ax = s.axis ? ({ 1: "part", 2: "feed", 3: "printhead", 4: "recoater" } as Record<number, string>)[s.axis] : "";
+  const ax = s.axis ? ({ 1: "build", 2: "feed", 3: "printhead", 4: "recoater" } as Record<number, string>)[s.axis] : "";
   switch (s.kind) {
     case "home": return ax ? `home ${ax}` : "home";
     case "set_speed": return `${ax} speed ${s.value} mm/s`;

@@ -1,7 +1,7 @@
-"""Priming = job SETUP (spec §6): build/part piston UP (flush), feed piston DOWN to open a powder
+"""Priming = job SETUP (spec §6): build piston UP (flush), feed piston DOWN to open a powder
 cavity, HOLD for the operator to load powder, then the THICK PRECOATS that fill the runway and the
-part-piston cavity. The part piston is FIXED throughout the thick precoats (backfill) — the thin
-precoats, where the part piston first drops, are the start of the Print routine. Never homes a
+build-piston cavity. The build piston is FIXED throughout the thick precoats (backfill) — the thin
+precoats, where the build piston first drops, are the start of the Print routine. Never homes a
 piston.
 
 Sign conventions: part/feed move_abs to a SMALL value = UP/flush, LARGE = DOWN; a feed move_rel of a
@@ -101,7 +101,7 @@ class PrimingSettings:
 def compile_priming_setup(s: PrimingSettings, limits: SafetyLimits) -> tuple[Step, ...]:
     """Position pistons -> HOLD for the powder load -> THICK PRECOATS that fill the runway and the
     part cavity. Each thick precoat spreads powder across the bed and advances the feed piston; the
-    part piston NEVER moves (it stays fixed to backfill). The spread IS the leveling — there is no
+    build piston NEVER moves (it stays fixed to backfill). The spread IS the leveling — there is no
     separate level step. Never homes a piston."""
     out: list[Step] = []
 
@@ -122,8 +122,8 @@ def compile_priming_setup(s: PrimingSettings, limits: SafetyLimits) -> tuple[Ste
     add("wait")
     add("hold", None, None, "Load powder into the feed cavity, then Resume")
     for _ in range(s.n_thick_precoats):
-        # Part piston stays FIXED for every thick precoat — the feed advance backfills the runway
-        # and fills the part cavity; the part piston first drops only in the print's thin precoats.
+        # Build piston stays FIXED for every thick precoat — the feed advance backfills the runway
+        # and fills the build cavity; the build piston first drops in the print's thin precoats.
         add("move_abs", RECOATER, s.level_recoat_start_mm, "move to start (past feed piston)")
         add("wait")
         add("move_abs", RECOATER, s.level_recoat_end_mm, "spread across the bed")

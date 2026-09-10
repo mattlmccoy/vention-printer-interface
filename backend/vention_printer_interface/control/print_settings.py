@@ -32,7 +32,7 @@ def _clamp(v: float, lo: float, hi: float) -> float:
 class PhasePlan:
     """Per-phase settings (V1.py lines 12-45)."""
 
-    layer_thickness_mm: float = 2.0  # part-piston drop per layer
+    layer_thickness_mm: float = 2.0  # build-piston drop per layer
     feed_thickness_mm: float = 2.0  # feed-piston advance per layer (V1.py; distinct from the drop)
     n_layers: int = 1
     part_speed: float = 2.5
@@ -88,7 +88,7 @@ class PrintSettings:
     """The whole print (V1.py lines 12-66). Heater is opt-in; V1.py never switched it.
 
     The thick precoats now live in the priming routine (they fill the runway + part cavity with the
-    part piston fixed). The print begins at the thin precoats, where the part piston first drops.
+    build piston fixed). The print begins at the thin precoats, where the build piston first drops.
     """
 
     thin_precoat: PhasePlan = field(
@@ -126,6 +126,8 @@ class PrintSettings:
     n_heater_passes: int = 1
     heater_enabled: bool = False
     settle_s: float = 1.0  # V1.py's time.sleep(1) after the feed piston move
+    feed_backlash_mm: float = 0.0  # opt-in: drop the feed this much BEFORE the spread; the
+    # post-spread feed-up covers it too (net advance unchanged, approached from below to take slop)
     feed_fast_speed: float = 5.0  # V1.py:95 used 1000 mm/s; bounded to the feed limit
     feed_fast_accel: float = 30.0  # V1.py:96 used 500
     # Heater-exposure model inputs (spec §8; consumed by heater_model.exposure).
@@ -264,6 +266,7 @@ class PrintSettings:
             n_heater_passes=int(_clamp(passes, 0, MAX_HEATER_PASSES)),
             heater_enabled=bool(d.get("heater_enabled", base.heater_enabled)),
             settle_s=_clamp(num("settle_s", base.settle_s), 0.0, 30.0),
+            feed_backlash_mm=_clamp(num("feed_backlash_mm", base.feed_backlash_mm), 0.0, 50.0),
             feed_fast_speed=limits.clamp_speed(FEED, num("feed_fast_speed", base.feed_fast_speed)),
             feed_fast_accel=limits.clamp_accel(FEED, num("feed_fast_accel", base.feed_fast_accel)),
             target_carbon_wt=_clamp(
@@ -304,7 +307,7 @@ FEED_FLOOR_MM = 0.0
 # thin_precoat drops the part one nominal layer; postcoat is a post-job cover pass that holds the
 # part fixed (the FINISH drives part->max). The thick precoats now live in the priming routine.
 _PRECOAT_PHASES = ("thin_precoat", "postcoat")
-# Phases that drop the build/part piston one layer (grow the part height).
+# Phases that drop the build piston one layer (grow the part height).
 _PART_DROP_PHASES = ("thin_precoat", "printing")
 
 
@@ -386,19 +389,26 @@ def compile_print(plan: PrintSettings) -> tuple[Step, ...]:
 
             # 1) SPREAD — recoater forward to the far end.
             add(name, layer_no, "mark", label="layer_start")
+            # Optional anti-backlash: drop the feed a little BEFORE the spread so the post-spread
+            # feed-up (below) approaches the recoat position from below, taking up mechanical slop.
+            preload = plan.feed_backlash_mm if ph.feed_thickness_mm > 0 else 0.0
+            if preload > 0:
+                add(name, layer_no, "move_rel", FEED, preload, "feed backlash preload down")
+                add(name, layer_no, "wait")
             add(name, layer_no, "move_abs", RECOATER, plan.recoater_end_mm)
             add(name, layer_no, "wait")
 
             # 2) FEED ADVANCE — every phase incl. printing (USER OVERRIDE: feed is the powder feed).
+            # Net advance stays feed_thickness; the up move also undoes the preload drop.
             if ph.feed_thickness_mm > 0:
-                add(name, layer_no, "move_rel", FEED, -ph.feed_thickness_mm)  # feed piston up
+                add(name, layer_no, "move_rel", FEED, -(ph.feed_thickness_mm + preload), "feed up")
                 add(name, layer_no, "wait")
                 add(name, layer_no, "dwell", value=plan.settle_s)  # script's time.sleep(1)
                 feed_pos -= ph.feed_thickness_mm
 
             # 3) PART DROP — thin_precoat & printing only (postcoat holds the part fixed).
             if name in _PART_DROP_PHASES:
-                add(name, layer_no, "move_rel", PART, ph.layer_thickness_mm)  # part piston down
+                add(name, layer_no, "move_rel", PART, ph.layer_thickness_mm)  # build piston down
                 add(name, layer_no, "wait")
 
             # 4) PRECOAT RETURN vs PRINT.

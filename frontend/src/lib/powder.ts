@@ -19,7 +19,7 @@ const clamp = (v: number, lo: number, hi: number) => Math.min(Math.max(v, lo), h
  *  "depth"  -> operator's direct mm.
  *  Clamped to [0, feedTravel].
  *  FUTURE (calibration): a "volume" source computing depth from the powder volume needed to fill the
- *  part-piston cavity + runway backfill -- needs the feed/part cylinder cross-section areas, which are
+ *  build-piston cavity + runway backfill -- needs the feed/part cylinder cross-section areas, which are
  *  NOT in the codebase yet. Do not wire that path until those areas are measured. */
 export function fillDepthMm(i: FillInput): number {
   const margin = i.marginMm ?? 0;

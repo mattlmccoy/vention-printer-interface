@@ -16,7 +16,7 @@ def test_identify_reads_version_and_axes() -> None:
     assert info["version"] == "2.14.1"
     assert info["async_supported"] is True
     assert [a.name for a in d.axes.values()] == [
-        "Part Piston",
+        "Build Piston",
         "Feed Piston",
         "Printhead Gantry",
         "Recoater Gantry",
@@ -90,6 +90,6 @@ def test_endstops_and_stop() -> None:
 
 
 def test_axis_config_frozen() -> None:
-    a = AxisConfig(number=1, name="Part Piston", travel_mm=145.0, homing_speed=68.8)
+    a = AxisConfig(number=1, name="Build Piston", travel_mm=145.0, homing_speed=68.8)
     with pytest.raises(AttributeError):
         a.name = "x"  # type: ignore[misc]

@@ -20,6 +20,7 @@ interface Draft {
   n_jet_passes: number;
   printhead_multipass_return_mm: number;
   printhead_start_mm: number;
+  feed_backlash_mm: number;
   pre_heater_drop_mm: number;
   postcoat_enabled: boolean;
   target_carbon_wt: number;
@@ -44,6 +45,7 @@ function readDraft(plan: Record<string, unknown>): Draft {
     n_jet_passes: n(plan.n_jet_passes, 1),
     printhead_multipass_return_mm: n(plan.printhead_multipass_return_mm, 250),
     printhead_start_mm: n(plan.printhead_start_mm, 250),
+    feed_backlash_mm: n(plan.feed_backlash_mm),
     pre_heater_drop_mm: n(plan.pre_heater_drop_mm),
     postcoat_enabled: typeof plan.postcoat_enabled === "boolean" ? plan.postcoat_enabled : true,
     target_carbon_wt: n(plan.target_carbon_wt),
@@ -75,6 +77,7 @@ export function RoutinePanel({ gates, call }: { gates: Gates; call: Call }) {
       n_jet_passes: d.n_jet_passes,
       printhead_multipass_return_mm: d.printhead_multipass_return_mm,
       printhead_start_mm: d.printhead_start_mm,
+      feed_backlash_mm: d.feed_backlash_mm,
       pre_heater_drop_mm: d.pre_heater_drop_mm,
       postcoat_enabled: d.postcoat_enabled,
       target_carbon_wt: d.target_carbon_wt,
@@ -95,9 +98,10 @@ export function RoutinePanel({ gates, call }: { gates: Gates; call: Call }) {
         <span>heater start</span><span className="row"><NumberField value={d.heater_start_mm} disabled={!ok} onChange={(v) => setD({ heater_start_mm: v })} /> mm</span>
         <span title="Manual recoater sweep speed during the heater pass — overrides the computed exposure sweep (which is unachievable on the current hardware).">heater speed</span><span className="row"><NumberField step="1" value={d.heater_speed} disabled={!ok} onChange={(v) => setD({ heater_speed: v })} /> mm/s <span className="hint">(manual override)</span></span>
         <span>part max</span><span className="row"><NumberField value={d.part_max_mm} disabled={!ok} onChange={(v) => setD({ part_max_mm: v })} /> mm</span>
-        <span title="prints each layer N times without dropping the part piston">multipass (passes / layer)</span><span className="row"><NumberField value={d.n_jet_passes} disabled={!ok} onChange={(v) => setD({ n_jet_passes: v })} /></span>
+        <span title="prints each layer N times without dropping the build piston">multipass (passes / layer)</span><span className="row"><NumberField value={d.n_jet_passes} disabled={!ok} onChange={(v) => setD({ n_jet_passes: v })} /></span>
         <span title="Between multipass passes the printhead returns only to here instead of home (saves travel); it still returns home on the last pass.">multipass return</span><span className="row"><NumberField value={d.printhead_multipass_return_mm} disabled={!ok} onChange={(v) => setD({ printhead_multipass_return_mm: v })} /> mm</span>
         <span title="Where the printhead parks at the start of every print (after the setup homing), before layer 1.">printhead start</span><span className="row"><NumberField value={d.printhead_start_mm} disabled={!ok} onChange={(v) => setD({ printhead_start_mm: v })} /> mm</span>
+        <span title="Anti-backlash: drops the feed piston this much BEFORE the recoater spread, then the post-spread feed-up returns it from below to take up mechanical slop. 0 = off.">feed backlash</span><span className="row"><NumberField step="0.1" value={d.feed_backlash_mm} disabled={!ok} onChange={(v) => setD({ feed_backlash_mm: v })} /> mm</span>
         <span>pre-heater drop</span><span className="row"><NumberField step="0.1" value={d.pre_heater_drop_mm} disabled={!ok} onChange={(v) => setD({ pre_heater_drop_mm: v })} /> mm</span>
         <span>postcoat</span><label className="row"><input type="checkbox" checked={d.postcoat_enabled} disabled={!ok} onChange={(e) => setD({ postcoat_enabled: e.target.checked })} /> enabled</label>
         <span>target carbon</span><span className="row"><NumberField step="0.01" value={d.target_carbon_wt} disabled={!ok} onChange={(v) => setD({ target_carbon_wt: v })} /> wt</span>

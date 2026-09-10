@@ -154,6 +154,25 @@ def test_multipass_printhead_returns_to_midpoint_then_home() -> None:
     assert returns1 == [5.0]
 
 
+def test_feed_backlash_preload_drops_feed_before_spread() -> None:
+    # Opt-in anti-backlash: the feed drops feed_backlash_mm BEFORE the recoater spread, then the
+    # post-spread feed-up covers that drop plus the advance — net advance unchanged, approached from
+    # below so mechanical backlash is taken up in one direction. Default 0 => no behavior change.
+    assert PrintSettings().feed_backlash_mm == 0.0
+    feeds0 = [k for k in kinds_of(one_layer()) if k[0] == "move_rel" and k[1] == FEED]
+    assert feeds0 == [("move_rel", FEED, -0.4)]  # off: single up move (feed_thickness 0.4)
+    p = dataclasses.replace(one_layer(), feed_backlash_mm=2.0)
+    ks = kinds_of(p)
+    feeds = [k for k in ks if k[0] == "move_rel" and k[1] == FEED]
+    assert feeds == [("move_rel", FEED, 2.0), ("move_rel", FEED, -2.4)]  # down +2, then up -(0.4+2)
+    # the preload drop is emitted BEFORE the spread (recoater to end), the up move AFTER it
+    kinds = [(s.kind, s.axis, s.value) for s in compile_print(p)]
+    i_down = kinds.index(("move_rel", FEED, 2.0))
+    i_spread = kinds.index(("move_abs", RECOATER, p.recoater_end_mm))
+    i_up = kinds.index(("move_rel", FEED, -2.4))
+    assert i_down < i_spread < i_up
+
+
 def test_bounded_clamps_new_position_fields() -> None:
     lim = SafetyLimits()
     p = PrintSettings.bounded(

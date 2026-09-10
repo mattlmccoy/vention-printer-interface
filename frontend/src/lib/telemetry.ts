@@ -4,12 +4,12 @@
 export type AxisNo = 1 | 2 | 3 | 4;
 export const AXES: readonly AxisNo[] = [1, 2, 3, 4];
 export const AXIS_NAMES: Record<AxisNo, string> = {
-  1: "Part Piston",
+  1: "Build Piston",
   2: "Feed Piston",
   3: "Printhead Gantry",
   4: "Recoater Gantry",
 };
-export const AXIS_SHORT: Record<AxisNo, string> = { 1: "part", 2: "feed", 3: "printhead", 4: "recoater" };
+export const AXIS_SHORT: Record<AxisNo, string> = { 1: "build", 2: "feed", 3: "printhead", 4: "recoater" };
 /** Physical side each gantry homes to (user, 2026-09-09): printhead LEFT, recoater RIGHT. */
 export const GANTRY_HOME_SIDE: Record<3 | 4, "left" | "right"> = { 3: "left", 4: "right" };
 /** Measured travel (mm) from V1.py; the backend's HARD_BOUNDS use the same numbers. */
