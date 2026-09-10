@@ -154,6 +154,44 @@ def test_multipass_printhead_returns_to_midpoint_then_home() -> None:
     assert returns1 == [5.0]
 
 
+def three_printing_layers() -> PrintSettings:
+    p = PrintSettings()
+    return dataclasses.replace(
+        p,
+        thin_precoat=dataclasses.replace(p.thin_precoat, n_layers=0),
+        printing=dataclasses.replace(p.printing, n_layers=3),
+        postcoat=dataclasses.replace(p.postcoat, n_layers=0),
+    )
+
+
+def test_nozzle_purge_dwell_and_scheduling() -> None:
+    # Firing is external; the software's purge is a DWELL at the printhead start position (250) so
+    # the printhead controller can fire. Default off. Modes: every pass / once per layer / every N.
+    assert PrintSettings().purge_dwell_s == 0.0
+    assert not any(s.label == "nozzle purge" for s in compile_print(one_layer()))
+
+    # every_pass with multipass 3 -> a purge dwell before each of the 3 jet-outs, at 250 mm
+    p = dataclasses.replace(one_layer(), n_jet_passes=3, purge_dwell_s=0.5, purge_mode="every_pass")
+    steps = compile_print(p)
+    purges = [s for s in steps if s.kind == "dwell" and s.label == "nozzle purge"]
+    assert len(purges) == 3 and all(s.value == 0.5 for s in purges)
+    # each purge is immediately preceded by a printhead move to the purge/start position (250)
+    for i, s in enumerate(steps):
+        if s.label == "nozzle purge":
+            prev = [x for x in steps[:i] if x.axis == PRINTHEAD and x.kind == "move_abs"][-1]
+            assert prev.value == p.printhead_start_mm
+
+    # per_layer: one purge per printing layer regardless of multipass
+    p2 = dataclasses.replace(three_printing_layers(), n_jet_passes=2, purge_dwell_s=1.0,
+                             purge_mode="per_layer")
+    assert len([s for s in compile_print(p2) if s.label == "nozzle purge"]) == 3
+
+    # every_n_layers, N=2 -> printing layers 1 and 3 purge (first + every 2nd)
+    p3 = dataclasses.replace(three_printing_layers(), purge_dwell_s=1.0,
+                             purge_mode="every_n_layers", purge_every_n_layers=2)
+    assert len([s for s in compile_print(p3) if s.label == "nozzle purge"]) == 2
+
+
 def test_feed_backlash_preload_drops_feed_before_spread() -> None:
     # Opt-in anti-backlash: the feed drops feed_backlash_mm BEFORE the recoater spread, then the
     # post-spread feed-up covers that drop plus the advance — net advance unchanged, approached from

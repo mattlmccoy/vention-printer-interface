@@ -47,6 +47,9 @@ export interface PrintSettings {
   printhead_end_mm: number;
   printhead_multipass_return_mm: number;
   printhead_start_mm: number;
+  purge_dwell_s: number;
+  purge_mode: string; // "every_pass" | "per_layer" | "every_n_layers"
+  purge_every_n_layers: number;
   part_max_mm: number;
   heater_speed: number;
   heater_accel: number;
@@ -72,6 +75,7 @@ export const DEFAULT_PLAN: PrintSettings = {
   feed_end_mm: 145, recoater_home_mm: 5, recoater_return_mm: 350, recoater_end_mm: 950,
   heater_home_mm: 5, heater_start_mm: 425, heater_end_mm: 600,
   printhead_home_mm: 5, printhead_end_mm: 900, printhead_multipass_return_mm: 250, printhead_start_mm: 250, part_max_mm: 72,
+  purge_dwell_s: 0, purge_mode: "per_layer", purge_every_n_layers: 5,
   heater_speed: 50, heater_accel: 250, n_heater_passes: 1,
   heater_enabled: false, settle_s: 1, feed_backlash_mm: 0, feed_fast_speed: 5, feed_fast_accel: 30,
 };
@@ -147,6 +151,7 @@ export function compilePrint(plan: PrintSettings): Step[] {
 
   let feedPos = plan.feed_end_mm; // running feed column top; drops by each feed advance
   let layerNo = 0;
+  let printLayer = 0; // 1-based printing-layer index (for the nozzle-purge schedule)
   let exhausted = false;
   for (const name of PHASES) {
     if (name === "postcoat" && !plan.postcoat_enabled) continue;
@@ -209,11 +214,24 @@ export function compilePrint(plan: PrintSettings): Step[] {
       }
 
       // ---- printing ----
+      printLayer += 1;
+      // Nozzle-purge schedule (firing is external; we only DWELL at the start position so the
+      // printhead can fire): every pass, once per layer, or every N printing layers.
+      const purgeOn = plan.purge_dwell_s > 0;
+      const purgeEveryPass = purgeOn && plan.purge_mode === "every_pass";
+      const purgeFirstPass = purgeOn && (plan.purge_mode === "per_layer"
+        || (plan.purge_mode === "every_n_layers"
+            && (printLayer - 1) % Math.max(plan.purge_every_n_layers, 1) === 0));
       // Concurrent jet + retract: recoater home WHILE the printhead jets; ONE wait covers both.
       // Multipass shuttles the printhead back only to printhead_multipass_return_mm between passes
       // (saves travel), and home on the LAST pass to clear the next recoat.
       add(name, layerNo, "move_abs", RECOATER, plan.recoater_home_mm);
       for (let j = 0; j < plan.n_jet_passes; j++) {
+        if (purgeEveryPass || (purgeFirstPass && j === 0)) {
+          add(name, layerNo, "move_abs", PRINTHEAD, plan.printhead_start_mm);
+          add(name, layerNo, "wait");
+          add(name, layerNo, "dwell", null, plan.purge_dwell_s, "nozzle purge");
+        }
         add(name, layerNo, "move_abs", PRINTHEAD, plan.printhead_end_mm);
         add(name, layerNo, "wait");
         const back = j === plan.n_jet_passes - 1 ? plan.printhead_home_mm : plan.printhead_multipass_return_mm;

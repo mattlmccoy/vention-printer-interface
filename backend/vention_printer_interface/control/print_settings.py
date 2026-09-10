@@ -22,6 +22,7 @@ RECOATER = 4  # the recoater gantry also carries the IR heater (V1.py HEATER_* u
 PHASES = ("thin_precoat", "printing", "postcoat")
 MAX_LAYERS = 500
 MAX_HEATER_PASSES = 10
+PURGE_MODES = ("every_pass", "per_layer", "every_n_layers")
 
 
 def _clamp(v: float, lo: float, hi: float) -> float:
@@ -120,6 +121,11 @@ class PrintSettings:
     printhead_end_mm: float = 900.0
     printhead_multipass_return_mm: float = 250.0  # between multipass passes; home only on the last
     printhead_start_mm: float = 250.0  # printhead parks here after setup-home, before layer 1
+    # Nozzle purge: firing is external, so this only DWELLS the printhead at printhead_start_mm
+    # before a jet pass (a window for the external printhead controller to purge). 0 s = off.
+    purge_dwell_s: float = 0.0
+    purge_mode: str = "per_layer"  # "every_pass" | "per_layer" | "every_n_layers"
+    purge_every_n_layers: int = 5  # used when purge_mode == "every_n_layers"
     part_max_mm: float = 72.0  # final part-cylinder drop position (= part spill-safe depth)
     heater_speed: float = 50.0
     heater_accel: float = 250.0
@@ -222,6 +228,10 @@ class PrintSettings:
         passes = int(passes) if isinstance(passes, int | float) else base.n_heater_passes
         jet_passes = d.get("n_jet_passes", base.n_jet_passes)
         jet_passes = int(jet_passes) if isinstance(jet_passes, int | float) else base.n_jet_passes
+        p_mode = d.get("purge_mode", base.purge_mode)
+        p_mode = p_mode if p_mode in PURGE_MODES else base.purge_mode
+        p_every = d.get("purge_every_n_layers", base.purge_every_n_layers)
+        p_every = int(p_every) if isinstance(p_every, int | float) else base.purge_every_n_layers
         return cls(
             thin_precoat=PhasePlan.bounded(d.get("thin_precoat"), limits, base.thin_precoat),
             printing=PhasePlan.bounded(d.get("printing"), limits, base.printing),
@@ -267,6 +277,9 @@ class PrintSettings:
             heater_enabled=bool(d.get("heater_enabled", base.heater_enabled)),
             settle_s=_clamp(num("settle_s", base.settle_s), 0.0, 30.0),
             feed_backlash_mm=_clamp(num("feed_backlash_mm", base.feed_backlash_mm), 0.0, 50.0),
+            purge_dwell_s=_clamp(num("purge_dwell_s", base.purge_dwell_s), 0.0, 60.0),
+            purge_mode=p_mode,
+            purge_every_n_layers=int(_clamp(p_every, 1, MAX_LAYERS)),
             feed_fast_speed=limits.clamp_speed(FEED, num("feed_fast_speed", base.feed_fast_speed)),
             feed_fast_accel=limits.clamp_accel(FEED, num("feed_fast_accel", base.feed_fast_accel)),
             target_carbon_wt=_clamp(
@@ -358,6 +371,7 @@ def compile_print(plan: PrintSettings) -> tuple[Step, ...]:
     feed_pos = plan.feed_end_mm
 
     layer_no = 0
+    print_layer = 0  # 1-based index of printing-phase layers (for the nozzle-purge schedule)
     exhausted = False
     for name in PHASES:
         if name == "postcoat" and not plan.postcoat_enabled:
@@ -419,11 +433,27 @@ def compile_print(plan: PrintSettings) -> tuple[Step, ...]:
                 continue
 
             # ---- printing ----
+            print_layer += 1
+            # Nozzle-purge schedule (firing is external; we only DWELL at the start position so the
+            # printhead can fire): every pass, once per layer, or every N printing layers.
+            purge_on = plan.purge_dwell_s > 0
+            purge_every_pass = purge_on and plan.purge_mode == "every_pass"
+            purge_first_pass = purge_on and (
+                plan.purge_mode == "per_layer"
+                or (
+                    plan.purge_mode == "every_n_layers"
+                    and (print_layer - 1) % max(plan.purge_every_n_layers, 1) == 0
+                )
+            )
             # Concurrent jet + retract: recoater retracts home WHILE the printhead jets; ONE wait
-            # covers both moves (no wait between them). Multipass shuttles the printhead back only
-            # to printhead_multipass_return_mm between passes (saves travel), home on the LAST pass.
+            # covers both moves. Multipass shuttles the printhead back only to
+            # printhead_multipass_return_mm between passes (saves travel), home on the LAST pass.
             add(name, layer_no, "move_abs", RECOATER, plan.recoater_home_mm)
             for pass_no in range(plan.n_jet_passes):
+                if purge_every_pass or (purge_first_pass and pass_no == 0):
+                    add(name, layer_no, "move_abs", PRINTHEAD, plan.printhead_start_mm)
+                    add(name, layer_no, "wait")
+                    add(name, layer_no, "dwell", value=plan.purge_dwell_s, label="nozzle purge")
                 add(name, layer_no, "move_abs", PRINTHEAD, plan.printhead_end_mm)
                 add(name, layer_no, "wait")
                 last = pass_no == plan.n_jet_passes - 1
