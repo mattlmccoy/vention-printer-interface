@@ -114,6 +114,7 @@ export function compilePrint(plan: PrintSettings): Step[] {
   add("setup", 0, "wait");
   let layerNo = 0;
   for (const name of PHASES) {
+    if (name === "postcoat" && !plan.postcoat_enabled) continue;
     const ph = plan[name];
     if (ph.n_layers === 0) continue;
     add(name, layerNo, "set_speed", PART, ph.part_speed);
@@ -127,6 +128,20 @@ export function compilePrint(plan: PrintSettings): Step[] {
     for (let idx = 0; idx < ph.n_layers; idx++) {
       layerNo++;
       const t = ph.layer_thickness_mm;
+      if (name === "thick_precoat") {
+        // Backfill the runway + fill the part cavity: the build/part piston does NOT move, so the
+        // part height does not grow. Per layer: spread, raise the feed piston by t, dwell, return.
+        add(name, layerNo, "mark", null, null, "layer_start");
+        add(name, layerNo, "move_abs", RECOATER, plan.recoater_end_mm);
+        add(name, layerNo, "wait");
+        add(name, layerNo, "move_rel", FEED, -t);
+        add(name, layerNo, "wait");
+        add(name, layerNo, "dwell", null, plan.settle_s);
+        add(name, layerNo, "move_abs", RECOATER, plan.recoater_home_mm);
+        add(name, layerNo, "wait");
+        add(name, layerNo, "mark", null, null, "layer_end");
+        continue;
+      }
       height += t;
       if (name === "printing" && idx > 0) {
         add(name, layerNo, "set_speed", RECOATER, ph.recoater_speed);

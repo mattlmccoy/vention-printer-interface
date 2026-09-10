@@ -51,13 +51,21 @@ test("compile of the full default plan: 16 layers, heights, resets", () => {
   // four non-empty phase setups + 9 per-layer printing resets
   assert.equal(steps.filter((s) => s.kind === "set_speed" && s.axis === 4 && s.value === 100).length, 13);
   assert.equal(steps.filter((s) => s.kind === "heater").length, 0);
-  // TODO Task 3: layer_end heights below reflect the INTERIM uniform-body compiler that still runs the
-  // new thick_precoat/thin_precoat phases through the old per-layer body; the thick-precoat body is
-  // rewritten in Task 3. Update these expectations then.
+  // thick_precoat holds the build/part piston fixed, so its 3 layers add no part height; the part
+  // height only grows through thin (0.2*2) + printing (2.0*10) + postcoat (5.0*1) = 25.4 mm.
   const ends = steps.filter((s) => s.label === "layer_end").map((s) => s.part_height_mm);
-  assert.equal(ends[0], 5); // first thick_precoat layer
-  assert.ok(Math.abs((ends.at(-1) ?? 0) - 40.4) < 1e-9); // last postcoat layer, total stack
+  assert.deepEqual(ends.slice(0, 3), [0, 0, 0]); // 3 thick_precoat layers: part piston fixed
+  assert.ok(Math.abs(ends[3] - 0.2) < 1e-9); // first thin_precoat layer (part down 0.2 mm)
+  assert.ok(Math.abs(ends[5] - 2.4) < 1e-9); // first printing layer (+2.0 mm)
+  assert.ok(Math.abs((ends.at(-1) ?? 0) - 25.4) < 1e-9); // last postcoat layer, part stack
+  // thick_precoat never moves the part piston
+  assert.equal(steps.filter((s) => s.phase === "thick_precoat" && s.kind === "move_rel" && s.axis === 1).length, 0);
   assert.equal(steps.filter((s) => s.label === "layer_start").length, 16);
+});
+
+test("postcoat toggle off emits no postcoat steps", () => {
+  assert.ok(compilePrint(DEFAULT_PLAN).some((s) => s.phase === "postcoat"));
+  assert.ok(!compilePrint({ ...DEFAULT_PLAN, postcoat_enabled: false }).some((s) => s.phase === "postcoat"));
 });
 
 test("describeStep", () => {

@@ -283,6 +283,8 @@ def compile_print(plan: PrintSettings) -> tuple[Step, ...]:
 
     layer_no = 0
     for name in PHASES:
+        if name == "postcoat" and not plan.postcoat_enabled:
+            continue
         ph = plan.phase(name)
         if ph.n_layers == 0:
             continue
@@ -298,6 +300,20 @@ def compile_print(plan: PrintSettings) -> tuple[Step, ...]:
         for idx in range(ph.n_layers):
             layer_no += 1
             t = ph.layer_thickness_mm
+            if name == "thick_precoat":
+                # Backfill the runway + fill the part cavity: the build/part piston does NOT move,
+                # so the part height does not grow. Per layer: spread the recoater, raise the feed
+                # piston by the layer thickness, dwell, return the recoater.
+                add(name, layer_no, "mark", label="layer_start")
+                add(name, layer_no, "move_abs", RECOATER, plan.recoater_end_mm)  # spread
+                add(name, layer_no, "wait")
+                add(name, layer_no, "move_rel", FEED, -t)  # feed piston up (negative = up)
+                add(name, layer_no, "wait")
+                add(name, layer_no, "dwell", value=plan.settle_s)  # V1.py's time.sleep(1)
+                add(name, layer_no, "move_abs", RECOATER, plan.recoater_home_mm)
+                add(name, layer_no, "wait")
+                add(name, layer_no, "mark", label="layer_end")
+                continue
             height += t
             if name == "printing" and idx > 0:
                 # V1.py:125-127 resets recoater speed at the top of each print layer

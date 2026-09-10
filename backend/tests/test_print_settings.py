@@ -168,7 +168,12 @@ def test_compile_precoat_has_no_printhead_or_heater_steps() -> None:
     assert steps and not any(s.axis == PRINTHEAD and s.kind.startswith("move") for s in steps)
     assert not any(s.kind == "heater" for s in steps)
     first_mark = next(s for s in steps if s.kind == "mark")
-    assert first_mark.label == "layer_start" and first_mark.part_height_mm == 5.0
+    # thick_precoat holds the build/part piston fixed, so the part height does not grow.
+    assert first_mark.label == "layer_start" and first_mark.part_height_mm == 0.0
+    # its body spreads then raises the feed piston by the layer thickness; the part never moves.
+    assert not any(s.kind == "move_rel" and s.axis == PART for s in steps)
+    assert ("move_abs", RECOATER, 930.0) in [(s.kind, s.axis, s.value) for s in steps]
+    assert ("move_rel", FEED, -5.0) in [(s.kind, s.axis, s.value) for s in steps]
 
 
 def test_compile_heater_disabled_emits_no_heater_steps_but_still_passes() -> None:
@@ -187,14 +192,39 @@ def test_compile_multiple_heater_passes_and_layer_heights() -> None:
     resets = [s for s in steps if s.kind == "set_speed" and s.axis == RECOATER and s.value == 100.0]
     # four non-empty phase setups (thick/thin precoat, printing, postcoat) + 9 per-layer resets
     assert len(resets) == 4 + 9
-    # TODO Task 3: layer heights/numbering below reflect the INTERIM uniform-body compiler that
-    # still runs the new thick_precoat/thin_precoat phases through the old per-layer body. The
-    # thick-precoat body is rewritten in Task 3; update these expectations then.
+    # thick_precoat holds the build/part piston fixed, so its 3 layers add no part height; the
+    # part height only grows through thin (0.2*2) + printing (2.0*10) + postcoat (5.0*1) = 25.4 mm.
     heights = [s.part_height_mm for s in steps if s.label == "layer_end"]
-    assert heights[0] == 5.0  # first thick_precoat layer (5.0 mm)
-    assert heights[-1] == pytest.approx(40.4)  # last postcoat layer, total stack
-    # 16 layers total: thick 3 + thin 2 + printing 10 + postcoat 1
+    assert heights[:3] == [0.0, 0.0, 0.0]  # 3 thick_precoat layers: part piston fixed
+    assert heights[3] == pytest.approx(0.2)  # first thin_precoat layer (part down 0.2 mm)
+    assert heights[4] == pytest.approx(0.4)  # second thin_precoat layer
+    assert heights[5] == pytest.approx(2.4)  # first printing layer (+2.0 mm)
+    assert heights[-1] == pytest.approx(25.4)  # last postcoat layer, part stack
+    # 16 layers total still numbered 1..16: thick 3 + thin 2 + printing 10 + postcoat 1
     assert [s.layer for s in steps if s.label == "layer_start"] == list(range(1, 17))
+
+
+def test_thick_precoat_layer_holds_part_and_spreads() -> None:
+    p = dataclasses.replace(
+        PrintSettings(),
+        thick_precoat=PhasePlan(layer_thickness_mm=5.0, n_layers=1),
+        thin_precoat=PhasePlan(n_layers=0),
+        printing=PhasePlan(n_layers=0),
+        postcoat=PhasePlan(n_layers=0),
+    )
+    steps = [s for s in compile_print(p) if s.phase == "thick_precoat"]
+    ks = [(s.kind, s.axis, s.value) for s in steps]
+    assert not any(k == "move_rel" and a == PART for (k, a, v) in ks)  # part piston fixed
+    assert ("move_abs", RECOATER, p.recoater_end_mm) in ks             # spread
+    assert ("move_rel", FEED, -5.0) in ks                              # feed up by the thick layer
+
+
+def test_postcoat_toggle_off_emits_no_postcoat_steps() -> None:
+    import dataclasses
+    p_on = PrintSettings()
+    p_off = dataclasses.replace(p_on, postcoat_enabled=False)
+    assert any(s.phase == "postcoat" for s in compile_print(p_on))
+    assert not any(s.phase == "postcoat" for s in compile_print(p_off))
 
 
 def test_steps_are_frozen() -> None:
