@@ -139,67 +139,37 @@ export function pistonArrow(prev: number | null, curr: number | null, eps = 0.05
 
 - [ ] **Step 4 — Commit** — `feat(diagram): blinking directional arrows on moving pistons` + trailer.
 
-## Task 4: `ControlStrip.tsx` — bounded recoater + piston controls
+## Task 4: On-diagram nudge controls (▲/▼ at each piston, ◀/▶ at the recoater)
 
-**Files:** Create `frontend/src/components/ControlStrip.tsx`; styles in `frontend/src/styles.css` (tokens only).
+> **Design pivot (user, 2026-09-10):** the controls live **on the diagram itself**, right next to the
+> thing they move — a **▲ (up) / ▼ (down)** pair at each piston, and **◀ / ▶** arrows at the recoater
+> gantry — each issuing a bounded relative nudge. This replaces a separate control panel. Direct
+> manipulation; no free jog; the backend clamps every target to travel.
 
-Reference the existing move idiom (`ControlView.tsx:22-23`): `api.move(axis, "rel", sign*step)` and `api.move(axis, "abs", mm)`, gated by `ok` and issued through `call(label, fn)`.
+**Files:** Modify `frontend/src/components/Elevation.tsx` (add optional in-SVG control clusters); styles in `frontend/src/styles.css` (tokens only). In-SVG (not an HTML overlay) so the buttons scale with the diagram's `viewBox`.
 
-- [ ] **Step 1** — Build a compact, bounded control surface (NOT full jog — per the approved design):
-```tsx
-import { useState } from "react";
-import { api } from "../lib/api.ts";
-import type { Call } from "./views/types.ts";
-
-const FEED = 2, PART = 1, RECOATER = 4;
-/** Bounded correction controls for priming: piston nudges (±1 / ±5 mm) + move-to, and recoater
- *  spread/return/nudge. Every target goes through api.move; `ok` gates all of it. No free jog. */
-export function ControlStrip({ ok, call, settings }: {
-  ok: boolean; call: Call; settings: Record<string, number> | null;
-}) {
-  const [to, setTo] = useState<Record<number, string>>({});
-  const nudge = (axis: number, mm: number, name: string) =>
-    call(`nudge ${name}`, () => api.move(axis, "rel", mm));
-  const moveTo = (axis: number, name: string) => {
-    const v = to[axis]; if (v === "" || v === undefined) return;
-    return call(`move ${name}`, () => api.move(axis, "abs", Number(v)));
-  };
-  const piston = (axis: number, name: string) => (
-    <div className="cs-row">
-      <span className="cs-name">{name}</span>
-      <button className="small" disabled={!ok} onClick={() => nudge(axis, -5, name)} title="up 5 mm">▲5</button>
-      <button className="small" disabled={!ok} onClick={() => nudge(axis, -1, name)} title="up 1 mm">▲1</button>
-      <button className="small" disabled={!ok} onClick={() => nudge(axis, +1, name)} title="down 1 mm">▼1</button>
-      <button className="small" disabled={!ok} onClick={() => nudge(axis, +5, name)} title="down 5 mm">▼5</button>
-      <input type="number" className="cs-to" placeholder="to mm" value={to[axis] ?? ""} disabled={!ok}
-        onChange={(e) => setTo((p) => ({ ...p, [axis]: e.target.value }))} />
-      <button className="small" disabled={!ok || (to[axis] ?? "") === ""} onClick={() => moveTo(axis, name)}>go</button>
-    </div>
-  );
-  const end = settings?.level_recoat_end_mm, ret = settings?.level_recoat_return_mm;
-  return (
-    <div className="controlstrip">
-      {piston(PART, "build piston")}
-      {piston(FEED, "feed piston")}
-      <div className="cs-row">
-        <span className="cs-name">recoater</span>
-        <button className="small" disabled={!ok || end === undefined} onClick={() => call("spread", () => api.move(RECOATER, "abs", Number(end)))}>spread ▶</button>
-        <button className="small" disabled={!ok || ret === undefined} onClick={() => call("return", () => api.move(RECOATER, "abs", Number(ret)))}>◀ return</button>
-        <button className="small" disabled={!ok} onClick={() => call("nudge recoater", () => api.move(RECOATER, "rel", -20))} title="toward home 20 mm">◀20</button>
-        <button className="small" disabled={!ok} onClick={() => call("nudge recoater", () => api.move(RECOATER, "rel", +20))} title="away 20 mm">20▶</button>
-      </div>
-      <div className="hint">Nudges and “go” are clamped to axis travel by the backend. ▲ = up/flush, ▼ = down (open cavity).</div>
-    </div>
-  );
-}
+- [ ] **Step 1** — Give `Elevation` optional interactive controls. Add props:
+```ts
+onNudge?: (axis: number, deltaMm: number) => void; // undefined = read-only (Print/Job views): render no buttons
+nudgeStepMm?: number;                              // default 1
+enabled?: boolean;                                 // default true; false = greyed, non-interactive
 ```
-(The backend already clamps every `api.move` target to travel — the hint states that; do not re-implement clamping here.)
+  - When `onNudge` is provided, render an in-SVG control cluster as a real, accessible control:
+    each button is a `<g class="el-nudge" role="button" tabIndex={0} aria-label="feed piston up 1 mm">`
+    wrapping a `<rect>` hit-target + a glyph (`▲`/`▼` for pistons, `◀`/`▶` for the recoater), with
+    `onClick`/`onKeyDown`(Enter/Space) → `onNudge(axis, delta)`.
+  - **Pistons** (build axis 1, feed axis 2): a **▲** just ABOVE the piston rect → `onNudge(axis, -nudgeStepMm)` (up/flush = negative mm), and a **▼** just BELOW → `onNudge(axis, +nudgeStepMm)` (down/open cavity = positive mm). Place them at `x = r.x + r.w/2` using the existing `r` geometry.
+  - **Recoater** (axis 4): a **◀** and **▶** flanking the recoater carriage → `onNudge(4, -nudgeStepMm*?)` toward home / away. Use a larger recoater step (see Step 2). Place at the carriage's `gantryX(4, rc)`.
+  - When `enabled === false`, render the clusters greyed and ignore clicks (mirror the disabled look). Do NOT render clusters at all when `onNudge` is undefined — Print/Job/Runs keep the read-only diagram exactly as-is.
+  - Keep everything else in `Elevation` unchanged (markers, arrows from Task 3, legend, heater).
 
-- [ ] **Step 2 — Style** `.controlstrip`, `.cs-row`, `.cs-name`, `.cs-to` in `styles.css` (grid/flex, tokens only, no overflow at narrow width — `min-width:0` on inputs).
+- [ ] **Step 2 — Style** in `styles.css` (tokens only, no literals): `.el-nudge rect` = a subtle hit target (`fill: var(--panel); stroke: var(--line-control);` small radius) with a `:hover`/`:focus-visible` accent (`stroke: var(--accent)`); `.el-nudge text` = `fill: var(--fg); font: var(--font-mono);` centered; `.el-nudge[aria-disabled="true"]` = `opacity:.35; pointer-events:none;`. Give the cluster a comfortable tap size.
 
-- [ ] **Step 3 — Verify** — `npm run build` clean + `npm test` green.
+- [ ] **Step 3 — Verify** — `cd frontend && npm run build` (tsc clean + vite) + `npm test` (whole suite green, incl. theme no-literal check). Coordinator browser check: ▲/▼ appear at each piston and ◀/▶ at the recoater in the Priming view; clicking issues a bounded move; Print/Job diagrams show NO buttons.
 
-- [ ] **Step 4 — Commit** — `feat(control): bounded ControlStrip (piston nudges + recoater) for priming` + trailer.
+- [ ] **Step 4 — Commit** — `feat(diagram): on-diagram piston ▲/▼ + recoater ◀/▶ nudge controls` + trailer `Co-Authored-By: Claude Opus 4.8 <noreply@anthropic.com>`.
+
+**PrimingView wires it** (in Task 5): `<Elevation ... onNudge={(axis, d) => call("nudge", () => api.move(axis, "rel", d))} enabled={ok} nudgeStepMm={step} />`, where `step` is an operator-chosen nudge size (a small selector: 0.5 / 1 / 5 mm). The recoater arrows may use a coarser step internally (e.g. `step*20`) since the gantry travels ~972 mm — implement that scaling inside `Elevation`'s recoater handler or pass a separate `recoaterStepMm`; keep it simple and documented.
 
 ## Task 5: Rebuild `PrimingView` as the stepped walkthrough
 
@@ -215,7 +185,11 @@ export function ControlStrip({ ok, call, settings }: {
 
   **Level step:** a **“Spread”** button (recoater → `level_recoat_end_mm`) and **“Return”** (→ `level_recoat_return_mm`) — **operator-repeatable**: they press Spread/Return as many times as needed until level (per the approved design; NOT a fixed pass count). The `ControlStrip` recoater buttons cover this too.
 
-  **Ready step:** summary; a link/hint to the Print tab.
+  **Ready step:** a **"Bed is primed — finish"** button calls `api.primedCapture()`
+  (`POST /api/primed/capture`, added in Task 7a) which snapshots the controller's live piston
+  positions server-side as the print's starting positions; show the captured part/feed positions +
+  `captured_at` on success, and a hint that the Print tab now uses these as its start. Summary + link
+  to Print. (Do NOT send client-side position numbers — the endpoint reads them from the controller.)
 
   Track the active step in local state (`const [step, setStep] = useState(0)`), with Back/Next between steps and each step’s primary action. Keep **RUN PRIMING (auto)** and **ABORT** available (the existing `api.primingRun` macro as an "auto-run everything" escape hatch, `api.printAbort`).
 
@@ -231,6 +205,30 @@ export function ControlStrip({ ok, call, settings }: {
 - [ ] **Step 2** — Update `COVERAGE.md`: mark spec §6 as the walkthrough (this plan), and add a Plan 5 row; note the deferred grams/volume + computed-depth-from-part-volume as calibration hooks.
 - [ ] **Step 3 — Verify** — `npm run build` clean + `npm test` green.
 - [ ] **Step 4 — Commit** — `style(priming): walkthrough/stepper layout + COVERAGE` + trailer.
+
+## Task 7a: `PrimedState` store + capture/get API (backend, TDD)
+
+**Files:** Create `backend/vention_printer_interface/control/primed_state.py`, `.../tests/test_primed_state.py`; modify `backend/vention_printer_interface/api/app.py` + a test `.../tests/test_api_primed.py`. Follow the existing `priming_store.py` / `test_api_priming.py` patterns (READ them first).
+
+- [ ] **Step 1 (RED)** — `test_primed_state.py`: a `PrimedState` frozen dataclass with `part_mm: float`, `feed_mm: float`, `captured_at: float`; `save_primed(root, state)` then `load_primed(root)` round-trips; `load_primed` on an empty root returns `None`. Write the test, run `uv run pytest .../test_primed_state.py`, SEE it fail (module missing).
+- [ ] **Step 2 (GREEN)** — implement `primed_state.py` (dataclass + JSON save/load under the same data root the priming store uses). Run the test → pass.
+- [ ] **Step 3 (RED)** — `test_api_primed.py` (mirror `test_api_priming.py`'s app fixture): `POST /api/primed/capture` on a connected simulated controller returns `{part_mm, feed_mm, captured_at}` read from the controller's live telemetry positions (axis 1 = part, axis 2 = feed) and persists them; `GET /api/primed` returns the saved state (or `{"primed": null}` when none). Add a test that capture with no controller/telemetry returns a clear 409. Run → fail.
+- [ ] **Step 4 (GREEN)** — add the routes to `app.py`: `capture_primed()` reads `ctrl().status()`/telemetry positions server-side (do NOT accept positions from the request body), builds `PrimedState`, `save_primed(...)`, returns it; `get_primed()` returns the stored state or `{"primed": null}`. Wire `app.state.primed = load_primed(root)` at startup like priming. Run → pass.
+- [ ] **Step 5** — full suite `uv run pytest` + `ruff check` + `mypy` clean (per repo config). Frontend: add `api.primedCapture()` / `api.primed()` to `src/lib/api.ts` (`req("POST","/api/primed/capture")`, `req("GET","/api/primed")`) — build stays green.
+- [ ] **Step 6 — Commit** — `feat(primed): capture primed piston positions (server-side snapshot) + API` + trailer.
+
+## Task 7b: `compile_print` primed setup + require-primed guard (backend, TDD)
+
+**Files:** Modify `backend/vention_printer_interface/control/print_settings.py` (`compile_print`) + `.../tests/test_print_settings.py`; modify the print run guard in `api/app.py` + `test_api*.py`. READ `compile_print` (setup lines ~295-301) and the existing print-settings tests first — several assert the current setup order (home_all, feed→feed_end); those assertions must be UPDATED to the primed setup, not left stale.
+
+- [ ] **Step 1 (RED)** — in `test_print_settings.py`, replace/adjust the setup-order assertions to the PRIMED setup and add a test: the first steps of `compile_print(plan)` **home the printhead and recoater only** (per-axis `home` for axes 3 and 4), and contain **no `home_all`** and **no piston (`FEED`/`PART`) move in setup** — the pistons start where priming left them. Run → fail (current compiler still emits `home_all` + feed→feed_end).
+- [ ] **Step 2 (GREEN)** — change `compile_print`'s setup block: emit `home` for `PRINTHEAD` then `home` for `RECOATER` (each + `wait`), and DELETE the `home_all` and the `set_speed/set_accel/move_abs FEED → feed_end` setup steps. Leave the per-phase layer loops unchanged. Run → the whole `test_print_settings.py` green (fix any other assertions that counted setup steps — e.g. `estimate_duration_s` expectations, total step counts). 
+- [ ] **Step 3 (RED)** — print-run guard test: `POST /api/print/run` (or the existing start route) returns **409 "prime the bed first"** when `load_primed(root)` is `None`, and proceeds when a `PrimedState` exists. Run → fail.
+- [ ] **Step 4 (GREEN)** — in the print start handler, refuse with 409 when `app.state.primed` is `None`; otherwise proceed. Run → pass.
+- [ ] **Step 5** — full `uv run pytest` + ruff + mypy clean; note that `estimate_duration_s` and any step-count-dependent tests were updated. Frontend: the Print/Job view's start button should surface the 409 message ("prime the bed first") via the existing `call`/error path — no new UI needed, but confirm the error text reaches the banner.
+- [ ] **Step 6 — Commit** — `feat(print): primed start — home gantries only, require a primed bed (no piston home)` + trailer.
+
+> **Coupling note:** Task 7b changes the print's step list, so the frontend recipe mirror / any test asserting the compiled print's setup (e.g. `estimate.ts`, a step-count test) must be updated in the same task. Grep for `home_all` and `feed_end` across `frontend/src` and reconcile.
 
 ---
 

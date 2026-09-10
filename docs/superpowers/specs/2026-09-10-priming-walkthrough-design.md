@@ -69,6 +69,21 @@ telemetry frames (a small pure helper `pistonArrow(prev, curr)` → `"up" | "dow
 "In motion" reuses Task 4's `motion_complete[axis] === false`. The blink respects
 `prefers-reduced-motion` (no blink → steady arrow) like the existing marker pulse.
 
+## Primed positions become the print's start (user, 2026-09-10)
+When priming finishes, the current piston positions ARE the print's starting positions. Decisions:
+- **A print always requires a primed bed.** The Print run refuses (409) unless a valid primed-state
+  record exists — there is no cold-home print path.
+- **A primed print skips piston homing** (homing a piston ejects the powder just loaded) and **homes
+  only the gantries** (printhead + recoater hold no powder). The feed and build pistons START from
+  the saved primed positions; the per-layer feed-up loop then draws from the primed column (which the
+  fill-depth calc sized to exactly this job).
+- **Capture is server-side and trustworthy.** The walkthrough's final "Bed is primed — finish" action
+  calls `POST /api/primed/capture`, which snapshots the controller's own live piston positions (NOT
+  client-supplied numbers) into a persisted `PrimedState { part_mm, feed_mm, captured_at }`.
+- `compile_print`'s setup changes: replace `home_all` + feed→feed_end with **home gantries only**
+  (per-axis `home` for printhead + recoater), no piston home, no feed-to-145 move; the pistons are
+  already primed. `part_zero_mm` is captured from the primed part position as today.
+
 ## Non-goals / deferred
 - Grams / volume readout (needs cylinder areas — calibration).
 - The computed feed-depth-from-part-volume calc (documented hook only).
