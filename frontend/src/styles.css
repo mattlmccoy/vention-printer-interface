@@ -1,32 +1,7 @@
-/* Binder Jet Console — calm pass. Tokens only (theme.css owns every colour). */
-
-/* ---- redesign/ux-visual re-skin ----
-   Repoint the shared design tokens to the approved mockup (calm, high-contrast,
-   readable dark). Same variable NAMES as theme.css so every component inherits the
-   new look unchanged; styles.css is imported AFTER theme.css in main.tsx, so these
-   :root values win by cascade order. Only values change here — no class renames. */
-:root {
-  /* surfaces */
-  --bg: #0a0e14;          /* ground */
-  --bg-deep: #0d131c;     /* panel-2 (deeper surface: inputs, top/status bars, wells) */
-  --panel: #111823;       /* panel */
-  --line: #212b38;        /* hairline */
-  --line-strong: #2c3948; /* hairline-2 */
-  /* text */
-  --fg: #dce3ec;          /* ink (primary) */
-  --muted: #98a5b3;       /* dim (secondary) */
-  --label: #adb9c6;       /* uppercase mono labels (lighter/more legible than dim) */
-  --faint: #66727f;       /* faintest text */
-  /* accents (amber stays primary) */
-  --accent: #ffb454;      /* amber */
-  --live: #5cff8a;        /* live-green */
-  --err: #ff5f56;         /* danger */
-  --violet: #b98cff;      /* model / preview */
-  --trace-rc: #5cc8ff;    /* recoater-blue */
-  /* --fg-strong, --line-control, --err-btn, and the alias tokens (--accent-ink,
-     --focus, --warn*, --rec, --trace-part/feed/ph) inherit from theme.css; the
-     aliases resolve against the overridden bases above at use time. */
-}
+/* Binder Jet Console — calm pass. Tokens only (theme.css owns every colour).
+   The re-skin to the mockup palette lives in theme.css's :root (the single token
+   source); styles.css declares no :root and no colour literals — enforced by
+   theme.test.ts. */
 
 * { box-sizing: border-box; }
 html, body, #root { height: 100%; }

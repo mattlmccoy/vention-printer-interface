@@ -24,17 +24,18 @@ function declaredTokens(block: string): string[] {
 
 const rootBlock = extractRootBlock(css);
 
-// The FLIR token set, verbatim, plus --err-btn (T&C) and the four axis trace tokens that
-// replace FLIR's --trace-3..6. styles.css never hardcodes a color literal.
+// The FLIR token set, plus --err-btn (T&C), the four axis trace tokens that replace FLIR's
+// --trace-3..6, and the redesign/ux-visual re-skin additions (--label, --faint, --violet).
+// theme.css is the single token source; styles.css never hardcodes a color literal.
 const REQUIRED_TOKENS = [
   "--bg", "--bg-deep", "--panel", "--line", "--line-strong", "--line-control",
-  "--fg", "--fg-strong", "--muted",
+  "--fg", "--fg-strong", "--muted", "--label", "--faint",
   "--accent", "--accent-ink", "--focus",
   "--live", "--live-glow", "--live-glow-dim", "--live-bg",
   "--warn", "--warn-bg",
   "--err", "--err-bg",
   "--err-btn", "--rec",
-  "--trace-part", "--trace-feed", "--trace-ph", "--trace-rc",
+  "--trace-part", "--trace-feed", "--trace-ph", "--trace-rc", "--violet",
   "--image-bg", "--scrim", "--shadow", "--danger-ink",
   "--font-ui", "--font-mono", "--font-read",
   "--fs", "--space", "--radius",

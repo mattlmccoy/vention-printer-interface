@@ -12,15 +12,19 @@
 
 :root {
   color-scheme: dark;
-  --bg: #101418;
-  --bg-deep: #0b0e12;
-  --panel: #141920;
-  --line: #232a33;
-  --line-strong: #2f3843;
+  /* Re-skinned to the approved Binder Jet Console mockup (calm, high-contrast dark). */
+  --bg: #0a0e14;
+  --bg-deep: #0d131c;
+  --panel: #111823;
+  --line: #212b38;
+  --line-strong: #2c3948;
   --line-control: #4a5561;
-  --fg: #d7dde5;
+  --fg: #dce3ec;
   --fg-strong: #f5f7fa;
-  --muted: #8b97a5;
+  --muted: #98a5b3;
+  /* Uppercase mono labels (lighter than --muted) and the faintest text. */
+  --label: #adb9c6;
+  --faint: #66727f;
   --accent: #ffb454;
   --accent-ink: var(--bg);
   --focus: var(--accent);
@@ -39,7 +43,9 @@
   --trace-part: #5cff8a;
   --trace-feed: #ffb454;
   --trace-ph: #ff5f56;
-  --trace-rc: #6ec3ff;
+  --trace-rc: #5cc8ff;
+  /* Model / preview (dry-run) movement — distinct from every live axis colour. */
+  --violet: #b98cff;
   --image-bg: #000;
   --scrim: rgba(11, 14, 18, 0.85);
   --danger-ink: #ffffff;
