@@ -19,6 +19,7 @@ interface Draft {
   part_max_mm: number;
   n_jet_passes: number;
   printhead_multipass_return_mm: number;
+  printhead_start_mm: number;
   pre_heater_drop_mm: number;
   postcoat_enabled: boolean;
   target_carbon_wt: number;
@@ -42,6 +43,7 @@ function readDraft(plan: Record<string, unknown>): Draft {
     part_max_mm: n(plan.part_max_mm, 72),
     n_jet_passes: n(plan.n_jet_passes, 1),
     printhead_multipass_return_mm: n(plan.printhead_multipass_return_mm, 250),
+    printhead_start_mm: n(plan.printhead_start_mm, 250),
     pre_heater_drop_mm: n(plan.pre_heater_drop_mm),
     postcoat_enabled: typeof plan.postcoat_enabled === "boolean" ? plan.postcoat_enabled : true,
     target_carbon_wt: n(plan.target_carbon_wt),
@@ -72,6 +74,7 @@ export function RoutinePanel({ gates, call }: { gates: Gates; call: Call }) {
       part_max_mm: d.part_max_mm,
       n_jet_passes: d.n_jet_passes,
       printhead_multipass_return_mm: d.printhead_multipass_return_mm,
+      printhead_start_mm: d.printhead_start_mm,
       pre_heater_drop_mm: d.pre_heater_drop_mm,
       postcoat_enabled: d.postcoat_enabled,
       target_carbon_wt: d.target_carbon_wt,
@@ -94,6 +97,7 @@ export function RoutinePanel({ gates, call }: { gates: Gates; call: Call }) {
         <span>part max</span><span className="row"><NumberField value={d.part_max_mm} disabled={!ok} onChange={(v) => setD({ part_max_mm: v })} /> mm</span>
         <span title="prints each layer N times without dropping the part piston">multipass (passes / layer)</span><span className="row"><NumberField value={d.n_jet_passes} disabled={!ok} onChange={(v) => setD({ n_jet_passes: v })} /></span>
         <span title="Between multipass passes the printhead returns only to here instead of home (saves travel); it still returns home on the last pass.">multipass return</span><span className="row"><NumberField value={d.printhead_multipass_return_mm} disabled={!ok} onChange={(v) => setD({ printhead_multipass_return_mm: v })} /> mm</span>
+        <span title="Where the printhead parks at the start of every print (after the setup homing), before layer 1.">printhead start</span><span className="row"><NumberField value={d.printhead_start_mm} disabled={!ok} onChange={(v) => setD({ printhead_start_mm: v })} /> mm</span>
         <span>pre-heater drop</span><span className="row"><NumberField step="0.1" value={d.pre_heater_drop_mm} disabled={!ok} onChange={(v) => setD({ pre_heater_drop_mm: v })} /> mm</span>
         <span>postcoat</span><label className="row"><input type="checkbox" checked={d.postcoat_enabled} disabled={!ok} onChange={(e) => setD({ postcoat_enabled: e.target.checked })} /> enabled</label>
         <span>target carbon</span><span className="row"><NumberField step="0.01" value={d.target_carbon_wt} disabled={!ok} onChange={(v) => setD({ target_carbon_wt: v })} /> wt</span>

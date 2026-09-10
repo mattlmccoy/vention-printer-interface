@@ -15,17 +15,17 @@ test("printability and travel reasons", () => {
   assert.match(validate({ ...DEFAULT_PLAN, recoater_end_mm: 5000 })[0], /recoater_end_mm/);
 });
 
-test("compile matches the backend order for one print layer (52 steps, heater on)", () => {
+test("compile matches the backend order for one print layer (54 steps, heater on)", () => {
   const one = { ...DEFAULT_PLAN,
     thin_precoat: { ...DEFAULT_PLAN.thin_precoat, n_layers: 0 },
     printing: { ...DEFAULT_PLAN.printing, n_layers: 1 }, postcoat: { ...DEFAULT_PLAN.postcoat, n_layers: 0 }, heater_enabled: true };
   const steps = compilePrint(one);
-  // 12 setup (gantry homes + profiles) + 8 phase setup + 26 layer body + 6 finish = 52
-  assert.equal(steps.length, 52);
-  assert.equal(steps[20].label, "layer_start");
-  assert.equal(steps[45].label, "layer_end");
-  assert.equal(steps[45].part_height_mm, 2);
-  assert.deepEqual(steps.map((s) => s.index), [...Array(52).keys()]);
+  // 14 setup (gantry homes + profiles + printhead-to-start) + 8 phase setup + 26 layer + 6 finish = 54
+  assert.equal(steps.length, 54);
+  assert.equal(steps[22].label, "layer_start");
+  assert.equal(steps[47].label, "layer_end");
+  assert.equal(steps[47].part_height_mm, 2);
+  assert.deepEqual(steps.map((s) => s.index), [...Array(54).keys()]);
 });
 
 test("printing layer: multi-pass jetting + pre-heater drop and return-up", () => {

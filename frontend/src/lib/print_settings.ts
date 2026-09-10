@@ -46,6 +46,7 @@ export interface PrintSettings {
   printhead_home_mm: number;
   printhead_end_mm: number;
   printhead_multipass_return_mm: number;
+  printhead_start_mm: number;
   part_max_mm: number;
   heater_speed: number;
   heater_accel: number;
@@ -69,7 +70,7 @@ export const DEFAULT_PLAN: PrintSettings = {
   n_jet_passes: 1, pre_heater_drop_mm: 0, postcoat_enabled: true,
   feed_end_mm: 145, recoater_home_mm: 5, recoater_return_mm: 350, recoater_end_mm: 950,
   heater_home_mm: 5, heater_start_mm: 425, heater_end_mm: 600,
-  printhead_home_mm: 5, printhead_end_mm: 900, printhead_multipass_return_mm: 250, part_max_mm: 72,
+  printhead_home_mm: 5, printhead_end_mm: 900, printhead_multipass_return_mm: 250, printhead_start_mm: 250, part_max_mm: 72,
   heater_speed: 50, heater_accel: 250, n_heater_passes: 1,
   heater_enabled: false, settle_s: 1, feed_fast_speed: 5, feed_fast_accel: 30,
 };
@@ -139,6 +140,9 @@ export function compilePrint(plan: PrintSettings): Step[] {
   add("setup", 0, "set_accel", RECOATER, base.recoater_accel);
   add("setup", 0, "set_speed", PRINTHEAD, base.printhead_speed);
   add("setup", 0, "set_accel", PRINTHEAD, base.printhead_accel);
+  // Park the printhead at its start position before layer 1 (pistons stay at the primed bed).
+  add("setup", 0, "move_abs", PRINTHEAD, plan.printhead_start_mm, "printhead to start");
+  add("setup", 0, "wait");
 
   let feedPos = plan.feed_end_mm; // running feed column top; drops by each feed advance
   let layerNo = 0;

@@ -189,8 +189,12 @@ def test_setup_homes_gantries_only_no_piston_move() -> None:
     setup = [s for s in steps if s.phase == "setup"]
     assert not any(s.kind == "home" and s.axis in (PART, FEED) for s in setup)
     assert not any(s.kind in ("move_abs", "move_rel") and s.axis in (PART, FEED) for s in setup)
-    # No setup move of any axis (pistons already primed; gantries only homed).
-    assert not any(s.kind in ("move_abs", "move_rel") for s in setup)
+    # Setup positions the printhead at its start position (250) after homing; the ONLY setup move is
+    # that printhead move — pistons stay put (already primed), the recoater is left at home.
+    setup_moves = [s for s in setup if s.kind in ("move_abs", "move_rel")]
+    assert setup_moves == [s for s in setup_moves if s.axis == PRINTHEAD]
+    assert any(s.axis == PRINTHEAD and s.value == 250.0 for s in setup_moves)
+    assert PrintSettings().printhead_start_mm == 250.0
 
 
 # ---- (b) print starts at the thin (nominal) precoat, not a thick precoat --------------------
@@ -238,7 +242,7 @@ def test_compile_one_printing_layer_full_sequence() -> None:
     steps = compile_print(one_layer())
     kinds = [(s.kind, s.axis, s.value) for s in steps]
 
-    # (a) setup — gantry homes + initial profiles (4 home/wait + 8 set_* = 12 steps)
+    # (a) setup — gantry homes + profiles + printhead-to-start (4 home/wait + 8 set_* + 2 = 14)
     assert kinds[0:4] == [
         ("home", PRINTHEAD, None),
         ("wait", None, None),
@@ -246,7 +250,8 @@ def test_compile_one_printing_layer_full_sequence() -> None:
         ("wait", None, None),
     ]
     n_setup = sum(1 for s in steps if s.phase == "setup")
-    assert n_setup == 12
+    assert n_setup == 14
+    assert kinds[12:14] == [("move_abs", PRINTHEAD, 250.0), ("wait", None, None)]
 
     # phase setup for printing: set_speed/accel PART, FEED, PRINTHEAD, RECOATER
     i = n_setup
@@ -327,12 +332,14 @@ def test_compile_one_printing_layer_full_sequence() -> None:
 def test_printing_multipass_shuttles_to_midpoint_then_home() -> None:
     p = dataclasses.replace(one_layer(), n_jet_passes=3, heater_enabled=False)
     ks = kinds_of(p)
-    ends = [k for k in ks if k == ("move_abs", PRINTHEAD, 900.0)]
-    mids = [k for k in ks if k == ("move_abs", PRINTHEAD, 250.0)]
-    homes = [k for k in ks if k == ("move_abs", PRINTHEAD, 5.0)]
-    assert len(ends) == 3  # 3 jet passes out to the end
-    assert len(mids) == 2  # between-pass returns stop at the midpoint (save travel)
-    assert len(homes) == 1  # only the last pass returns fully home to clear the recoat
+    # Printhead moves within the printing phase only (setup printhead-to-start is separate).
+    ph = [
+        s for s in compile_print(p)
+        if s.phase == "printing" and s.kind == "move_abs" and s.axis == PRINTHEAD
+    ]
+    assert len([s for s in ph if s.value == 900.0]) == 3  # 3 jet passes out to the end
+    assert len([s for s in ph if s.value == 250.0]) == 2  # between-pass returns to the midpoint
+    assert len([s for s in ph if s.value == 5.0]) == 1  # only the last pass returns fully home
     # heater disabled -> no heater sweep at all
     assert not any(k[0] == "heater" for k in ks)
     assert not any(k == ("move_abs", RECOATER, 600.0) for k in ks)

@@ -119,6 +119,7 @@ class PrintSettings:
     printhead_home_mm: float = 5.0
     printhead_end_mm: float = 900.0
     printhead_multipass_return_mm: float = 250.0  # between multipass passes; home only on the last
+    printhead_start_mm: float = 250.0  # printhead parks here after setup-home, before layer 1
     part_max_mm: float = 72.0  # final part-cylinder drop position (= part spill-safe depth)
     heater_speed: float = 50.0
     heater_accel: float = 250.0
@@ -178,6 +179,7 @@ class PrintSettings:
             "printhead_home_mm": (PRINTHEAD, self.printhead_home_mm),
             "printhead_end_mm": (PRINTHEAD, self.printhead_end_mm),
             "printhead_multipass_return_mm": (PRINTHEAD, self.printhead_multipass_return_mm),
+            "printhead_start_mm": (PRINTHEAD, self.printhead_start_mm),
         }
         for label, (axis, value) in positions.items():
             lo, hi = lim.travel_min[axis], lim.travel_max[axis]
@@ -252,6 +254,9 @@ class PrintSettings:
             ),
             printhead_multipass_return_mm=limits.clamp_position(
                 PRINTHEAD, num("printhead_multipass_return_mm", base.printhead_multipass_return_mm)
+            ),
+            printhead_start_mm=limits.clamp_position(
+                PRINTHEAD, num("printhead_start_mm", base.printhead_start_mm)
             ),
             part_max_mm=limits.clamp_position(PART, num("part_max_mm", base.part_max_mm)),
             heater_speed=limits.clamp_speed(RECOATER, num("heater_speed", base.heater_speed)),
@@ -339,6 +344,9 @@ def compile_print(plan: PrintSettings) -> tuple[Step, ...]:
     add("setup", 0, "set_accel", RECOATER, base.recoater_accel)
     add("setup", 0, "set_speed", PRINTHEAD, base.printhead_speed)
     add("setup", 0, "set_accel", PRINTHEAD, base.printhead_accel)
+    # Park the printhead at its start position before layer 1 (pistons stay at the primed bed).
+    add("setup", 0, "move_abs", PRINTHEAD, plan.printhead_start_mm, "printhead to start")
+    add("setup", 0, "wait")
 
     # Running feed position: starts at the primed feed column top (feed_end_mm) and drops by each
     # feed advance. Mirrors the script's ``current_feed_pos`` guard: when the next advance would
