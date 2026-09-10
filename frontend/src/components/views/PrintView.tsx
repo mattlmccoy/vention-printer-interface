@@ -14,6 +14,8 @@ import type { Call } from "./types.ts";
 const SHORT: Record<AxisNo, string> = { 1: "build", 2: "feed", 3: "printhead", 4: "recoater" };
 const SW: Record<AxisNo, string> = { 1: "sw-part", 2: "sw-feed", 3: "sw-ph", 4: "sw-rc" };
 const LAYER_HEIGHTS = [0.1, 0.15, 0.2];
+// Operator-facing stage names for the print phases (setup/finish are not layer phases).
+const PHASE_LABEL: Record<string, string> = { thin_precoat: "precoat", printing: "printing", postcoat: "postcoat", setup: "setup", finish: "finishing" };
 // Compiled steps that are pure profile/blocking noise; the timeline collapses these away so each
 // visible row is one meaningful action (a mark, a move, a home, a heater switch, a dwell).
 const TIMELINE_NOISE = new Set(["set_speed", "set_accel", "wait"]);
@@ -96,6 +98,13 @@ export function PrintView({ status, gates, call, order, sizes, onOrder, onResize
   const shownLayer = active && printLayer > 0 ? printLayer : (job ? 1 : 0);
   const pct = r && r.n_steps ? Math.round((100 * r.step_index) / r.n_steps) : 0;
   const label = !status ? "OFFLINE" : isMacro && active ? r!.macro!.replace("_", " ").toUpperCase() : r?.state === "running" ? (r.dry_run ? "DRY RUN" : "PRINTING") : r?.state === "paused" ? "PAUSED" : (r?.state ?? "idle").toUpperCase();
+  // Stage + step-within-stage, e.g. "precoat · 2/5 · 0.2 mm" (layers are numbered across all phases,
+  // so subtract the earlier phases' layers to get the step within the current stage).
+  const stagePh = plan && r ? plan[r.phase as "thin_precoat" | "printing" | "postcoat"] : undefined;
+  const stageOffset = plan && r ? (r.phase === "printing" ? plan.thin_precoat.n_layers : r.phase === "postcoat" ? plan.thin_precoat.n_layers + plan.printing.n_layers : 0) : 0;
+  const stageStep = r ? Math.max(1, r.layer - stageOffset) : 0;
+  const stageName = r ? (PHASE_LABEL[r.phase] ?? r.phase) : "";
+  const stageLine = !isMacro && r?.state === "done" ? "complete" : (!isMacro && active && stageName) ? `${stageName}${stagePh ? ` · ${stageStep}/${stagePh.n_layers} · ${stagePh.layer_thickness_mm} mm` : ""}` : "";
   const problems: Array<[string, "bad" | "warn"]> = [];
   if (t?.estop_triggered) problems.push(["e-stop asserted", "bad"]);
   if (t?.estop_triggered === null && gates.connected) problems.push(["e-stop status unknown", "warn"]);
@@ -135,7 +144,8 @@ export function PrintView({ status, gates, call, order, sizes, onOrder, onResize
     ) },
     { id: "run", title: "this print", size: "s", node: (
       <>
-        <div className="state" style={{ margin: "0 0 14px" }}><span className={`big ${r?.state === "fault" ? "fault" : ""}`}>{label}</span></div>
+        <div className="state" style={{ margin: "0 0 6px" }}><span className={`big ${r?.state === "fault" ? "fault" : ""}`}>{label}</span></div>
+        {stageLine && <div className="stage-badge" style={{ marginBottom: 12 }}>{stageLine}</div>}
         {r?.reason && <div className="hint">{r.reason}</div>}
         <div className="bar" style={{ marginTop: 10 }}><i style={{ width: `${pct}%` }} /></div>
         <div className="bar-lbl">{pct}% · step {r?.step_index ?? 0} of {r?.n_steps ?? 0}</div>
