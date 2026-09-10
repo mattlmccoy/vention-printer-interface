@@ -60,12 +60,12 @@ export function ControlView({ status, gates, call, gantryStep, pistonStep, setGa
     { id: "pistons", title: "pistons", size: "m", node: <>{stepper(pistonStep, setPistonStep)}<Axis a={1} status={status} ok={ok} call={call} step={pistonStep} /><Axis a={2} status={status} ok={ok} call={call} step={pistonStep} /></> },
     { id: "motion", title: "motion", size: "s", node: (
       <>
-        <div className="actions" style={{ marginTop: 0 }}><button className="cta" disabled={!ok} title="homes the printhead + recoater gantries only (never the pistons — that would eject powder)" onClick={() => call("home gantries", () => api.home([3, 4]))}>HOME GANTRIES</button><button className="cta danger" disabled={!gates.connected} onClick={() => call("stop", api.stop)}>STOP</button></div>
-        <div className="actions tight">
-          <button className="cta" disabled={!ok} onClick={() => { if (window.confirm("For an EMPTY cart only. Homes the gantries, then drives both pistons to the bottom of travel so you can load the cart. Do NOT run with powder loaded. Continue?")) call("load cart", () => api.macro("load_cart")); }}>LOAD CART (empty)</button>
-          <button className="cta" disabled={!ok} onClick={() => call("clear bed", () => api.macro("clear_bed"))}>CLEAR BED</button>
+        <div className="actions" style={{ marginTop: 0 }}>
+          <button className="cta" disabled={!ok} onClick={() => { if (window.confirm("Home the printhead gantry?")) call("home printhead", () => api.home([3])); }}>HOME PRINTHEAD</button>
+          <button className="cta" disabled={!ok} onClick={() => { if (window.confirm("Home the recoater gantry?")) call("home recoater", () => api.home([4])); }}>HOME RECOATER</button>
+          <button className="cta danger" disabled={!gates.connected} onClick={() => call("stop", api.stop)}>STOP</button>
         </div>
-        <div className="hint" style={{ marginTop: 10 }}>Load cart lowers both pistons and homes the gantries; then jog the pistons into place.</div>
+        <div className="hint" style={{ marginTop: 10 }}>Home one gantry at a time. Pistons are never auto-homed — homing a piston ejects powder.</div>
       </>
     ) },
     { id: "priming", title: "priming (powder prep)", size: "m", node: <PrimingPanel gates={gates} call={call} /> },
