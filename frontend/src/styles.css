@@ -217,17 +217,21 @@ button.small { height: 34px; padding: 0 12px; border: 1px solid var(--line-contr
 .job-map .warnv { color: var(--warn); }
 
 /* ---- modules ---- */
-.modules { display: flex; flex-wrap: wrap; align-items: flex-start; align-content: flex-start; gap: 16px; padding: 20px 24px; overflow: auto; min-height: 0; }
-.module { background: var(--panel); border: 1px solid var(--line); border-radius: 4px; display: flex; flex-direction: column; flex: none; position: relative; }
-.module.s { width: 320px; } .module.m { width: 460px; } .module.l { width: 640px; } .module.xl { width: 940px; max-width: 100%; }
-.module.sized { max-width: 100%; overflow: hidden; }
-.module.sized .mb { overflow: auto; flex: 1; }
+.modules { display: flex; flex-wrap: wrap; align-items: stretch; align-content: flex-start; gap: 16px; padding: 20px 24px; overflow: auto; min-height: 0; }
+.module { background: var(--panel); border: 1px solid var(--line); border-radius: 4px; display: flex; flex-direction: column; min-width: 0; position: relative; }
+/* Unsized modules grow to share the row (no dead gap to the right); declared size sets the flex-basis,
+   so a larger size claims a wider track and wraps sooner, i.e. spans more. min(..,100%) keeps a lone
+   wide module from forcing horizontal page scroll on narrow viewports. */
+.module.s { flex: 1 1 min(300px, 100%); } .module.m { flex: 1 1 min(440px, 100%); }
+.module.l { flex: 1 1 min(640px, 100%); } .module.xl { flex: 1 1 min(900px, 100%); }
+/* A user-resized module keeps its explicit pixel size (width/height set inline) and never stretches. */
+.module.sized { flex: none; max-width: 100%; overflow: hidden; }
 .module .mh { display: flex; justify-content: space-between; align-items: center; padding: 10px 14px; border-bottom: 1px solid var(--line); font: 12px var(--font-mono); letter-spacing: .09em; text-transform: uppercase; color: var(--label); cursor: grab; user-select: none; }
 .module .mh .grip { opacity: .5; }
 .module .mh-r { display: inline-flex; align-items: center; gap: 8px; }
 .module .mh-reset { background: none; border: 0; color: var(--muted); cursor: pointer; font-size: 13px; padding: 0; line-height: 1; }
 .module .mh-reset:hover { color: var(--accent); }
-.module .mb { padding: 16px; }
+.module .mb { padding: 16px; flex: 1; min-height: 0; overflow: auto; }
 .module.over { outline: 2px solid var(--accent); outline-offset: -1px; }
 .module.dragging { opacity: .4; }
 .mresize { position: absolute; right: 0; bottom: 0; width: 16px; height: 16px; cursor: nwse-resize; touch-action: none; }
