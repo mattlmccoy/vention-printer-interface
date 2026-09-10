@@ -32,7 +32,8 @@ def _clamp(v: float, lo: float, hi: float) -> float:
 class PhasePlan:
     """Per-phase settings (V1.py lines 12-45)."""
 
-    layer_thickness_mm: float = 2.0
+    layer_thickness_mm: float = 2.0  # part-piston drop per layer
+    feed_thickness_mm: float = 2.0  # feed-piston advance per layer (V1.py; distinct from the drop)
     n_layers: int = 1
     part_speed: float = 2.5
     part_accel: float = 15.0
@@ -63,6 +64,9 @@ class PhasePlan:
             layer_thickness_mm=_clamp(
                 num("layer_thickness_mm", base.layer_thickness_mm), 0.0, 50.0
             ),
+            feed_thickness_mm=_clamp(
+                num("feed_thickness_mm", base.feed_thickness_mm), 0.0, 50.0
+            ),
             n_layers=int(_clamp(n_layers, 0, MAX_LAYERS)),
             part_speed=limits.clamp_speed(PART, num("part_speed", base.part_speed)),
             part_accel=limits.clamp_accel(PART, num("part_accel", base.part_accel)),
@@ -84,27 +88,38 @@ class PrintSettings:
     """The whole print (V1.py lines 12-66). Heater is opt-in; V1.py never switched it."""
 
     thick_precoat: PhasePlan = field(
-        default_factory=lambda: PhasePlan(layer_thickness_mm=5.0, n_layers=3)
+        default_factory=lambda: PhasePlan(
+            layer_thickness_mm=5.0, feed_thickness_mm=7.0, n_layers=3
+        )
     )
     thin_precoat: PhasePlan = field(
-        default_factory=lambda: PhasePlan(layer_thickness_mm=0.2, n_layers=2)
+        default_factory=lambda: PhasePlan(
+            layer_thickness_mm=0.2, feed_thickness_mm=0.4, n_layers=2
+        )
     )
     printing: PhasePlan = field(
-        default_factory=lambda: PhasePlan(layer_thickness_mm=2.0, n_layers=10)
+        default_factory=lambda: PhasePlan(
+            layer_thickness_mm=2.0, feed_thickness_mm=0.4, n_layers=10
+        )
     )
     postcoat: PhasePlan = field(
-        default_factory=lambda: PhasePlan(layer_thickness_mm=5.0, n_layers=1)
+        default_factory=lambda: PhasePlan(
+            layer_thickness_mm=5.0, feed_thickness_mm=0.0, n_layers=1
+        )
     )
     n_jet_passes: int = 1
     pre_heater_drop_mm: float = 0.0
     postcoat_enabled: bool = True
     feed_end_mm: float = 145.0  # V1.py:48 (pendant says ~151)
     recoater_home_mm: float = 5.0
-    recoater_end_mm: float = 930.0
+    recoater_return_mm: float = 350.0  # V1.py precoat recoater return position
+    recoater_end_mm: float = 925.0
     heater_home_mm: float = 5.0
+    heater_start_mm: float = 425.0  # V1.py heater sweep start
     heater_end_mm: float = 600.0
     printhead_home_mm: float = 5.0
-    printhead_end_mm: float = 840.0
+    printhead_end_mm: float = 900.0
+    part_max_mm: float = 75.0  # V1.py MAX_TRAVEL: final part-cylinder drop position
     heater_speed: float = 50.0
     heater_accel: float = 250.0
     n_heater_passes: int = 1
@@ -227,11 +242,17 @@ class PrintSettings:
             recoater_home_mm=limits.clamp_position(
                 RECOATER, num("recoater_home_mm", base.recoater_home_mm)
             ),
+            recoater_return_mm=limits.clamp_position(
+                RECOATER, num("recoater_return_mm", base.recoater_return_mm)
+            ),
             recoater_end_mm=limits.clamp_position(
                 RECOATER, num("recoater_end_mm", base.recoater_end_mm)
             ),
             heater_home_mm=limits.clamp_position(
                 RECOATER, num("heater_home_mm", base.heater_home_mm)
+            ),
+            heater_start_mm=limits.clamp_position(
+                RECOATER, num("heater_start_mm", base.heater_start_mm)
             ),
             heater_end_mm=limits.clamp_position(RECOATER, num("heater_end_mm", base.heater_end_mm)),
             printhead_home_mm=limits.clamp_position(
@@ -240,6 +261,7 @@ class PrintSettings:
             printhead_end_mm=limits.clamp_position(
                 PRINTHEAD, num("printhead_end_mm", base.printhead_end_mm)
             ),
+            part_max_mm=limits.clamp_position(PART, num("part_max_mm", base.part_max_mm)),
             heater_speed=limits.clamp_speed(RECOATER, num("heater_speed", base.heater_speed)),
             heater_accel=limits.clamp_accel(RECOATER, num("heater_accel", base.heater_accel)),
             n_heater_passes=int(_clamp(passes, 0, MAX_HEATER_PASSES)),
@@ -264,7 +286,7 @@ class PrintSettings:
 
 @dataclass(frozen=True)
 class Step:
-    """One primitive action. kind: home_all | set_speed | set_accel | move_abs | move_rel |
+    """One primitive action. kind: home_all | home | set_speed | set_accel | move_abs | move_rel |
     wait | dwell | heater | mark. `value` is mm, mm/s, mm/s^2, seconds, or 1/0 for heater."""
 
     index: int
@@ -277,8 +299,25 @@ class Step:
     part_height_mm: float = 0.0
 
 
+# The feed piston's hard floor (script FEED_HOME_POS): a feed advance that would carry the running
+# feed position to or below this cannot supply another layer, so the compiler stops (see below).
+FEED_FLOOR_MM = 0.0
+
+# Precoat-style phases lay a cover layer only: spread -> feed advance -> recoater return to 350.
+# thick_precoat holds the part fixed (backfill); thin_precoat drops the part one nominal layer;
+# postcoat is a post-job cover pass that also holds the part fixed (the FINISH drives part->max).
+_PRECOAT_PHASES = ("thick_precoat", "thin_precoat", "postcoat")
+# Phases that drop the build/part piston one layer (grow the part height).
+_PART_DROP_PHASES = ("thin_precoat", "printing")
+
+
 def compile_print(plan: PrintSettings) -> tuple[Step, ...]:
-    """V1.py lines 80-190, phase by phase. Deterministic; unit-tested against the script."""
+    """Compile a plan into the faithful async-lab-script step sequence (fidelity spec 2026-09-10).
+
+    Primed start: setup homes the two gantries ONLY (printhead, recoater); the part and feed pistons
+    start from the captured primed bed, so no piston home and no feed pre-position move are emitted.
+    Deterministic and unit-tested cycle-by-cycle against the script (``test_print_settings.py``).
+    """
     out: list[Step] = []
     height = 0.0
 
@@ -292,22 +331,38 @@ def compile_print(plan: PrintSettings) -> tuple[Step, ...]:
     ) -> None:
         out.append(Step(len(out), phase, layer, kind, axis, value, label, height))
 
-    # Print setup (V1.py:80-97): home all, then feed piston down at "fast" speed.
-    add("setup", 0, "home_all")
+    # --- SETUP (primed start): home GANTRIES ONLY, then an initial safe profile. No piston home,
+    # no home_all, no feed pre-position move (the pistons are already at the primed bed). Each phase
+    # overrides these profiles before it moves, so the setup profile is only the start state.
+    add("setup", 0, "home", PRINTHEAD)
     add("setup", 0, "wait")
-    add("setup", 0, "set_speed", FEED, plan.feed_fast_speed)
-    add("setup", 0, "set_accel", FEED, plan.feed_fast_accel)
-    add("setup", 0, "move_abs", FEED, plan.feed_end_mm)
+    add("setup", 0, "home", RECOATER)
     add("setup", 0, "wait")
+    base = plan.thick_precoat  # a representative base profile for all four axes
+    add("setup", 0, "set_speed", PART, base.part_speed)
+    add("setup", 0, "set_accel", PART, base.part_accel)
+    add("setup", 0, "set_speed", FEED, base.feed_speed)
+    add("setup", 0, "set_accel", FEED, base.feed_accel)
+    add("setup", 0, "set_speed", RECOATER, base.recoater_speed)
+    add("setup", 0, "set_accel", RECOATER, base.recoater_accel)
+    add("setup", 0, "set_speed", PRINTHEAD, base.printhead_speed)
+    add("setup", 0, "set_accel", PRINTHEAD, base.printhead_accel)
+
+    # Running feed position: starts at the primed feed column top (feed_end_mm) and drops by each
+    # feed advance. Mirrors the script's ``current_feed_pos`` guard: when the next advance would
+    # reach/cross FEED_FLOOR the powder cannot supply another layer, so we home the recoater, mark
+    # "feed_exhausted", and stop compiling (a terminal safety stop; the operator re-primes).
+    feed_pos = plan.feed_end_mm
 
     layer_no = 0
+    exhausted = False
     for name in PHASES:
         if name == "postcoat" and not plan.postcoat_enabled:
             continue
         ph = plan.phase(name)
         if ph.n_layers == 0:
             continue
-        # Phase speeds/accels (V1.py:101-108, 133-138, 165-172).
+        # Per-phase speeds/accels for all four axes (as the script sets at each stage boundary).
         add(name, layer_no, "set_speed", PART, ph.part_speed)
         add(name, layer_no, "set_accel", PART, ph.part_accel)
         add(name, layer_no, "set_speed", FEED, ph.feed_speed)
@@ -316,69 +371,94 @@ def compile_print(plan: PrintSettings) -> tuple[Step, ...]:
         add(name, layer_no, "set_accel", PRINTHEAD, ph.printhead_accel)
         add(name, layer_no, "set_speed", RECOATER, ph.recoater_speed)
         add(name, layer_no, "set_accel", RECOATER, ph.recoater_accel)
-        for idx in range(ph.n_layers):
+        for _idx in range(ph.n_layers):
+            # Feed-exhaustion guard (checked before this layer commits any motion): if the feed
+            # advance this layer needs would reach/cross the floor, stop before spreading.
+            if ph.feed_thickness_mm > 0 and feed_pos - ph.feed_thickness_mm <= FEED_FLOOR_MM:
+                add(name, layer_no + 1, "move_abs", RECOATER, plan.recoater_home_mm)
+                add(name, layer_no + 1, "wait")
+                add(name, layer_no + 1, "mark", label="feed_exhausted")
+                exhausted = True
+                break
             layer_no += 1
-            t = ph.layer_thickness_mm
-            if name == "thick_precoat":
-                # Backfill the runway + fill the part cavity: the build/part piston does NOT move,
-                # so the part height does not grow. Per layer: spread the recoater, raise the feed
-                # piston by the layer thickness, dwell, return the recoater.
-                add(name, layer_no, "mark", label="layer_start")
-                add(name, layer_no, "move_abs", RECOATER, plan.recoater_end_mm)  # spread
+            if name in _PART_DROP_PHASES:
+                height += ph.layer_thickness_mm
+
+            # 1) SPREAD — recoater forward to the far end.
+            add(name, layer_no, "mark", label="layer_start")
+            add(name, layer_no, "move_abs", RECOATER, plan.recoater_end_mm)
+            add(name, layer_no, "wait")
+
+            # 2) FEED ADVANCE — every phase incl. printing (USER OVERRIDE: feed is the powder feed).
+            if ph.feed_thickness_mm > 0:
+                add(name, layer_no, "move_rel", FEED, -ph.feed_thickness_mm)  # feed piston up
                 add(name, layer_no, "wait")
-                add(name, layer_no, "move_rel", FEED, -t)  # feed piston up (negative = up)
+                add(name, layer_no, "dwell", value=plan.settle_s)  # script's time.sleep(1)
+                feed_pos -= ph.feed_thickness_mm
+
+            # 3) PART DROP — thin_precoat & printing only (thick precoat / postcoat hold the part).
+            if name in _PART_DROP_PHASES:
+                add(name, layer_no, "move_rel", PART, ph.layer_thickness_mm)  # part piston down
                 add(name, layer_no, "wait")
-                add(name, layer_no, "dwell", value=plan.settle_s)  # V1.py's time.sleep(1)
-                add(name, layer_no, "move_abs", RECOATER, plan.recoater_home_mm)
+
+            # 4) PRECOAT RETURN vs PRINT.
+            if name in _PRECOAT_PHASES:
+                add(name, layer_no, "move_abs", RECOATER, plan.recoater_return_mm)  # 350, not home
                 add(name, layer_no, "wait")
                 add(name, layer_no, "mark", label="layer_end")
                 continue
-            height += t
-            if name == "printing" and idx > 0:
-                # V1.py:125-127 resets recoater speed at the top of each print layer
-                # (the heater passes changed it).
-                add(name, layer_no, "set_speed", RECOATER, ph.recoater_speed)
-                add(name, layer_no, "set_accel", RECOATER, ph.recoater_accel)
-            add(name, layer_no, "mark", label="layer_start")
-            add(name, layer_no, "move_rel", PART, t)  # part piston down
-            add(name, layer_no, "wait")
-            add(name, layer_no, "move_abs", RECOATER, plan.recoater_end_mm)  # spread
-            add(name, layer_no, "wait")
-            add(name, layer_no, "move_rel", FEED, -t)  # feed piston up (negative = up)
-            add(name, layer_no, "wait")
-            add(name, layer_no, "dwell", value=plan.settle_s)  # V1.py's time.sleep(1)
+
+            # ---- printing ----
+            # Concurrent jet + retract: recoater retracts home WHILE the printhead jets; ONE wait
+            # covers both moves (no wait between them).
             add(name, layer_no, "move_abs", RECOATER, plan.recoater_home_mm)
+            add(name, layer_no, "move_abs", PRINTHEAD, plan.printhead_end_mm)
             add(name, layer_no, "wait")
-            if name == "printing":
-                for _ in range(plan.n_jet_passes):
-                    add(name, layer_no, "move_abs", PRINTHEAD, plan.printhead_end_mm)  # jet pass
-                    add(name, layer_no, "wait")
-                    add(name, layer_no, "move_abs", PRINTHEAD, plan.printhead_home_mm)
-                    add(name, layer_no, "wait")
-                if plan.pre_heater_drop_mm > 0:
-                    add(
-                        name, layer_no, "move_rel", PART,
-                        plan.pre_heater_drop_mm, "pre-heater drop",
-                    )
-                    add(name, layer_no, "wait")
-                add(name, layer_no, "set_speed", RECOATER, plan.heater_speed)  # evaporate ink
+            add(name, layer_no, "move_abs", PRINTHEAD, plan.printhead_home_mm)
+            add(name, layer_no, "wait")
+            for _ in range(plan.n_jet_passes - 1):  # extra jet passes (enhancement), sequential
+                add(name, layer_no, "move_abs", PRINTHEAD, plan.printhead_end_mm)
+                add(name, layer_no, "wait")
+                add(name, layer_no, "move_abs", PRINTHEAD, plan.printhead_home_mm)
+                add(name, layer_no, "wait")
+            if plan.pre_heater_drop_mm > 0:  # drop before heating (net descent stays one layer)
+                add(name, layer_no, "move_rel", PART, plan.pre_heater_drop_mm, "pre-heater drop")
+                add(name, layer_no, "wait")
+            if plan.heater_enabled:
+                # Heater sweep 425 -> 600 with a slow-follow recoater profile, then restore.
+                add(name, layer_no, "move_abs", RECOATER, plan.heater_start_mm)  # 425
+                add(name, layer_no, "wait")
+                add(name, layer_no, "heater", value=1.0)
+                add(name, layer_no, "set_speed", RECOATER, plan.heater_speed)
                 add(name, layer_no, "set_accel", RECOATER, plan.heater_accel)
-                if plan.heater_enabled:
-                    add(name, layer_no, "heater", value=1.0)
-                for _ in range(plan.n_heater_passes):
-                    add(name, layer_no, "move_abs", RECOATER, plan.heater_end_mm)
-                    add(name, layer_no, "wait")
-                    add(name, layer_no, "move_abs", RECOATER, plan.heater_home_mm)
-                    add(name, layer_no, "wait")
-                if plan.heater_enabled:
-                    add(name, layer_no, "heater", value=0.0)
-                if plan.pre_heater_drop_mm > 0:
-                    add(
-                        name, layer_no, "move_rel", PART,
-                        -plan.pre_heater_drop_mm, "raise back to layer",
-                    )
-                    add(name, layer_no, "wait")
+                add(name, layer_no, "move_abs", RECOATER, plan.heater_end_mm)  # 600
+                add(name, layer_no, "wait")
+                add(name, layer_no, "heater", value=0.0)
+                add(name, layer_no, "set_speed", RECOATER, ph.recoater_speed)  # restore
+                add(name, layer_no, "set_accel", RECOATER, ph.recoater_accel)
+            if plan.pre_heater_drop_mm > 0:  # raise back -> net descent is exactly one layer
+                add(
+                    name, layer_no, "move_rel", PART, -plan.pre_heater_drop_mm, "raise to layer"
+                )
+                add(name, layer_no, "wait")
+            add(name, layer_no, "move_abs", RECOATER, plan.recoater_end_mm)  # recoater back to end
+            add(name, layer_no, "wait")
             add(name, layer_no, "mark", label="layer_end")
+        if exhausted:
+            break
+
+    if exhausted:
+        # Terminal stop: the recoater is already parked home and the fault is marked. Do NOT drive
+        # the part to max after an unexpected feed-out; leave the finish to operator intervention.
+        return tuple(out)
+
+    # --- FINISH: home the gantries, then drive the part cylinder to its max travel.
+    add("finish", layer_no, "home", PRINTHEAD)
+    add("finish", layer_no, "wait")
+    add("finish", layer_no, "home", RECOATER)
+    add("finish", layer_no, "wait")
+    add("finish", layer_no, "move_abs", PART, plan.part_max_mm)
+    add("finish", layer_no, "wait")
     return tuple(out)
 
 
@@ -395,8 +475,9 @@ def estimate_duration_s(plan: PrintSettings, min_wait_s: float = 0.5) -> float:
     total = 0.0
     pending = 0.0
     for step in compile_print(plan):
-        if step.kind == "home_all":
-            pending = max(_TRAVEL[a] / _HOMING[a] for a in speed) * 0.5  # typically half travel
+        if step.kind == "home" and step.axis is not None:
+            # primed start homes only gantries; charge ~half that axis's travel at its homing speed
+            pending = max(pending, _TRAVEL[step.axis] / _HOMING[step.axis] * 0.5)
         elif step.kind == "set_speed" and step.axis is not None:
             speed[step.axis] = max(float(step.value or 0.1), 0.1)
         elif step.kind in ("move_abs", "move_rel") and step.axis is not None:

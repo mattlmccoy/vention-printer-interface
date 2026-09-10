@@ -25,13 +25,13 @@ function Axis({ a, status, ok, call, step }: { a: AxisNo; status: StatusPayload 
     <div className="axis" style={{ borderTop: "none", paddingTop: 6 }}>
       <span className="nm"><i className={SW[a]} />{AXIS_NAMES[a]}</span>
       <span className="pos">{typeof pos === "number" ? pos.toFixed(1) : "—"} <small>mm{moving ? " · moving" : ""}</small></span>
-      <div className="tune" style={{ display: "flex", gap: 6, alignItems: "center", flexWrap: "wrap", margin: "6px 0" }}>
+      <div className="tune">
         <span className="lbl">spd</span>
-        <input className="inp" type="number" style={{ width: 64 }} value={speed} placeholder={String(am?.max_speed ?? "")} disabled={!ok} onChange={(e) => setSpeed(e.target.value)} />
+        <input className="inp" type="number" value={speed} placeholder={String(am?.max_speed ?? "")} disabled={!ok} onChange={(e) => setSpeed(e.target.value)} />
         <button className="small" disabled={!ok || speed === ""} onClick={() => call("set speed", () => api.setAxisMotion(a, { max_speed: Number(speed) }).then(() => setSpeed("")))}>set</button>
         <span className="cap">≤ {fmtSpeed(lim?.max_speed[String(a)])}</span>
-        <span className="lbl" style={{ marginLeft: 6 }}>acc</span>
-        <input className="inp" type="number" style={{ width: 64 }} value={accel} placeholder={String(am?.max_accel ?? "")} disabled={!ok} onChange={(e) => setAccel(e.target.value)} />
+        <span className="lbl">acc</span>
+        <input className="inp" type="number" value={accel} placeholder={String(am?.max_accel ?? "")} disabled={!ok} onChange={(e) => setAccel(e.target.value)} />
         <button className="small" disabled={!ok || accel === ""} onClick={() => call("set accel", () => api.setAxisMotion(a, { max_accel: Number(accel) }).then(() => setAccel("")))}>set</button>
         <span className="cap">≤ {fmtAccel(lim?.max_accel[String(a)])}</span>
       </div>
