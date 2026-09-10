@@ -218,6 +218,9 @@ class PrintController:
             if step.kind in ("wait", "dwell"):
                 self._in_flight, self._issued_at = step, now
                 return event
+            if step.kind == "hold":
+                self.state = PrintState.PAUSED
+                return ("hold", {"step_index": self.step_index, "message": step.label})
             if event:
                 return event
         self.state = PrintState.DONE
@@ -267,6 +270,8 @@ class PrintController:
                 }
                 label = "layer_started" if step.label == "layer_start" else "layer_completed"
                 return (label, data)
+            elif step.kind == "hold":
+                return None
         except Exception as exc:  # noqa: BLE001 - any issue failure is a print fault
             self.state, self.reason = PrintState.FAULT, f"step {step.index} failed: {exc}"
             self._finished_at = now

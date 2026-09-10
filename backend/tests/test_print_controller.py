@@ -233,6 +233,26 @@ def test_macro_runs_on_the_step_machine_and_reports_name() -> None:
         c.stop()
 
 
+def test_hold_step_pauses_until_resume() -> None:
+    from vention_printer_interface.control.print_settings import Step
+
+    rc, c, _ = make()
+    try:
+        c.arm()
+        steps = (
+            Step(0, "setup", 0, "mark", None, None, "start", 0.0),
+            Step(1, "setup", 0, "hold", None, None, "Load powder, then Resume", 0.0),
+            Step(2, "setup", 0, "mark", None, None, "end", 0.0),
+        )
+        rc.start_macro("test-hold", steps)
+        assert wait(lambda: rc.snapshot()["state"] == "paused")
+        assert rc.snapshot()["current_step"]["kind"] == "hold"
+        rc.resume()
+        assert wait(lambda: rc.snapshot()["state"] == "done")
+    finally:
+        c.stop()
+
+
 def test_part_height_measured_from_piston_zero() -> None:
     rc, c, _ = make()
     try:
