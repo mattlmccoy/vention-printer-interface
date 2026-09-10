@@ -38,8 +38,8 @@ def test_defaults_match_v1() -> None:
     assert p.printing.recoater_speed == 100 and p.printing.recoater_accel == 500
     assert (p.feed_end_mm, p.recoater_end_mm, p.printhead_end_mm, p.heater_end_mm) == (
         145,
-        930,
-        840,
+        925,
+        900,
         600,
     )
     assert p.heater_speed == 50 and p.heater_accel == 250 and p.n_heater_passes == 1
@@ -111,14 +111,14 @@ def test_compile_one_print_layer_matches_v1_order() -> None:
         ("mark", None, None),
         ("move_rel", PART, 2.0),
         ("wait", None, None),
-        ("move_abs", RECOATER, 930.0),
+        ("move_abs", RECOATER, 925.0),
         ("wait", None, None),
         ("move_rel", FEED, -2.0),
         ("wait", None, None),
         ("dwell", None, 1.0),
         ("move_abs", RECOATER, 5.0),
         ("wait", None, None),
-        ("move_abs", PRINTHEAD, 840.0),
+        ("move_abs", PRINTHEAD, 900.0),
         ("wait", None, None),
         ("move_abs", PRINTHEAD, 5.0),
         ("wait", None, None),
@@ -172,7 +172,7 @@ def test_compile_precoat_has_no_printhead_or_heater_steps() -> None:
     assert first_mark.label == "layer_start" and first_mark.part_height_mm == 0.0
     # its body spreads then raises the feed piston by the layer thickness; the part never moves.
     assert not any(s.kind == "move_rel" and s.axis == PART for s in steps)
-    assert ("move_abs", RECOATER, 930.0) in [(s.kind, s.axis, s.value) for s in steps]
+    assert ("move_abs", RECOATER, 925.0) in [(s.kind, s.axis, s.value) for s in steps]
     assert ("move_rel", FEED, -5.0) in [(s.kind, s.axis, s.value) for s in steps]
 
 
@@ -250,3 +250,36 @@ def test_heater_exposure_input_defaults() -> None:
     assert p.target_carbon_wt == 0.15 and p.part_area_mm2 == 900.0
     assert p.powder_density_g_cm3 == 1.01 and p.ink_carbon_wt == 0.25
     assert p.ipa_dhvap_j_g == 663.0 and p.heater_section_power_w == 75.0
+
+
+def test_feed_thickness_defaults() -> None:
+    # Feed-piston advance per layer is distinct from the part-piston drop (V1.py):
+    # thick precoat backfills 7 mm of feed while the part is fixed; thin/print advance 0.4 mm
+    # (part 0.2); postcoat is a cover pass with no feed advance.
+    p = PrintSettings()
+    assert p.thick_precoat.feed_thickness_mm == 7.0
+    assert p.thin_precoat.feed_thickness_mm == 0.4
+    assert p.printing.feed_thickness_mm == 0.4
+    assert p.postcoat.feed_thickness_mm == 0.0
+
+
+def test_script_faithful_position_defaults() -> None:
+    p = PrintSettings()
+    assert p.recoater_return_mm == 350.0
+    assert p.heater_start_mm == 425.0
+    assert p.part_max_mm == 75.0
+    assert p.recoater_end_mm == 925.0
+    assert p.printhead_end_mm == 900.0
+
+
+def test_bounded_clamps_new_position_fields() -> None:
+    lim = SafetyLimits()
+    p = PrintSettings.bounded(
+        {"recoater_return_mm": 5000, "heater_start_mm": 5000, "part_max_mm": 5000}, lim
+    )
+    assert p.recoater_return_mm == lim.travel_max[RECOATER]
+    assert p.heater_start_mm == lim.travel_max[RECOATER]
+    assert p.part_max_mm == lim.travel_max[PART]
+    # feed_thickness_mm on a phase is clamped into [0, 50]
+    p2 = PrintSettings.bounded({"printing": {"feed_thickness_mm": 9999}}, lim)
+    assert p2.printing.feed_thickness_mm == 50.0

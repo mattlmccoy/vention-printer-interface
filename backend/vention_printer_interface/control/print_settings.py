@@ -32,7 +32,8 @@ def _clamp(v: float, lo: float, hi: float) -> float:
 class PhasePlan:
     """Per-phase settings (V1.py lines 12-45)."""
 
-    layer_thickness_mm: float = 2.0
+    layer_thickness_mm: float = 2.0  # part-piston drop per layer
+    feed_thickness_mm: float = 2.0  # feed-piston advance per layer (V1.py; distinct from the drop)
     n_layers: int = 1
     part_speed: float = 2.5
     part_accel: float = 15.0
@@ -63,6 +64,9 @@ class PhasePlan:
             layer_thickness_mm=_clamp(
                 num("layer_thickness_mm", base.layer_thickness_mm), 0.0, 50.0
             ),
+            feed_thickness_mm=_clamp(
+                num("feed_thickness_mm", base.feed_thickness_mm), 0.0, 50.0
+            ),
             n_layers=int(_clamp(n_layers, 0, MAX_LAYERS)),
             part_speed=limits.clamp_speed(PART, num("part_speed", base.part_speed)),
             part_accel=limits.clamp_accel(PART, num("part_accel", base.part_accel)),
@@ -84,27 +88,38 @@ class PrintSettings:
     """The whole print (V1.py lines 12-66). Heater is opt-in; V1.py never switched it."""
 
     thick_precoat: PhasePlan = field(
-        default_factory=lambda: PhasePlan(layer_thickness_mm=5.0, n_layers=3)
+        default_factory=lambda: PhasePlan(
+            layer_thickness_mm=5.0, feed_thickness_mm=7.0, n_layers=3
+        )
     )
     thin_precoat: PhasePlan = field(
-        default_factory=lambda: PhasePlan(layer_thickness_mm=0.2, n_layers=2)
+        default_factory=lambda: PhasePlan(
+            layer_thickness_mm=0.2, feed_thickness_mm=0.4, n_layers=2
+        )
     )
     printing: PhasePlan = field(
-        default_factory=lambda: PhasePlan(layer_thickness_mm=2.0, n_layers=10)
+        default_factory=lambda: PhasePlan(
+            layer_thickness_mm=2.0, feed_thickness_mm=0.4, n_layers=10
+        )
     )
     postcoat: PhasePlan = field(
-        default_factory=lambda: PhasePlan(layer_thickness_mm=5.0, n_layers=1)
+        default_factory=lambda: PhasePlan(
+            layer_thickness_mm=5.0, feed_thickness_mm=0.0, n_layers=1
+        )
     )
     n_jet_passes: int = 1
     pre_heater_drop_mm: float = 0.0
     postcoat_enabled: bool = True
     feed_end_mm: float = 145.0  # V1.py:48 (pendant says ~151)
     recoater_home_mm: float = 5.0
-    recoater_end_mm: float = 930.0
+    recoater_return_mm: float = 350.0  # V1.py precoat recoater return position
+    recoater_end_mm: float = 925.0
     heater_home_mm: float = 5.0
+    heater_start_mm: float = 425.0  # V1.py heater sweep start
     heater_end_mm: float = 600.0
     printhead_home_mm: float = 5.0
-    printhead_end_mm: float = 840.0
+    printhead_end_mm: float = 900.0
+    part_max_mm: float = 75.0  # V1.py MAX_TRAVEL: final part-cylinder drop position
     heater_speed: float = 50.0
     heater_accel: float = 250.0
     n_heater_passes: int = 1
@@ -227,11 +242,17 @@ class PrintSettings:
             recoater_home_mm=limits.clamp_position(
                 RECOATER, num("recoater_home_mm", base.recoater_home_mm)
             ),
+            recoater_return_mm=limits.clamp_position(
+                RECOATER, num("recoater_return_mm", base.recoater_return_mm)
+            ),
             recoater_end_mm=limits.clamp_position(
                 RECOATER, num("recoater_end_mm", base.recoater_end_mm)
             ),
             heater_home_mm=limits.clamp_position(
                 RECOATER, num("heater_home_mm", base.heater_home_mm)
+            ),
+            heater_start_mm=limits.clamp_position(
+                RECOATER, num("heater_start_mm", base.heater_start_mm)
             ),
             heater_end_mm=limits.clamp_position(RECOATER, num("heater_end_mm", base.heater_end_mm)),
             printhead_home_mm=limits.clamp_position(
@@ -240,6 +261,7 @@ class PrintSettings:
             printhead_end_mm=limits.clamp_position(
                 PRINTHEAD, num("printhead_end_mm", base.printhead_end_mm)
             ),
+            part_max_mm=limits.clamp_position(PART, num("part_max_mm", base.part_max_mm)),
             heater_speed=limits.clamp_speed(RECOATER, num("heater_speed", base.heater_speed)),
             heater_accel=limits.clamp_accel(RECOATER, num("heater_accel", base.heater_accel)),
             n_heater_passes=int(_clamp(passes, 0, MAX_HEATER_PASSES)),
