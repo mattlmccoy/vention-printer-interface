@@ -37,6 +37,7 @@ export interface Health { version: string; api_version: string; backend: string;
 export interface Discovery { candidates: Array<{ backend: string; ip: string | null; label?: string; reachable: boolean }>; connected: { backend: string } }
 export interface PrintSettingsPayload { plan: Record<string, unknown>; validation: string[]; n_steps: number; estimated_duration_s: number; total_layers: number; total_thickness_mm: number; bounds: Record<string, unknown>; limits: Record<string, unknown> }
 export interface AxisMotion { max_speed: number | null; max_accel: number | null; bounds: { max_speed: [number, number]; max_accel: [number, number] }; limit_speed: number; limit_accel: number }
+export interface PrimingPayload { settings: Record<string, number>; validation: string[]; n_steps: number; n_cycles: number; limits: Record<string, unknown> }
 
 export const api = {
   health: () => req<Health>("GET", "/api/health"),
@@ -73,6 +74,9 @@ export const api = {
   clearJob: () => req<{ job: null }>("POST", "/api/jobs/clear"),
   jobLayerUrl: (layer: number, jobFolder = "") => `${base}/api/jobs/current/layers/${layer}.png?job=${encodeURIComponent(jobFolder)}`,
   macro: (name: string) => req<StatusPayload["print"]>("POST", `/api/macro/${name}`),
+  priming: () => req<PrimingPayload>("GET", "/api/priming"),
+  setPriming: (patch: Record<string, number>) => req<PrimingPayload>("PUT", "/api/priming", patch),
+  primingRun: () => req<StatusPayload["print"]>("POST", "/api/priming/run"),
   events: () => req<{ events: StatusPayload["events"] }>("GET", "/api/events"),
   autoLog: () => req<{ enabled: boolean }>("GET", "/api/auto-log"),
   setAutoLog: (enabled: boolean) => req<{ enabled: boolean }>("PUT", "/api/auto-log", { enabled }),

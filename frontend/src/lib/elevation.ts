@@ -27,7 +27,12 @@ export function layoutElevation(w = 900, h = 380): Elevation {
   return {
     vb: { w, h }, railPh, railRc, feed, build, bed, scaleX, scaleY,
     frame: { x: left - 30, y: 30, w: right - left + 60, h: h - 60 },
-    gantryX: (axis, mm) => left + clamp(mm, TRAVEL_MM[axis]) * scaleX,
+    // printhead homes at the LEFT (0 mm at left); recoater homes at the RIGHT (0 mm at right) and
+    // sweeps left as its position grows (2026-09-09).
+    gantryX: (axis, mm) => {
+      const d = clamp(mm, TRAVEL_MM[axis]) * scaleX;
+      return axis === 4 ? railRc.x + railRc.w - d : left + d;
+    },
     pistonTopY: (axis, mm) => bed.y + clamp(mm, TRAVEL_MM[axis]) * scaleY,
   };
 }

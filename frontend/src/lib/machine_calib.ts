@@ -14,7 +14,7 @@ export const POINTS = [
   ["rails.printhead.0", "printhead carriage centre at HOME (0 mm)"],
   ["rails.printhead.1", "printhead carriage centre at the FAR end (840 mm)"],
   ["rails.recoater.0", "recoater carriage centre at HOME (0 mm)"],
-  ["rails.recoater.1", "recoater carriage centre at the FAR end (930 mm)"],
+  ["rails.recoater.1", "recoater carriage centre at the FAR end (972 mm)"],
   ["pistons.feed.0", "feed piston top surface fully UP (0 mm)"],
   ["pistons.feed.1", "feed piston top surface fully DOWN (145 mm)"],
   ["pistons.build.0", "build piston top surface fully UP (0 mm)"],

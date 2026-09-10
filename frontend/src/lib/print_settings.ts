@@ -73,7 +73,7 @@ export function totalLayers(p: PrintSettings): number {
 }
 
 /** Same reasons as PrintSettings.validate() (travel window defaults to the axis extents). */
-export function validate(p: PrintSettings, travelMax: Record<number, number> = { 2: 145, 3: 840, 4: 930 }): string[] {
+export function validate(p: PrintSettings, travelMax: Record<number, number> = { 2: 145, 3: 840, 4: 972 }): string[] {
   const reasons: string[] = [];
   const total = totalThickness(p);
   if (total > p.feed_end_mm)

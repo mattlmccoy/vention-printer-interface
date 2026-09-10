@@ -36,6 +36,19 @@ export function fmtSpeed(v: number | null | undefined): string {
   return v === null || v === undefined ? "—" : `${v.toFixed(v >= 10 ? 0 : 1)} mm/s`;
 }
 
+export function fmtAccel(v: number | null | undefined): string {
+  return v === null || v === undefined ? "—" : `${v.toFixed(v >= 10 ? 0 : 1)} mm/s²`;
+}
+
+/** Jog-button glyphs for a gantry given which physical side it homes to (printhead LEFT,
+ *  recoater RIGHT, 2026-09-09). Moving toward 0 is toward home; the arrow must point at the
+ *  real home side so the operator isn't fighting a mislabelled control. */
+export function gantryJogLabels(side: "left" | "right"): { toHome: string; away: string } {
+  return side === "left"
+    ? { toHome: "◀ home", away: "away ▶" }
+    : { toHome: "home ▶", away: "◀ away" };
+}
+
 export function fmtSecs(s: number | null | undefined): string {
   if (s === null || s === undefined || !Number.isFinite(s)) return "—";
   const m = Math.floor(s / 60);

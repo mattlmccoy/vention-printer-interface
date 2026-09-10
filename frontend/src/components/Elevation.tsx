@@ -18,8 +18,9 @@ export function Elevation({ status, partZeroMm }: { status: StatusPayload | null
       <rect className="el-frame" x={e.frame.x} y={e.frame.y} width={e.frame.w} height={e.frame.h} rx={3} />
       <rect className="el-rail" x={e.railPh.x} y={e.railPh.y} width={e.railPh.w} height={e.railPh.h} />
       <rect className="el-rail" x={e.railRc.x} y={e.railRc.y} width={e.railRc.w} height={e.railRc.h} />
-      <text className="el-lbl" x={e.railPh.x + e.railPh.w - 4} y={e.railPh.y - 5} textAnchor="end">printhead rail</text>
-      <text className="el-lbl" x={e.railRc.x + e.railRc.w - 4} y={e.railRc.y - 5} textAnchor="end">recoater rail</text>
+      {/* label at each rail's AWAY end (home direction folded in) so the homed carriage never covers it */}
+      <text className="el-lbl" x={e.railPh.x + e.railPh.w - 4} y={e.railPh.y - 6} textAnchor="end">printhead rail · home ◀</text>
+      <text className="el-lbl" x={e.railRc.x + 4} y={e.railRc.y - 6} textAnchor="start">recoater rail · home ▶</text>
       {[{ r: e.feed, mm: feed, cls: "el-feed", lbl: "feed", axis: 2 }, { r: e.build, mm: build, cls: "el-build", lbl: "build", axis: 1 }].map(({ r, mm, cls, lbl, axis }) => {
         const y = top(mm, r);
         return (

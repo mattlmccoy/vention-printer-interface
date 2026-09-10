@@ -1,6 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { armHint, cycleIndex, fmtMm, fmtSecs, fmtSpeed, gates, heightMismatch, tri } from "./format.ts";
+import { armHint, cycleIndex, fmtAccel, fmtMm, fmtSecs, fmtSpeed, gantryJogLabels, gates, heightMismatch, tri } from "./format.ts";
 import type { StatusPayload } from "./telemetry.ts";
 
 function status(state: StatusPayload["controller"]["state"], armed: boolean, print_settings = "idle"): StatusPayload {
@@ -39,6 +39,16 @@ test("formatters", () => {
   assert.equal(fmtSecs(9), "9s");
   assert.equal(tri(null, "ON", "off"), "?");
   assert.equal(tri(true, "ON", "off"), "ON");
+});
+
+test("accel formatter and home-side gantry jog labels", () => {
+  assert.equal(fmtAccel(500), "500 mm/s²");
+  assert.equal(fmtAccel(15), "15 mm/s²");
+  assert.equal(fmtAccel(null), "—");
+  // printhead homes LEFT: toward-home arrow points left, away points right
+  assert.deepEqual(gantryJogLabels("left"), { toHome: "◀ home", away: "away ▶" });
+  // recoater homes RIGHT: toward-home arrow points right, away points left
+  assert.deepEqual(gantryJogLabels("right"), { toHome: "home ▶", away: "◀ away" });
 });
 
 test("arm hint is state-specific", () => {
