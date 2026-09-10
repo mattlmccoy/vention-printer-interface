@@ -140,6 +140,34 @@ class PrintController:
             self._step_granted = True
             self.state = PrintState.RUNNING
 
+    def set_single_step(self, on: bool) -> None:
+        """Toggle single-step mode during a run (Feature 2).
+
+        Turning it ON pauses after the current step completes (``_advance``'s pause logic acts on
+        ``single_step``). Turning it OFF while paused leaves single-step and resumes continuous
+        running, mirroring ``resume``; turning it OFF while running just clears the flag.
+        """
+        resumed = False
+        with self._lock:
+            self.single_step = on
+            if not on and self.state == PrintState.PAUSED:
+                self._c._require_armed()
+                self._pause_requested = False
+                self._step_granted = False
+                self.state = PrintState.RUNNING
+                resumed = True
+        if resumed:
+            self._emit("print_resumed", {})
+
+    def seek(self, index: int) -> None:
+        """Jump to a compiled step (Feature 3). Paused-only: the routine continues from ``index``
+        on the next resume, so the operator owns the resulting machine state."""
+        with self._lock:
+            if self.state != PrintState.PAUSED:
+                raise RuntimeError("pause the print before jumping to a step")
+            self.step_index = max(0, min(int(index), len(self.steps)))
+            self._in_flight = None
+
     def abort(self, reason: str = "operator abort") -> None:
         self._stop_safe()
         with self._lock:

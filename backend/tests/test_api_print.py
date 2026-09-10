@@ -176,6 +176,50 @@ def test_dry_run_and_single_step(client: TestClient) -> None:
     wait_print(client, "done")
 
 
+def test_single_step_route_toggles_during_run(client: TestClient) -> None:
+    client.put(
+        "/api/print-settings", json={**FAST, "printing": {**FAST["printing"], "n_layers": 2}}
+    )
+    connect_arm(client)
+    assert client.post("/api/print/start", json={}).status_code == 200
+    wait_print(client, "running")
+    r = client.post("/api/print/single-step", json={"on": True})
+    assert r.status_code == 200 and r.json()["single_step"] is True
+    wait_print(client, "paused")
+    r = client.post("/api/print/single-step", json={"on": False})
+    assert r.status_code == 200 and r.json()["single_step"] is False
+    wait_print(client, "done")
+
+
+def test_steps_route_lists_compiled_steps(client: TestClient) -> None:
+    # Idle (no print loaded): the controller has no compiled steps yet.
+    assert client.get("/api/print/steps").json()["steps"] == []
+    client.put("/api/print-settings", json=FAST)
+    connect_arm(client)
+    assert client.post("/api/print/start", json={"dry_run": True}).status_code == 200
+    r = client.get("/api/print/steps")
+    assert r.status_code == 200
+    steps = r.json()["steps"]
+    assert steps and all(
+        set(s) == {"index", "phase", "layer", "kind", "axis", "value", "label"} for s in steps
+    )
+    assert [s["index"] for s in steps] == list(range(len(steps)))  # dense, ordered
+
+
+def test_seek_route_paused_only(client: TestClient) -> None:
+    client.put(
+        "/api/print-settings", json={**FAST, "printing": {**FAST["printing"], "n_layers": 2}}
+    )
+    connect_arm(client)
+    assert client.post("/api/print/start", json={}).status_code == 200
+    wait_print(client, "running")
+    assert client.post("/api/print/seek", json={"index": 3}).status_code == 409  # not paused
+    client.post("/api/print/pause")
+    wait_print(client, "paused")
+    r = client.post("/api/print/seek", json={"index": 4})
+    assert r.status_code == 200 and r.json()["step_index"] == 4
+
+
 def test_auto_log_toggle(client: TestClient) -> None:
     assert client.get("/api/auto-log").json()["enabled"] is True
     assert client.put("/api/auto-log", json={"enabled": False}).json()["enabled"] is False

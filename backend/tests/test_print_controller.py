@@ -180,6 +180,49 @@ def test_single_step_waits_for_step_calls() -> None:
         c.stop()
 
 
+def test_set_single_step_toggles_during_run() -> None:
+    """Feature 2: flipping single_step ON mid-run pauses after the next step; OFF resumes."""
+    rc, c, _ = make()
+    try:
+        c.arm()
+        rc.start(fast_plan(n_print=2))
+        assert wait(lambda: rc.snapshot()["step_index"] > 6)
+        assert rc.snapshot()["state"] == "running"
+        rc.set_single_step(True)  # arm single-step while continuously running
+        assert wait(lambda: rc.snapshot()["state"] == "paused")
+        assert rc.snapshot()["single_step"] is True
+        idx = rc.snapshot()["step_index"]
+        time.sleep(0.3)
+        assert rc.snapshot()["step_index"] == idx  # stays put until acted on
+        rc.set_single_step(False)  # OFF resumes continuous running to done
+        assert rc.snapshot()["single_step"] is False
+        assert wait(lambda: rc.snapshot()["state"] == "done")
+    finally:
+        c.stop()
+
+
+def test_seek_refuses_running_and_moves_when_paused() -> None:
+    """Feature 3: seek is a paused-only jump; it clamps the target step index."""
+    rc, c, _ = make()
+    try:
+        c.arm()
+        rc.start(fast_plan(n_print=2))
+        assert wait(lambda: rc.snapshot()["state"] == "running")
+        with pytest.raises(RuntimeError, match="pause the print"):
+            rc.seek(3)
+        rc.pause()
+        assert wait(lambda: rc.snapshot()["state"] == "paused")
+        n = rc.snapshot()["n_steps"]
+        rc.seek(2)
+        assert rc.snapshot()["step_index"] == 2
+        rc.seek(10_000)  # clamps to n_steps
+        assert rc.snapshot()["step_index"] == n
+        rc.seek(-5)  # clamps to 0
+        assert rc.snapshot()["step_index"] == 0
+    finally:
+        c.stop()
+
+
 def test_wait_timeout_faults_printer() -> None:
     rc, c, t = make(stall_axis=4)  # recoater never moves
     try:

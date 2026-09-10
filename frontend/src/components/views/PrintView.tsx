@@ -1,16 +1,22 @@
+import { useEffect, useState, type ReactNode } from "react";
 import { api } from "../../lib/api.ts";
 import { fmtMm, fmtSecs, heightMismatch, tri, type Gates } from "../../lib/format.ts";
 import { AXES, type AxisNo, type StatusPayload } from "../../lib/telemetry.ts";
-import { compilePrint, describeStep, type PrintSettings } from "../../lib/print_settings.ts";
+import { compilePrint, describeStep, totalLayers, totalThickness, validate, type PrintSettings } from "../../lib/print_settings.ts";
 import { estimateDurationS } from "../../lib/estimate.ts";
 import { CrossSection } from "../CrossSection.tsx";
 import { MachineImage } from "../MachineImage.tsx";
 import { RoutinePanel } from "../RoutinePanel.tsx";
+import { NumberField } from "../NumberField.tsx";
 import { ModuleGrid, type Module } from "../Modules.tsx";
 import type { Call } from "./types.ts";
 
 const SHORT: Record<AxisNo, string> = { 1: "build", 2: "feed", 3: "printhead", 4: "recoater" };
 const SW: Record<AxisNo, string> = { 1: "sw-part", 2: "sw-feed", 3: "sw-ph", 4: "sw-rc" };
+const LAYER_HEIGHTS = [0.1, 0.15, 0.2];
+// Compiled steps that are pure profile/blocking noise; the timeline collapses these away so each
+// visible row is one meaningful action (a mark, a move, a home, a heater switch, a dwell).
+const TIMELINE_NOISE = new Set(["set_speed", "set_accel", "wait"]);
 
 export function phrase(step: ReturnType<typeof compilePrint>[number] | null, plan: PrintSettings | null): string {
   if (!step || !plan) return "";
@@ -41,7 +47,39 @@ export function PrintView({ status, gates, call, order, sizes, onOrder, onResize
   const curAction = cur && cur.kind === "wait" ? steps.slice(0, cur.index).reverse().find((s) => s.kind !== "wait" && s.kind !== "mark") ?? cur : cur;
   const next = cur ? steps.slice(cur.index + 1).find((s) => !["wait", "mark", "set_speed", "set_accel"].includes(s.kind)) ?? null : null;
   const active = !!r && (r.state === "running" || r.state === "paused");
+  const paused = r?.state === "paused";
   const isMacro = !!r?.macro;
+
+  // ---- Feature 1: manual print (idle, no sliced job) — a focused START module that reuses the
+  // print-settings edit/save + api.printStart flow (mirrors JobView, without the job machinery).
+  const showManual = !active && !job;
+  const [mplan, setMplan] = useState<PrintSettings | null>(null);
+  const [mdirty, setMdirty] = useState(false);
+  const [mdry, setMdry] = useState(true);
+  const [msingle, setMsingle] = useState(false);
+  useEffect(() => {
+    if (!showManual) return;
+    let live = true;
+    api.printSettings().then((x) => { if (live) { setMplan(x.plan as unknown as PrintSettings); setMdirty(false); } }).catch(() => undefined);
+    return () => { live = false; };
+  }, [showManual, gates.reachable]);
+  const medit = (patch: Partial<PrintSettings>) => mplan && (setMplan({ ...mplan, ...patch }), setMdirty(true));
+  const meditPrinting = (patch: Partial<PrintSettings["printing"]>) => mplan && medit({ printing: { ...mplan.printing, ...patch } });
+  const msave = async () => { if (!mplan) return; await call("save print_settings", () => api.setPrintSettings(mplan as unknown as Record<string, unknown>).then((x) => { setMplan(x.plan as unknown as PrintSettings); setMdirty(false); })); };
+  const mReasons = mplan ? validate(mplan) : [];
+  const mLayers = mplan ? totalLayers(mplan) : 0;
+  const mTotal = mplan ? totalThickness(mplan) : 0;
+  const mHeaterOn = !!mplan?.heater_enabled && !mdry;
+  const mstart = async () => {
+    if (!mplan) return;
+    if (mdirty) await msave();
+    if (!mdry) {
+      const heat = mplan.heater_enabled ? "HEATER ON — fires each printing layer" : "⚠ HEATER OFF — no in-situ heating";
+      if (!window.confirm(`Start the manual print on the machine?\n\n${heat}\n${mLayers} layers · ${mTotal.toFixed(1)} mm · ~${fmtSecs(estimateDurationS(mplan))}`)) return;
+    }
+    await call("start", () => api.printStart({ dry_run: mdry, single_step: msingle, name: "manual print" }));
+  };
+
   const total = plan ? estimateDurationS(plan) : 0;
   const remaining = r && total ? Math.max(0, total * (1 - r.step_index / Math.max(r.n_steps, 1))) : null;
   const thickness = plan && r ? (plan[r.phase as "thin_precoat" | "printing" | "postcoat"]?.layer_thickness_mm ?? 2) : 2;
@@ -58,6 +96,26 @@ export function PrintView({ status, gates, call, order, sizes, onOrder, onResize
   if (c?.read_error) problems.push(["telemetry read error", "bad"]);
   if (job && !job.complete) problems.push([`job missing pages ${job.missing_pages.slice(0, 5).join(", ")}`, "bad"]);
   const narr = active ? `${isMacro ? r!.macro!.replace("_", " ") : `layer ${r!.layer} of ${r!.n_layers}`} · ${phrase(curAction, plan)}` : c?.state === "fault" ? "faulted — follow the steps in the banner" : gates.armed ? "in control · idle" : gates.connected ? "read-only" : "not connected";
+
+  // ---- Feature 3: timeline rows (meaningful actions only), grouped by phase/layer, highlighting
+  // the current step; a row is clickable ONLY while paused (jump-to-step is a paused-only action).
+  const timelineRows = steps.filter((s) => !TIMELINE_NOISE.has(s.kind));
+  const activeStepIdx = r?.current_step?.index ?? -1;
+  let curRowIndex = -1;
+  for (const s of timelineRows) { if (s.index <= activeStepIdx) curRowIndex = s.index; else break; }
+  const timelineNodes: ReactNode[] = [];
+  let lastGroup = "";
+  for (const s of timelineRows) {
+    const group = `${s.phase}${s.layer ? ` · layer ${s.layer}` : ""}`;
+    if (group !== lastGroup) { lastGroup = group; timelineNodes.push(<div key={`h${s.index}`} className="tl-head">{group}</div>); }
+    const isCur = s.index === curRowIndex;
+    timelineNodes.push(
+      <button key={s.index} className={`tl-row${isCur ? " on" : ""}`} disabled={!paused}
+        onClick={() => { if (paused && window.confirm(`Jump to step ${s.index}? The routine continues from there — you are responsible for the machine state.`)) call("seek", () => api.printSeek(s.index)); }}>
+        <span className="n">{s.index}</span><span className="l">{phrase(s, plan) || describeStep(s)}</span>
+      </button>
+    );
+  }
 
   const modules: Module[] = [
     { id: "layer", title: job ? `${job.name} · layer ${shownLayer} of ${job.layer_count}` : "layer", size: "l", node: (
@@ -79,6 +137,11 @@ export function PrintView({ status, gates, call, order, sizes, onOrder, onResize
           <span>part height</span><span className={mismatch ? "warnv" : ""}>{fmtMm(r?.part_height_measured_mm, 1)}</span>
           <span>heater</span><span className={c?.heater.on ? "bad" : ""}>{tri(c?.heater.on, `ON ${fmtSecs(c?.heater.on_s)}`, "off", "unknown")}</span>
         </div>
+        {active && (
+          <label className="row" style={{ display: "flex", gap: 8, alignItems: "center", marginTop: 14, fontSize: 13 }} title="Pause after each step. Turning it off resumes continuous running.">
+            <input type="checkbox" checked={!!r?.single_step} disabled={!gates.controllable} onChange={(e) => call("single-step", () => api.setSingleStep(e.target.checked))} /> single-step (pause after each step)
+          </label>
+        )}
         <div className="actions tight">
           {r?.state === "running" && <button className="cta" disabled={!gates.connected} onClick={() => call("pause", api.printPause)}>PAUSE</button>}
           {r?.state === "paused" && <button className="cta primary" disabled={!gates.controllable} onClick={() => call(r.single_step ? "step" : "resume", r.single_step ? api.printStep : api.printResume)}>{r.single_step ? "NEXT STEP" : "RESUME"}</button>}
@@ -87,11 +150,41 @@ export function PrintView({ status, gates, call, order, sizes, onOrder, onResize
         </div>
       </>
     ) },
+    { id: "manual", title: "manual print", size: "s", hidden: !showManual, node: mplan ? (
+      <>
+        <div className="hint" style={{ marginTop: 0 }}>Run the print routine straight from these parameters — no sliced job needed.</div>
+        <div className="fields" style={{ marginTop: 16, maxWidth: "none" }}>
+          <span>print layers</span><span className="row"><NumberField value={mplan.printing.n_layers} disabled={!gates.controllable} style={{ width: 80 }} onChange={(v) => meditPrinting({ n_layers: v })} /></span>
+          <span>layer height</span><label className="row">
+            <span className="seg">{LAYER_HEIGHTS.map((h) => <button key={h} type="button" className={`small${Math.abs(mplan.printing.layer_thickness_mm - h) < 1e-6 ? " on" : ""}`} aria-pressed={Math.abs(mplan.printing.layer_thickness_mm - h) < 1e-6} disabled={!gates.controllable} onClick={() => meditPrinting({ layer_thickness_mm: h })}>{h}</button>)}</span>
+            <NumberField step="0.05" value={mplan.printing.layer_thickness_mm} disabled={!gates.controllable} style={{ width: 72 }} onChange={(v) => meditPrinting({ layer_thickness_mm: v })} /> mm
+          </label>
+          <span>postcoat</span><label className="row"><input type="checkbox" checked={mplan.postcoat_enabled} disabled={!gates.controllable} onChange={(e) => medit({ postcoat_enabled: e.target.checked })} /> <b>{mplan.postcoat_enabled ? "ON" : "OFF"}</b></label>
+          <span>heater</span><label className="row" title="Fires the IR heater during the printing layers. Forced off in a dry run."><input type="checkbox" checked={mHeaterOn} disabled={mdry || !gates.controllable} onChange={(e) => medit({ heater_enabled: e.target.checked })} /> <b>{mHeaterOn ? "ON" : "OFF"}</b>{mdry ? " (off in dry run)" : ""}</label>
+        </div>
+        <div className="chk" style={{ margin: "16px 0" }}>
+          <label><input type="checkbox" checked={mdry} onChange={(e) => setMdry(e.target.checked)} /> dry run (motion only — no heat / no jet)</label>
+          <label><input type="checkbox" checked={msingle} onChange={(e) => setMsingle(e.target.checked)} /> single-step</label>
+        </div>
+        {mReasons.length > 0 ? <div className="errline">{mReasons.join(" · ")}</div> : <div className="okline">{mLayers} layers · {mTotal.toFixed(1)} mm · ~{fmtSecs(estimateDurationS(mplan))}</div>}
+        <div className="actions one tight">
+          <button className={`cta ${mdry ? "" : "primary"}`} disabled={!gates.controllable || mReasons.length > 0} onClick={mstart}>{mdry ? "START DRY RUN" : "START PRINT"}</button>
+          {mdirty && <button className="cta" disabled={!gates.controllable} onClick={msave}>SAVE CHANGES</button>}
+        </div>
+        {!gates.controllable && <div className="lock">{gates.connected ? "read-only · take control from the connection pill" : "connect a controller to start"}</div>}
+      </>
+    ) : <div className="hint">loading print_settings…</div> },
     { id: "machine", title: "machine", size: "m", node: (
       <>
         <MachineImage status={status} partZeroMm={r?.part_zero_mm ?? null} />
         <div className="readout">{AXES.map((a) => <div key={a}><i className={SW[a]} />{SHORT[a]}<b>{t ? `${(t.positions[String(a)] ?? 0).toFixed(1)} mm` : "—"}</b></div>)}</div>
         <div className="narr" style={{ marginTop: 14, fontSize: 14 }}>{narr}{active && next && <div className="next">next: {phrase(next, plan)}</div>}</div>
+      </>
+    ) },
+    { id: "timeline", title: "timeline", size: "m", hidden: timelineRows.length === 0, node: (
+      <>
+        <div className="hint" style={{ marginTop: 0 }}>{paused ? "Paused — click a step to jump the routine there." : "Live step list. Pause to enable jump-to-step."}</div>
+        <div className="timeline">{timelineNodes}</div>
       </>
     ) },
     { id: "routine", title: "routine parameters", size: "m", node: <RoutinePanel gates={gates} call={call} /> },

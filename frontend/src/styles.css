@@ -131,6 +131,17 @@ button.small { height: 34px; padding: 0 12px; border: 1px solid var(--line-contr
 .chip.bad { border-color: var(--err); color: var(--err); }
 .chip.warn { border-color: var(--warn); color: var(--warn); }
 
+/* print timeline (clickable step list; paused-only jump) */
+.timeline { display: flex; flex-direction: column; gap: 3px; max-height: 360px; overflow: auto; margin-top: 2px; }
+.timeline .tl-head { font: 12px var(--font-mono); letter-spacing: .06em; text-transform: uppercase; color: var(--label); margin: 12px 0 2px; }
+.timeline .tl-head:first-child { margin-top: 0; }
+.timeline .tl-row { display: grid; grid-template-columns: 34px 1fr; gap: 10px; align-items: center; text-align: left; padding: 6px 8px; border: 1px solid transparent; background: transparent; color: var(--fg); border-radius: var(--radius); font-size: 13px; cursor: pointer; }
+.timeline .tl-row:not(:disabled):hover { border-color: var(--line-control); }
+.timeline .tl-row:disabled { cursor: default; }
+.timeline .tl-row .n { font: 11px var(--font-mono); color: var(--muted); text-align: right; }
+.timeline .tl-row.on { border-color: var(--accent); color: var(--fg-strong); background: var(--warn-bg); }
+.timeline .tl-row.on .n { color: var(--accent); }
+
 /* run card */
 .state { display: flex; align-items: baseline; gap: 12px; margin: 6px 0 22px; flex-wrap: wrap; }
 .state .big { font: 700 34px/1 var(--font-mono); color: var(--fg-strong); letter-spacing: .02em; }

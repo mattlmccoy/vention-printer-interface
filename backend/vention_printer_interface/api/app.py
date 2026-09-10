@@ -143,6 +143,14 @@ class AutoLogBody(BaseModel):
     enabled: bool
 
 
+class SingleStepBody(BaseModel):
+    on: bool
+
+
+class SeekBody(BaseModel):
+    index: int
+
+
 class JobSelectBody(BaseModel):
     path: str
 
@@ -595,6 +603,33 @@ def create_app(
     @app.post("/api/print/abort")
     def print_abort() -> dict[str, Any]:
         printer().abort()
+        return printer().snapshot()
+
+    @app.post("/api/print/single-step")
+    def print_single_step(body: SingleStepBody) -> dict[str, Any]:
+        guarded(printer().set_single_step, body.on)
+        return printer().snapshot()
+
+    @app.get("/api/print/steps")
+    def print_steps() -> dict[str, Any]:
+        return {
+            "steps": [
+                {
+                    "index": s.index,
+                    "phase": s.phase,
+                    "layer": s.layer,
+                    "kind": s.kind,
+                    "axis": s.axis,
+                    "value": s.value,
+                    "label": s.label,
+                }
+                for s in printer().steps
+            ]
+        }
+
+    @app.post("/api/print/seek")
+    def print_seek(body: SeekBody) -> dict[str, Any]:
+        guarded(printer().seek, body.index)
         return printer().snapshot()
 
     # ---- sliced jobs (Meteor RIP folders) --------------------------------------------------
