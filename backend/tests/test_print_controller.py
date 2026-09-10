@@ -50,7 +50,9 @@ def fast_plan(n_print: int = 1, heater: bool = True) -> PrintSettings:
 
 def make(**sim: Any) -> tuple[PrintController, Controller, SimulatedTransport]:
     t = SimulatedTransport(realtime=True, **sim)
-    c = Controller(poll_interval_s=0.05, limits=SafetyLimits())
+    # Let the pistons run at the fast_plan's requested 20 mm/s (default limits clamp them to 5 mm/s,
+    # which would throttle the finish's part->part_max move past the 3 s step timeout below).
+    c = Controller(poll_interval_s=0.05, limits=SafetyLimits.bounded(max_speed={"1": 20, "2": 20}))
     c.attach_device(PrinterDevice(t, heater_io=(1, 2)), backend="simulated")
     rc = PrintController(c, min_wait_s=0.1, step_timeout_s=3.0)
     c.add_listener(rc.tick)
@@ -256,6 +258,15 @@ def test_hold_step_pauses_until_resume() -> None:
 
 def test_part_height_measured_from_piston_zero() -> None:
     rc, c, _ = make()
+    # Primed start does NOT re-home the part: the zero is the primed piston position, and the build
+    # height is measured relative to it. Capture the measured height at layer completion, because
+    # the finish then ejects the part to part_max (so the end position is not the build height).
+    measured_at_layer: list[float] = []
+    rc.on_event = lambda label, data: (
+        measured_at_layer.append(rc.snapshot()["part_height_measured_mm"])
+        if label == "layer_completed"
+        else None
+    )
     try:
         c.arm()
         c.home_all()
@@ -263,11 +274,11 @@ def test_part_height_measured_from_piston_zero() -> None:
         c.move_absolute(1, 20)  # operator placed the build piston by hand
         assert wait(lambda: (c.snapshot()["telemetry"] or {})["positions"]["1"] == 20)
         rc.start(fast_plan())
-        assert rc.snapshot()["part_zero_mm"] == 20.0
+        assert rc.snapshot()["part_zero_mm"] == 20.0  # zero captured at the primed position
         assert wait(lambda: rc.snapshot()["state"] == "done")
-        s = rc.snapshot()
-        # the zero is re-captured after the setup home, so measured == expected (1 layer x 1 mm)
-        assert s["part_height_measured_mm"] == pytest.approx(1.0, abs=0.05)
-        assert s["part_height_mm"] == 1.0
+        # measured build height at the (only) layer completion == 1 layer x 1 mm, independent of the
+        # operator's hand placement (20 mm) and of the finish's part->part_max eject.
+        assert measured_at_layer and measured_at_layer[-1] == pytest.approx(1.0, abs=0.05)
+        assert rc.snapshot()["part_height_mm"] == 1.0  # bookkept build height (compiler)
     finally:
         c.stop()

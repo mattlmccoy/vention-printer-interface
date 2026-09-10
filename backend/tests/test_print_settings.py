@@ -1,4 +1,10 @@
-"""compile_print must reproduce the V1.py order exactly (vention/python/V1.py lines 92-190)."""
+"""compile_print must reproduce the async lab script's cycle order exactly (Plan 7 / fidelity spec).
+
+The compiled ``Step`` sequence is the safety-critical contract; these tests pin it cycle-by-cycle:
+primed-start setup (home gantries only), thick/thin precoat cover passes, a printing layer with the
+concurrent recoater-retract + printhead-jet, the heater 425->600 sweep, the feed-exhaustion stop,
+and the part->max finish.
+"""
 
 import dataclasses
 
@@ -17,6 +23,7 @@ from vention_printer_interface.control.safety import SafetyLimits
 
 
 def one_layer() -> PrintSettings:
+    """Printing-only, one layer, heater on."""
     p = PrintSettings()
     return dataclasses.replace(
         p,
@@ -26,6 +33,37 @@ def one_layer() -> PrintSettings:
         postcoat=dataclasses.replace(p.postcoat, n_layers=0),
         heater_enabled=True,
     )
+
+
+def thin_only() -> PrintSettings:
+    """One nominal (thin) precoat layer only."""
+    p = PrintSettings()
+    return dataclasses.replace(
+        p,
+        thick_precoat=dataclasses.replace(p.thick_precoat, n_layers=0),
+        thin_precoat=dataclasses.replace(p.thin_precoat, n_layers=1),
+        printing=dataclasses.replace(p.printing, n_layers=0),
+        postcoat=dataclasses.replace(p.postcoat, n_layers=0),
+    )
+
+
+def thick_only() -> PrintSettings:
+    """One thick precoat layer only."""
+    p = PrintSettings()
+    return dataclasses.replace(
+        p,
+        thick_precoat=dataclasses.replace(p.thick_precoat, n_layers=1),
+        thin_precoat=dataclasses.replace(p.thin_precoat, n_layers=0),
+        printing=dataclasses.replace(p.printing, n_layers=0),
+        postcoat=dataclasses.replace(p.postcoat, n_layers=0),
+    )
+
+
+def kinds_of(plan: PrintSettings) -> list[tuple[str, int | None, float | None]]:
+    return [(s.kind, s.axis, s.value) for s in compile_print(plan)]
+
+
+# ---- field / default / bounds (Task 1; unchanged by the rewrite) ---------------------------------
 
 
 def test_defaults_match_v1() -> None:
@@ -82,176 +120,6 @@ def test_round_trip_dict() -> None:
     assert PrintSettings.from_dict(p.to_dict()) == p
 
 
-def test_compile_one_print_layer_matches_v1_order() -> None:
-    steps = compile_print(one_layer())
-    kinds = [(s.kind, s.axis, s.value) for s in steps]
-    setup = [
-        ("home_all", None, None),
-        ("wait", None, None),
-        ("set_speed", FEED, 5.0),  # V1 used 1000 mm/s; bounded default is the feed limit
-        ("set_accel", FEED, 30.0),
-        ("move_abs", FEED, 145.0),
-        ("wait", None, None),
-    ]
-    assert kinds[: len(setup)] == setup
-    i = len(setup)
-    phase_setup = kinds[i : i + 8]
-    assert phase_setup == [
-        ("set_speed", PART, 2.5),
-        ("set_accel", PART, 15.0),
-        ("set_speed", FEED, 2.5),
-        ("set_accel", FEED, 15.0),
-        ("set_speed", PRINTHEAD, 100.0),
-        ("set_accel", PRINTHEAD, 500.0),
-        ("set_speed", RECOATER, 100.0),
-        ("set_accel", RECOATER, 500.0),
-    ]
-    i += 8
-    layer = [
-        ("mark", None, None),
-        ("move_rel", PART, 2.0),
-        ("wait", None, None),
-        ("move_abs", RECOATER, 925.0),
-        ("wait", None, None),
-        ("move_rel", FEED, -2.0),
-        ("wait", None, None),
-        ("dwell", None, 1.0),
-        ("move_abs", RECOATER, 5.0),
-        ("wait", None, None),
-        ("move_abs", PRINTHEAD, 900.0),
-        ("wait", None, None),
-        ("move_abs", PRINTHEAD, 5.0),
-        ("wait", None, None),
-        ("set_speed", RECOATER, 50.0),
-        ("set_accel", RECOATER, 250.0),
-        ("heater", None, 1.0),
-        ("move_abs", RECOATER, 600.0),
-        ("wait", None, None),
-        ("move_abs", RECOATER, 5.0),
-        ("wait", None, None),
-        ("heater", None, 0.0),
-        ("mark", None, None),
-    ]
-    assert kinds[i : i + len(layer)] == layer
-    assert len(steps) == i + len(layer)
-    assert steps[i].label == "layer_start" and steps[-1].label == "layer_end"
-    assert steps[i].phase == "printing" and steps[i].layer == 1
-    assert steps[i].part_height_mm == 2.0
-    assert [s.index for s in steps] == list(range(len(steps)))
-
-
-def test_printing_layer_multipass_and_pre_heater_drop() -> None:
-    import dataclasses
-
-    from vention_printer_interface.control.print_settings import PhasePlan
-    p = dataclasses.replace(PrintSettings(),
-        thick_precoat=PhasePlan(n_layers=0), thin_precoat=PhasePlan(n_layers=0),
-        printing=PhasePlan(layer_thickness_mm=0.2, n_layers=1), postcoat=PhasePlan(n_layers=0),
-        n_jet_passes=2, pre_heater_drop_mm=0.1, heater_enabled=True)
-    ks = [(s.kind, s.axis, s.value) for s in compile_print(p)]
-    jet = [i for i, k in enumerate(ks) if k == ("move_abs", PRINTHEAD, p.printhead_end_mm)]
-    assert len(jet) == 2  # two jet passes
-    i_drop = ks.index(("move_rel", PART, p.pre_heater_drop_mm))
-    i_heater_on = next(i for i, k in enumerate(ks) if k[0] == "heater" and k[2] == 1.0)
-    i_up = next(i for i, k in enumerate(ks)
-               if k == ("move_rel", PART, -p.pre_heater_drop_mm) and i > i_heater_on)
-    assert max(jet) < i_drop < i_heater_on < i_up  # jets → drop → heat → raise back up
-
-
-def test_compile_precoat_has_no_printhead_or_heater_steps() -> None:
-    p = dataclasses.replace(
-        one_layer(),
-        thick_precoat=PhasePlan(layer_thickness_mm=5, n_layers=1),
-        printing=PhasePlan(layer_thickness_mm=2, n_layers=0),
-    )
-    steps = [s for s in compile_print(p) if s.phase == "thick_precoat"]
-    assert steps and not any(s.axis == PRINTHEAD and s.kind.startswith("move") for s in steps)
-    assert not any(s.kind == "heater" for s in steps)
-    first_mark = next(s for s in steps if s.kind == "mark")
-    # thick_precoat holds the build/part piston fixed, so the part height does not grow.
-    assert first_mark.label == "layer_start" and first_mark.part_height_mm == 0.0
-    # its body spreads then raises the feed piston by the layer thickness; the part never moves.
-    assert not any(s.kind == "move_rel" and s.axis == PART for s in steps)
-    assert ("move_abs", RECOATER, 925.0) in [(s.kind, s.axis, s.value) for s in steps]
-    assert ("move_rel", FEED, -5.0) in [(s.kind, s.axis, s.value) for s in steps]
-
-
-def test_compile_heater_disabled_emits_no_heater_steps_but_still_passes() -> None:
-    p = dataclasses.replace(one_layer(), heater_enabled=False)
-    steps = compile_print(p)
-    assert not any(s.kind == "heater" for s in steps)
-    assert sum(1 for s in steps if s.kind == "move_abs" and s.value == 600.0) == 1
-
-
-def test_compile_multiple_heater_passes_and_layer_heights() -> None:
-    p = dataclasses.replace(PrintSettings(), n_heater_passes=3)
-    steps = compile_print(p)
-    # printing has 10 layers x 3 heater passes = 30 moves to heater_end (precoats never heat)
-    assert sum(1 for s in steps if s.kind == "move_abs" and s.value == 600.0) == 30
-    # V1.py resets recoater speed at the top of print layers 2..N (the heater changed it)
-    resets = [s for s in steps if s.kind == "set_speed" and s.axis == RECOATER and s.value == 100.0]
-    # four non-empty phase setups (thick/thin precoat, printing, postcoat) + 9 per-layer resets
-    assert len(resets) == 4 + 9
-    # thick_precoat holds the build/part piston fixed, so its 3 layers add no part height; the
-    # part height only grows through thin (0.2*2) + printing (2.0*10) + postcoat (5.0*1) = 25.4 mm.
-    heights = [s.part_height_mm for s in steps if s.label == "layer_end"]
-    assert heights[:3] == [0.0, 0.0, 0.0]  # 3 thick_precoat layers: part piston fixed
-    assert heights[3] == pytest.approx(0.2)  # first thin_precoat layer (part down 0.2 mm)
-    assert heights[4] == pytest.approx(0.4)  # second thin_precoat layer
-    assert heights[5] == pytest.approx(2.4)  # first printing layer (+2.0 mm)
-    assert heights[-1] == pytest.approx(25.4)  # last postcoat layer, part stack
-    # 16 layers total still numbered 1..16: thick 3 + thin 2 + printing 10 + postcoat 1
-    assert [s.layer for s in steps if s.label == "layer_start"] == list(range(1, 17))
-
-
-def test_thick_precoat_layer_holds_part_and_spreads() -> None:
-    p = dataclasses.replace(
-        PrintSettings(),
-        thick_precoat=PhasePlan(layer_thickness_mm=5.0, n_layers=1),
-        thin_precoat=PhasePlan(n_layers=0),
-        printing=PhasePlan(n_layers=0),
-        postcoat=PhasePlan(n_layers=0),
-    )
-    steps = [s for s in compile_print(p) if s.phase == "thick_precoat"]
-    ks = [(s.kind, s.axis, s.value) for s in steps]
-    assert not any(k == "move_rel" and a == PART for (k, a, v) in ks)  # part piston fixed
-    assert ("move_abs", RECOATER, p.recoater_end_mm) in ks             # spread
-    assert ("move_rel", FEED, -5.0) in ks                              # feed up by the thick layer
-
-
-def test_postcoat_toggle_off_emits_no_postcoat_steps() -> None:
-    import dataclasses
-    p_on = PrintSettings()
-    p_off = dataclasses.replace(p_on, postcoat_enabled=False)
-    assert any(s.phase == "postcoat" for s in compile_print(p_on))
-    assert not any(s.phase == "postcoat" for s in compile_print(p_off))
-
-
-def test_steps_are_frozen() -> None:
-    s = compile_print(one_layer())[0]
-    with pytest.raises(dataclasses.FrozenInstanceError):
-        s.kind = "x"  # type: ignore[misc]
-
-
-def test_estimate_duration_is_positive_and_scales_with_layers() -> None:
-    from vention_printer_interface.control.print_settings import estimate_duration_s
-
-    one = one_layer()
-    ten = dataclasses.replace(one, printing=dataclasses.replace(one.printing, n_layers=10))
-    t1, t10 = estimate_duration_s(one), estimate_duration_s(ten)
-    assert t1 > 0 and t10 > t1 * 5
-    # the default V1 plan: setup feed 145 mm at 5 mm/s = 29 s alone; whole print well under 2 h
-    total = estimate_duration_s(PrintSettings())
-    assert 29 < total < 7200
-
-
-def test_heater_exposure_input_defaults() -> None:
-    p = PrintSettings()
-    assert p.target_carbon_wt == 0.15 and p.part_area_mm2 == 900.0
-    assert p.powder_density_g_cm3 == 1.01 and p.ink_carbon_wt == 0.25
-    assert p.ipa_dhvap_j_g == 663.0 and p.heater_section_power_w == 75.0
-
-
 def test_feed_thickness_defaults() -> None:
     # Feed-piston advance per layer is distinct from the part-piston drop (V1.py):
     # thick precoat backfills 7 mm of feed while the part is fixed; thin/print advance 0.4 mm
@@ -283,3 +151,321 @@ def test_bounded_clamps_new_position_fields() -> None:
     # feed_thickness_mm on a phase is clamped into [0, 50]
     p2 = PrintSettings.bounded({"printing": {"feed_thickness_mm": 9999}}, lim)
     assert p2.printing.feed_thickness_mm == 50.0
+
+
+def test_heater_exposure_input_defaults() -> None:
+    p = PrintSettings()
+    assert p.target_carbon_wt == 0.15 and p.part_area_mm2 == 900.0
+    assert p.powder_density_g_cm3 == 1.01 and p.ink_carbon_wt == 0.25
+    assert p.ipa_dhvap_j_g == 663.0 and p.heater_section_power_w == 75.0
+
+
+# ---- (a) primed-start setup ----------------------------------------------------------------------
+
+
+def test_setup_homes_gantries_only_no_piston_move() -> None:
+    steps = compile_print(one_layer())
+    # First four steps: home printhead, home recoater — gantries only, each followed by a wait.
+    assert (steps[0].kind, steps[0].axis) == ("home", PRINTHEAD)
+    assert steps[1].kind == "wait"
+    assert (steps[2].kind, steps[2].axis) == ("home", RECOATER)
+    assert steps[3].kind == "wait"
+    # Primed start: NO home_all anywhere, and the setup never homes or moves PART or FEED.
+    assert not any(s.kind == "home_all" for s in steps)
+    setup = [s for s in steps if s.phase == "setup"]
+    assert not any(s.kind == "home" and s.axis in (PART, FEED) for s in setup)
+    assert not any(s.kind in ("move_abs", "move_rel") and s.axis in (PART, FEED) for s in setup)
+    # No setup move of any axis (pistons already primed; gantries only homed).
+    assert not any(s.kind in ("move_abs", "move_rel") for s in setup)
+
+
+# ---- (b) thick precoat layer ---------------------------------------------------------------------
+
+
+def test_thick_precoat_layer_spreads_feeds_and_returns_without_part_move() -> None:
+    all_steps = [s for s in compile_print(thick_only()) if s.phase == "thick_precoat"]
+    # drop the per-phase profile steps; assert the layer body cycle
+    steps = [s for s in all_steps if s.kind not in ("set_speed", "set_accel")]
+    ks = [(s.kind, s.axis, s.value) for s in steps]
+    # spread -> 925, feed advance -7.0 (thick), NO part move, recoater return -> 350
+    body = [
+        ("mark", None, None),
+        ("move_abs", RECOATER, 925.0),
+        ("wait", None, None),
+        ("move_rel", FEED, -7.0),
+        ("wait", None, None),
+        ("dwell", None, 1.0),
+        ("move_abs", RECOATER, 350.0),
+        ("wait", None, None),
+        ("mark", None, None),
+    ]
+    assert ks == body
+    assert not any(s.kind == "move_rel" and s.axis == PART for s in steps)  # part piston fixed
+    assert not any(s.axis == PRINTHEAD and s.kind.startswith("move") for s in all_steps)  # no jet
+    assert not any(s.kind == "heater" for s in all_steps)
+    first_mark = steps[0]
+    assert first_mark.label == "layer_start" and first_mark.part_height_mm == 0.0
+    assert steps[-1].label == "layer_end"
+
+
+# ---- (c) thin (nominal) precoat layer ------------------------------------------------------------
+
+
+def test_thin_precoat_layer_spreads_feeds_drops_part_and_returns() -> None:
+    all_steps = [s for s in compile_print(thin_only()) if s.phase == "thin_precoat"]
+    steps = [s for s in all_steps if s.kind not in ("set_speed", "set_accel")]
+    ks = [(s.kind, s.axis, s.value) for s in steps]
+    body = [
+        ("mark", None, None),
+        ("move_abs", RECOATER, 925.0),
+        ("wait", None, None),
+        ("move_rel", FEED, -0.4),  # feed advance 0.4 (nominal)
+        ("wait", None, None),
+        ("dwell", None, 1.0),
+        ("move_rel", PART, 0.2),  # part drop 0.2 (nominal layer)
+        ("wait", None, None),
+        ("move_abs", RECOATER, 350.0),  # precoat return, NOT home
+        ("wait", None, None),
+        ("mark", None, None),
+    ]
+    assert ks == body
+    assert not any(s.axis == PRINTHEAD and s.kind.startswith("move") for s in all_steps)
+    assert steps[0].part_height_mm == pytest.approx(0.2)  # part grew by one nominal layer
+
+
+# ---- (d) printing layer: full sequence + concurrency + heater + finish ---------------------------
+
+
+def test_compile_one_printing_layer_full_sequence() -> None:
+    steps = compile_print(one_layer())
+    kinds = [(s.kind, s.axis, s.value) for s in steps]
+
+    # (a) setup — gantry homes + initial profiles (4 home/wait + 8 set_* = 12 steps)
+    assert kinds[0:4] == [
+        ("home", PRINTHEAD, None),
+        ("wait", None, None),
+        ("home", RECOATER, None),
+        ("wait", None, None),
+    ]
+    n_setup = sum(1 for s in steps if s.phase == "setup")
+    assert n_setup == 12
+
+    # phase setup for printing: set_speed/accel PART, FEED, PRINTHEAD, RECOATER
+    i = n_setup
+    assert kinds[i : i + 8] == [
+        ("set_speed", PART, 2.5),
+        ("set_accel", PART, 15.0),
+        ("set_speed", FEED, 2.5),
+        ("set_accel", FEED, 15.0),
+        ("set_speed", PRINTHEAD, 100.0),
+        ("set_accel", PRINTHEAD, 500.0),
+        ("set_speed", RECOATER, 100.0),
+        ("set_accel", RECOATER, 500.0),
+    ]
+    i += 8
+
+    layer = [
+        ("mark", None, None),              # layer_start
+        ("move_abs", RECOATER, 925.0),     # spread
+        ("wait", None, None),
+        ("move_rel", FEED, -0.4),          # feed advance (feed advances during printing)
+        ("wait", None, None),
+        ("dwell", None, 1.0),
+        ("move_rel", PART, 2.0),           # part drop
+        ("wait", None, None),
+        ("move_abs", RECOATER, 5.0),       # recoater home  \  concurrent: two moves,
+        ("move_abs", PRINTHEAD, 900.0),    # printhead jet  /  then ONE wait
+        ("wait", None, None),
+        ("move_abs", PRINTHEAD, 5.0),      # printhead home
+        ("wait", None, None),
+        ("move_abs", RECOATER, 425.0),     # heater sweep start
+        ("wait", None, None),
+        ("heater", None, 1.0),
+        ("set_speed", RECOATER, 50.0),     # slow follow
+        ("set_accel", RECOATER, 250.0),
+        ("move_abs", RECOATER, 600.0),     # heater sweep end
+        ("wait", None, None),
+        ("heater", None, 0.0),
+        ("set_speed", RECOATER, 100.0),    # restore printing recoater profile
+        ("set_accel", RECOATER, 500.0),
+        ("move_abs", RECOATER, 925.0),     # recoater back to end
+        ("wait", None, None),
+        ("mark", None, None),              # layer_end
+    ]
+    assert kinds[i : i + len(layer)] == layer
+    layer_start = steps[i]
+    layer_end = steps[i + len(layer) - 1]
+    assert layer_start.label == "layer_start" and layer_end.label == "layer_end"
+    assert layer_start.phase == "printing" and layer_start.layer == 1
+    assert layer_start.part_height_mm == 2.0
+    i += len(layer)
+
+    # concurrency: the recoater-home and printhead-end moves are adjacent with the wait AFTER both.
+    j = next(
+        k
+        for k in range(len(kinds))
+        if kinds[k] == ("move_abs", RECOATER, 5.0)
+    )
+    assert kinds[j + 1] == ("move_abs", PRINTHEAD, 900.0)
+    assert kinds[j + 2] == ("wait", None, None)
+
+    # (d) finish: home printhead, home recoater, drive part -> part_max (75)
+    finish = kinds[i:]
+    assert finish == [
+        ("home", PRINTHEAD, None),
+        ("wait", None, None),
+        ("home", RECOATER, None),
+        ("wait", None, None),
+        ("move_abs", PART, 75.0),
+        ("wait", None, None),
+    ]
+    assert steps[-2].kind == "move_abs" and steps[-2].axis == PART and steps[-2].value == 75.0
+    assert [s.index for s in steps] == list(range(len(steps)))
+
+
+# ---- (e) multi-pass jetting ----------------------------------------------------------------------
+
+
+def test_printing_multipass_adds_extra_printhead_end_home_pairs() -> None:
+    p = dataclasses.replace(one_layer(), n_jet_passes=3, heater_enabled=False)
+    ks = kinds_of(p)
+    ends = [k for k in ks if k == ("move_abs", PRINTHEAD, 900.0)]
+    homes = [k for k in ks if k == ("move_abs", PRINTHEAD, 5.0)]
+    assert len(ends) == 3 and len(homes) == 3  # 1 concurrent pass + 2 extra passes
+    # heater disabled -> no heater sweep at all
+    assert not any(k[0] == "heater" for k in ks)
+    assert not any(k == ("move_abs", RECOATER, 600.0) for k in ks)
+
+
+# ---- (f) pre-heater drop brackets the heater -----------------------------------------------------
+
+
+def test_pre_heater_drop_brackets_the_heater() -> None:
+    p = dataclasses.replace(
+        one_layer(),
+        printing=dataclasses.replace(PrintSettings().printing, n_layers=1, layer_thickness_mm=0.2),
+        n_jet_passes=2,
+        pre_heater_drop_mm=0.1,
+        heater_enabled=True,
+    )
+    ks = kinds_of(p)
+    jet = [i for i, k in enumerate(ks) if k == ("move_abs", PRINTHEAD, 900.0)]
+    assert len(jet) == 2
+    i_drop = ks.index(("move_rel", PART, 0.1))
+    i_heater_on = next(i for i, k in enumerate(ks) if k[0] == "heater" and k[2] == 1.0)
+    i_up = next(
+        i for i, k in enumerate(ks) if k == ("move_rel", PART, -0.1) and i > i_heater_on
+    )
+    assert max(jet) < i_drop < i_heater_on < i_up  # jets -> drop -> heat -> raise back up
+
+
+# ---- (g) postcoat toggle + finish still drives part -> max ---------------------------------------
+
+
+def test_postcoat_toggle_off_but_finish_still_drives_part_to_max() -> None:
+    p_on = PrintSettings()
+    p_off = dataclasses.replace(p_on, postcoat_enabled=False)
+    assert any(s.phase == "postcoat" for s in compile_print(p_on))
+    off_steps = compile_print(p_off)
+    assert not any(s.phase == "postcoat" for s in off_steps)
+    # finish still ends with part -> part_max
+    assert off_steps[-2].kind == "move_abs"
+    assert off_steps[-2].axis == PART and off_steps[-2].value == 75.0
+
+
+def test_postcoat_is_a_precoat_style_cover_pass() -> None:
+    # postcoat: spread -> (no feed, thickness 0) -> return 350; no part drop, no jet, no heater.
+    p = dataclasses.replace(
+        PrintSettings(),
+        thick_precoat=PhasePlan(n_layers=0),
+        thin_precoat=PhasePlan(n_layers=0),
+        printing=PhasePlan(n_layers=0),
+        postcoat=dataclasses.replace(PrintSettings().postcoat, n_layers=1),
+    )
+    steps = [s for s in compile_print(p) if s.phase == "postcoat"]
+    ks = [(s.kind, s.axis, s.value) for s in steps]
+    assert ("move_abs", RECOATER, 925.0) in ks  # spread
+    assert ("move_abs", RECOATER, 350.0) in ks  # precoat-style return
+    assert not any(s.axis == PART and s.kind.startswith("move") for s in steps)  # no part drop
+    assert not any(s.axis == PRINTHEAD and s.kind.startswith("move") for s in steps)  # no jetting
+    assert not any(s.kind == "heater" for s in steps)
+    assert not any(s.kind == "move_rel" and s.axis == FEED for s in steps)  # feed_thickness 0
+
+
+# ---- (h) feed exhaustion -------------------------------------------------------------------------
+
+
+def test_feed_exhaustion_homes_recoater_marks_and_stops() -> None:
+    # Running feed starts at feed_end_mm (primed column top) 1.0 and drops 0.4 each printing layer:
+    # 1.0 -> 0.6 (layer 1), 0.6 -> 0.2 (layer 2); layer 3 would go 0.2 - 0.4 = -0.2 <= 0 -> exhaust.
+    p = dataclasses.replace(
+        PrintSettings(),
+        thick_precoat=PhasePlan(n_layers=0),
+        thin_precoat=PhasePlan(n_layers=0),
+        printing=dataclasses.replace(
+            PrintSettings().printing, n_layers=5, feed_thickness_mm=0.4, layer_thickness_mm=0.2
+        ),
+        postcoat=PhasePlan(n_layers=0),
+        feed_end_mm=1.0,
+        heater_enabled=False,
+    )
+    steps = compile_print(p)
+    # exactly two printing layers completed
+    completed = [s for s in steps if s.label == "layer_end"]
+    assert len(completed) == 2
+    # the sequence ends with recoater home + a "feed_exhausted" mark (terminal safety stop)
+    assert steps[-1].kind == "mark" and steps[-1].label == "feed_exhausted"
+    assert steps[-2].kind == "wait"
+    assert (steps[-3].kind, steps[-3].axis, steps[-3].value) == (
+        "move_abs",
+        RECOATER,
+        p.recoater_home_mm,
+    )
+    # exhaustion is terminal: NO part -> max finish after the stop
+    assert not any(
+        s.kind == "move_abs" and s.axis == PART and s.value == p.part_max_mm for s in steps
+    )
+
+
+def test_feed_advances_during_printing_user_override() -> None:
+    # USER OVERRIDE: the feed piston advances every printing layer (it is the powder supply).
+    steps = [s for s in compile_print(one_layer()) if s.phase == "printing"]
+    assert any(s.kind == "move_rel" and s.axis == FEED and s.value == -0.4 for s in steps)
+
+
+# ---- misc ----------------------------------------------------------------------------------------
+
+
+def test_steps_are_frozen() -> None:
+    s = compile_print(one_layer())[0]
+    with pytest.raises(dataclasses.FrozenInstanceError):
+        s.kind = "x"  # type: ignore[misc]
+
+
+def test_layer_numbers_and_heights_over_a_full_plan() -> None:
+    p = dataclasses.replace(PrintSettings(), heater_enabled=True)
+    steps = compile_print(p)
+    # 16 layers total numbered 1..16: thick 3 + thin 2 + printing 10 + postcoat 1
+    assert [s.layer for s in steps if s.label == "layer_start"] == list(range(1, 17))
+    heights = [s.part_height_mm for s in steps if s.label == "layer_end"]
+    # thick precoat holds the part fixed (3 x 0.0); thin adds 0.2 each; printing adds 2.0 each;
+    # postcoat is a cover pass (no part drop) so the last layer_end keeps the printing stack height.
+    assert heights[:3] == [0.0, 0.0, 0.0]
+    assert heights[3] == pytest.approx(0.2)
+    assert heights[4] == pytest.approx(0.4)
+    assert heights[5] == pytest.approx(2.4)  # first printing layer (+2.0)
+    # thin 0.4 + printing 2.0*10 = 20.4 mm; postcoat adds no part height
+    assert heights[-1] == pytest.approx(20.4)
+
+
+def test_estimate_duration_is_positive_and_scales_with_layers() -> None:
+    from vention_printer_interface.control.print_settings import estimate_duration_s
+
+    one = one_layer()
+    ten = dataclasses.replace(one, printing=dataclasses.replace(one.printing, n_layers=10))
+    t1, t10 = estimate_duration_s(one), estimate_duration_s(ten)
+    # more layers -> materially more time (fixed homing/finish overhead means < 10x, not < 1x).
+    assert t1 > 0 and t10 > t1 * 3
+    # the whole default V1 plan runs well under 2 h; primed-start setup only homes two gantries.
+    total = estimate_duration_s(PrintSettings())
+    assert 0 < total < 7200
