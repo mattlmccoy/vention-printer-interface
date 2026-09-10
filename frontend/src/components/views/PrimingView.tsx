@@ -19,6 +19,10 @@ export function PrimingView({ status, gates, call, onJob }: { status: StatusPayl
   const ok = gates.controllable && !gates.printActive;
   const r = status?.print ?? null;
   const paused = r?.state === "paused";
+  // Live state of the automatic RUN PRIMING macro. Surfaced as a banner so the button visibly
+  // does something — the macro's progress otherwise only shows on the Print tab.
+  const macroRunning = r?.macro === "priming" && (r.state === "running" || r.state === "paused");
+  const macroPct = r && r.n_steps ? Math.round((100 * r.step_index) / r.n_steps) : 0;
 
   const [step, setStep] = useState(0);
   const cur = WALKTHROUGH_STEPS[step];
@@ -73,6 +77,15 @@ export function PrimingView({ status, gates, call, onJob }: { status: StatusPayl
     <div className="view priming-walk">
       <section className="step-col">
         <div className="h">prime the bed · powder loading + leveling</div>
+
+        {macroRunning && (
+          <div className={`banner ${paused ? "warn" : ""}`} style={{ marginBottom: 12 }}>
+            <b>PRIMING {paused ? "PAUSED" : "RUNNING"}</b>
+            <span className="reason">{paused ? (r?.reason || "load powder into the feed cavity, then Resume") : `step ${r?.step_index ?? 0} of ${r?.n_steps ?? 0} · ${macroPct}%`}</span>
+            {paused && <button className="small" disabled={!gates.connected} style={{ marginLeft: "auto" }} onClick={() => call("resume priming", api.printResume)}>Resume</button>}
+            <button className="small" disabled={!gates.connected} style={{ marginLeft: paused ? 6 : "auto" }} onClick={() => call("abort", api.printAbort)}>Abort</button>
+          </div>
+        )}
 
         {/* walkthrough's OWN progress — never the compiled macro step count */}
         <ol className="step-rail" aria-label="priming walkthrough steps">
