@@ -91,7 +91,8 @@ details > .body { margin-top: 12px; }
 .params > summary { cursor: pointer; font: 12px var(--font-mono); letter-spacing: .09em; text-transform: uppercase; color: var(--label); }
 .escape { margin-top: 22px; border-top: 1px solid var(--line); padding-top: 16px; }
 .h { font: 12px var(--font-mono); letter-spacing: .09em; text-transform: uppercase; color: var(--label); margin-bottom: 14px; }
-.kv { display: grid; grid-template-columns: auto 1fr; gap: 8px 18px; margin-top: 22px; font-size: 14px; }
+.kv { display: grid; grid-template-columns: auto minmax(0, 1fr); gap: 8px 18px; margin-top: 22px; font-size: 14px; }
+.kv span:nth-child(even) { overflow-wrap: anywhere; }
 .kv span:nth-child(odd) { color: var(--muted); }
 .kv span:nth-child(even) { font-family: var(--font-mono); text-align: right; color: var(--fg-strong); }
 .kv .warnv { color: var(--warn); }
@@ -176,12 +177,13 @@ button.small { height: 34px; padding: 0 12px; border: 1px solid var(--line-contr
 .stack .col { position: relative; width: 200px; height: 100%; border: 1px solid var(--line-strong); background: var(--panel); }
 .stack .col div { position: absolute; left: 0; right: 0; border-top: 1px solid var(--bg-deep); display: flex; align-items: center; justify-content: center; font: 12px var(--font-mono); color: var(--bg-deep); overflow: hidden; }
 .stack .pre, .stack .post { background: var(--trace-feed); }
+.stack .thin { background: var(--trace-rc); }
 .stack .lay { background: var(--trace-part); }
 .stack .over { background: var(--err); color: var(--danger-ink); }
 .stack .legend { font-size: 15px; color: var(--muted); line-height: 2; }
 .stack .legend b { color: var(--fg-strong); font-family: var(--font-mono); }
-.fields { display: grid; grid-template-columns: auto 1fr; gap: 12px 18px; align-items: center; margin-top: 26px; font-size: 14px; max-width: 460px; }
-.fields.adv { max-width: 720px; grid-template-columns: auto 1fr auto 1fr; }
+.fields { display: grid; grid-template-columns: auto minmax(0, 1fr); gap: 12px 18px; align-items: center; margin-top: 26px; font-size: 14px; max-width: 460px; }
+.fields.adv { max-width: 720px; grid-template-columns: auto minmax(0, 1fr) auto minmax(0, 1fr); }
 .est { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
 .est div .l { font: 12px var(--font-mono); letter-spacing: .09em; text-transform: uppercase; color: var(--label); }
 .est div .v { font: 700 30px var(--font-mono); color: var(--fg-strong); margin-top: 6px; }
@@ -220,6 +222,11 @@ button.small { height: 34px; padding: 0 12px; border: 1px solid var(--line-contr
 .log tr.warn td.k { color: var(--err); }
 .log td.d { color: var(--fg); overflow: hidden; text-overflow: ellipsis; max-width: 0; }
 .log a { color: var(--fg); }
+/* the runs table carries the per-run download links — they must stay clickable, so its detail
+   cell is never truncated (unlike the event log's) and the whole table scrolls sideways in its
+   own container if the module is dragged narrow, instead of the page body. */
+.tbl-scroll { overflow-x: auto; }
+.run-log td.d { max-width: none; overflow: visible; text-overflow: clip; }
 
 /* status bar */
 .statusbar { display: flex; align-items: center; gap: 22px; padding: 0 24px; background: var(--bg-deep); border-top: 1px solid var(--line); font-family: var(--font-mono); font-size: 12px; color: var(--muted); overflow: hidden; }
@@ -248,7 +255,8 @@ button.small { height: 34px; padding: 0 12px; border: 1px solid var(--line-contr
 .mini-el svg { max-height: 150px; }
 .slider { display: flex; align-items: center; gap: 12px; margin-top: 12px; font: 12px var(--font-mono); color: var(--muted); }
 .slider input[type=range] { flex: 1; }
-.job-map { display: grid; grid-template-columns: auto 1fr; gap: 8px 18px; margin-top: 18px; font-size: 14px; }
+.job-map { display: grid; grid-template-columns: auto minmax(0, 1fr); gap: 8px 18px; margin-top: 18px; font-size: 14px; }
+.job-map span:nth-child(even) { overflow-wrap: anywhere; }
 .job-map span:nth-child(odd) { color: var(--muted); }
 .job-map span:nth-child(even) { font-family: var(--font-mono); color: var(--fg-strong); }
 .job-map .warnv { color: var(--warn); }

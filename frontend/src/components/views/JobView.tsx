@@ -32,7 +32,7 @@ export function JobView({ status, gates, call, order, sizes, onOrder, onResize, 
   const total = plan ? totalThickness(plan) : 0;
   const layers = plan ? totalLayers(plan) : 0;
   const pct = (mm: number) => `${Math.min(100, (100 * mm) / BUDGET)}%`;
-  const pre = plan ? plan.thick_precoat.layer_thickness_mm * plan.thick_precoat.n_layers : 0, pr = plan ? plan.printing.layer_thickness_mm * plan.printing.n_layers : 0, post = plan && plan.postcoat_enabled ? plan.postcoat.layer_thickness_mm * plan.postcoat.n_layers : 0;
+  const pre = plan ? plan.thick_precoat.layer_thickness_mm * plan.thick_precoat.n_layers : 0, thin = plan ? plan.thin_precoat.layer_thickness_mm * plan.thin_precoat.n_layers : 0, pr = plan ? plan.printing.layer_thickness_mm * plan.printing.n_layers : 0, post = plan && plan.postcoat_enabled ? plan.postcoat.layer_thickness_mm * plan.postcoat.n_layers : 0;
   const mismatch = job && plan && (plan.printing.n_layers !== job.layer_count || Math.abs(plan.printing.layer_thickness_mm - job.layer_height_mm) > 1e-6);
   const start = async () => {
     if (!plan) return;
@@ -77,9 +77,10 @@ export function JobView({ status, gates, call, order, sizes, onOrder, onResize, 
         <div className="stack compact">
           <div className="scale">{[0, 50, 100, 145].map((mm) => <span key={mm} style={{ bottom: pct(mm) }}>{mm}</span>)}</div>
           <div className="col">
-            <div className={total > plan.feed_end_mm ? "over" : "pre"} style={{ bottom: 0, height: pct(pre) }}>{pre > 0 ? `precoat ${pre}` : ""}</div>{/* TODO Task 3: thin_precoat not yet shown in stack */}
-            <div className={total > plan.feed_end_mm ? "over" : "lay"} style={{ bottom: pct(pre), height: pct(pr) }}>{plan.printing.n_layers} × {plan.printing.layer_thickness_mm}</div>
-            <div className={total > plan.feed_end_mm ? "over" : "post"} style={{ bottom: pct(pre + pr), height: pct(post) }}>{post > 0 ? `postcoat ${post}` : ""}</div>
+            <div className={total > plan.feed_end_mm ? "over" : "pre"} style={{ bottom: 0, height: pct(pre) }}>{pre > 0 ? `precoat ${pre}` : ""}</div>
+            <div className={total > plan.feed_end_mm ? "over" : "thin"} style={{ bottom: pct(pre), height: pct(thin) }}>{thin > 0 ? `thin ${thin.toFixed(1)}` : ""}</div>
+            <div className={total > plan.feed_end_mm ? "over" : "lay"} style={{ bottom: pct(pre + thin), height: pct(pr) }}>{plan.printing.n_layers} × {plan.printing.layer_thickness_mm}</div>
+            <div className={total > plan.feed_end_mm ? "over" : "post"} style={{ bottom: pct(pre + thin + pr), height: pct(post) }}>{post > 0 ? `postcoat ${post}` : ""}</div>
           </div>
           <div className="legend" style={{ lineHeight: 1.7, fontSize: 14 }}><b>{total.toFixed(1)} mm</b> of {plan.feed_end_mm}<br /><b>{layers}</b> layers<br />heater <b>{plan.heater_enabled ? `${plan.n_heater_passes}×` : "off"}</b></div>
         </div>
