@@ -21,7 +21,7 @@ from vention_printer_interface.protocol import routes as r
 KNOWN_AXES: dict[int, tuple[str, float, float]] = {
     1: ("Part Piston", 145.0, 68.8),
     2: ("Feed Piston", 145.0, 68.8),
-    3: ("Printhead Gantry", 840.0, 66.3),
+    3: ("Printhead Gantry", 970.0, 66.3),
     4: ("Recoater Gantry", 972.0, 66.3),
 }
 

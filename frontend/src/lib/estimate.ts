@@ -2,7 +2,7 @@
 import { compilePrint, type PrintSettings } from "./print_settings.ts";
 
 const HOMING: Record<number, number> = { 1: 68.8, 2: 68.8, 3: 66.3, 4: 66.3 };
-const TRAVEL: Record<number, number> = { 1: 145, 2: 145, 3: 840, 4: 972 };
+const TRAVEL: Record<number, number> = { 1: 145, 2: 145, 3: 970, 4: 972 };
 
 export function estimateDurationS(plan: PrintSettings, minWaitS = 0.5): number {
   const speed: Record<number, number> = { 1: 5, 2: 5, 3: 100, 4: 100 };

@@ -4,7 +4,7 @@ import { AXES, TRAVEL_MM, TraceBuffer, isStale } from "./telemetry.ts";
 
 test("axes and travel match the backend constants", () => {
   assert.deepEqual([...AXES], [1, 2, 3, 4]);
-  assert.deepEqual(TRAVEL_MM, { 1: 145, 2: 145, 3: 840, 4: 972 });
+  assert.deepEqual(TRAVEL_MM, { 1: 145, 2: 145, 3: 970, 4: 972 });
 });
 
 test("trace buffer keeps capacity and windows by time", () => {

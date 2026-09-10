@@ -13,7 +13,7 @@ export const AXIS_SHORT: Record<AxisNo, string> = { 1: "part", 2: "feed", 3: "pr
 /** Physical side each gantry homes to (user, 2026-09-09): printhead LEFT, recoater RIGHT. */
 export const GANTRY_HOME_SIDE: Record<3 | 4, "left" | "right"> = { 3: "left", 4: "right" };
 /** Measured travel (mm) from V1.py; the backend's HARD_BOUNDS use the same numbers. */
-export const TRAVEL_MM: Record<AxisNo, number> = { 1: 145, 2: 145, 3: 840, 4: 972 };
+export const TRAVEL_MM: Record<AxisNo, number> = { 1: 145, 2: 145, 3: 970, 4: 972 };
 
 export interface Telemetry {
   host_timestamp_ns: number;
