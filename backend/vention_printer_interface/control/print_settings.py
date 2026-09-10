@@ -112,7 +112,7 @@ class PrintSettings:
     feed_end_mm: float = 145.0  # V1.py:48 (pendant says ~151)
     recoater_home_mm: float = 5.0
     recoater_return_mm: float = 350.0  # V1.py precoat recoater return position
-    recoater_end_mm: float = 925.0
+    recoater_end_mm: float = 950.0
     heater_home_mm: float = 5.0
     heater_start_mm: float = 425.0  # V1.py heater sweep start
     heater_end_mm: float = 600.0

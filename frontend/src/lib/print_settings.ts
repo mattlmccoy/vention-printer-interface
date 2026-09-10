@@ -66,7 +66,7 @@ export const DEFAULT_PLAN: PrintSettings = {
   printing: { ...basePhase, layer_thickness_mm: 2, feed_thickness_mm: 0.4, n_layers: 10 },
   postcoat: { ...basePhase, layer_thickness_mm: 5, feed_thickness_mm: 0, n_layers: 1 },
   n_jet_passes: 1, pre_heater_drop_mm: 0, postcoat_enabled: true,
-  feed_end_mm: 145, recoater_home_mm: 5, recoater_return_mm: 350, recoater_end_mm: 925,
+  feed_end_mm: 145, recoater_home_mm: 5, recoater_return_mm: 350, recoater_end_mm: 950,
   heater_home_mm: 5, heater_start_mm: 425, heater_end_mm: 600,
   printhead_home_mm: 5, printhead_end_mm: 900, part_max_mm: 72,
   heater_speed: 50, heater_accel: 250, n_heater_passes: 1,

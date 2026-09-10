@@ -70,7 +70,7 @@ def test_defaults_match_v1() -> None:
     assert p.printing.recoater_speed == 100 and p.printing.recoater_accel == 500
     assert (p.feed_end_mm, p.recoater_end_mm, p.printhead_end_mm, p.heater_end_mm) == (
         145,
-        925,
+        950,
         900,
         600,
     )
@@ -127,7 +127,7 @@ def test_script_faithful_position_defaults() -> None:
     assert p.recoater_return_mm == 350.0
     assert p.heater_start_mm == 425.0
     assert p.part_max_mm == 72.0
-    assert p.recoater_end_mm == 925.0
+    assert p.recoater_end_mm == 950.0
     assert p.printhead_end_mm == 900.0
 
 
@@ -192,7 +192,7 @@ def test_thin_precoat_layer_spreads_feeds_drops_part_and_returns() -> None:
     ks = [(s.kind, s.axis, s.value) for s in steps]
     body = [
         ("mark", None, None),
-        ("move_abs", RECOATER, 925.0),
+        ("move_abs", RECOATER, 950.0),
         ("wait", None, None),
         ("move_rel", FEED, -0.4),  # feed advance 0.4 (nominal)
         ("wait", None, None),
@@ -241,7 +241,7 @@ def test_compile_one_printing_layer_full_sequence() -> None:
 
     layer = [
         ("mark", None, None),              # layer_start
-        ("move_abs", RECOATER, 925.0),     # spread
+        ("move_abs", RECOATER, 950.0),     # spread
         ("wait", None, None),
         ("move_rel", FEED, -0.4),          # feed advance (feed advances during printing)
         ("wait", None, None),
@@ -263,7 +263,7 @@ def test_compile_one_printing_layer_full_sequence() -> None:
         ("heater", None, 0.0),
         ("set_speed", RECOATER, 100.0),    # restore printing recoater profile
         ("set_accel", RECOATER, 500.0),
-        ("move_abs", RECOATER, 925.0),     # recoater back to end
+        ("move_abs", RECOATER, 950.0),     # recoater back to end
         ("wait", None, None),
         ("mark", None, None),              # layer_end
     ]
@@ -375,7 +375,7 @@ def test_postcoat_is_a_precoat_style_cover_pass() -> None:
     )
     steps = [s for s in compile_print(p) if s.phase == "postcoat"]
     ks = [(s.kind, s.axis, s.value) for s in steps]
-    assert ("move_abs", RECOATER, 925.0) in ks  # spread
+    assert ("move_abs", RECOATER, 950.0) in ks  # spread
     assert ("move_abs", RECOATER, 350.0) in ks  # precoat-style return
     assert not any(s.axis == PART and s.kind.startswith("move") for s in steps)  # no part drop
     assert not any(s.axis == PRINTHEAD and s.kind.startswith("move") for s in steps)  # no jetting

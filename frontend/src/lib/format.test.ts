@@ -62,9 +62,9 @@ test("height mismatch and cycle index", () => {
   assert.equal(heightMismatch(null, 2, 2), false);
   assert.equal(heightMismatch(2.4, 2, 2), false);
   assert.equal(heightMismatch(3.2, 2, 2), true);
-  const plan = { recoater_end_mm: 925, heater_end_mm: 600, printhead_end_mm: 900 };
+  const plan = { recoater_end_mm: 950, heater_end_mm: 600, printhead_end_mm: 900 };
   assert.equal(cycleIndex({ kind: "move_rel", axis: 1, value: 2, phase: "printing" }, plan), 1);
-  assert.equal(cycleIndex({ kind: "move_abs", axis: 4, value: 925, phase: "printing" }, plan), 2);
+  assert.equal(cycleIndex({ kind: "move_abs", axis: 4, value: 950, phase: "printing" }, plan), 2);
   assert.equal(cycleIndex({ kind: "move_rel", axis: 2, value: -2, phase: "printing" }, plan), 3);
   assert.equal(cycleIndex({ kind: "move_abs", axis: 4, value: 5, phase: "printing" }, plan), 4);
   assert.equal(cycleIndex({ kind: "move_abs", axis: 3, value: 900, phase: "printing" }, plan), 5);

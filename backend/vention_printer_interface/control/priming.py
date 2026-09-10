@@ -29,9 +29,9 @@ def _clamp(v: float, lo: float, hi: float) -> float:
 class PrimingSettings:
     part_top_mm: float = 0.0
     feed_cavity_mm: float = 30.0
-    # Recoater moves to START (930, past the feed piston at the far end) then SPREADS across to END
+    # Recoater moves to START (950, past the feed piston at the far end) then SPREADS across to END
     # (350), dragging powder over the build. Start > end because the recoater homes RIGHT.
-    level_recoat_start_mm: float = 930.0
+    level_recoat_start_mm: float = 950.0
     level_recoat_end_mm: float = 350.0
     n_thick_precoats: int = 3
     thick_feed_mm: float = 7.0
