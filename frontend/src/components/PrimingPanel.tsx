@@ -22,7 +22,11 @@ export function usePriming(call: Call) {
       for (const [k, v] of Object.entries(edit)) if (v !== "") patch[k] = Number(v);
       return api.setPriming(patch).then((np) => { setP(np); setEdit({}); });
     });
-  return { p, s, invalid, edit, setEdit, save };
+  /** PUT a direct numeric patch (e.g. {feed_cavity_mm}) and refresh `p` — used by the Amount step
+   *  to commit a computed feed-cavity depth without routing through the text `edit` map. */
+  const setParam = (patch: Record<string, number>, label = "set priming") =>
+    call(label, () => api.setPriming(patch).then((np) => setP(np)));
+  return { p, s, invalid, edit, setEdit, save, setParam };
 }
 
 /** The editable priming parameters (feed cavity, part top, level recoat end/return, level passes)
