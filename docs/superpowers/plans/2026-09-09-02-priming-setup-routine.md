@@ -171,7 +171,7 @@ class PrimingSettings:
     part_top_mm: float = 0.0        # build/part piston UP/flush
     feed_cavity_mm: float = 30.0    # feed piston DOWN to open a powder cavity (CALIBRATE)
     level_recoat_end_mm: float = 925.0   # spread stroke end (CALIBRATE)
-    level_recoat_return_mm: float = 350.0  # park between passes (CALIBRATE)
+    level_recoat_start_mm: float = 350.0  # park between passes (CALIBRATE)
     n_level_passes: int = 1         # leveling spreads after the powder load (CALIBRATE)
     part_speed: float = 2.5
     part_accel: float = 15.0
@@ -188,7 +188,7 @@ class PrimingSettings:
             ("part_top_mm", (PART, self.part_top_mm)),
             ("feed_cavity_mm", (FEED, self.feed_cavity_mm)),
             ("level_recoat_end_mm", (RECOATER, self.level_recoat_end_mm)),
-            ("level_recoat_return_mm", (RECOATER, self.level_recoat_return_mm)),
+            ("level_recoat_start_mm", (RECOATER, self.level_recoat_start_mm)),
         ):
             axis, v = value
             lo, hi = lim.travel_min[axis], lim.travel_max[axis]
@@ -221,7 +221,7 @@ class PrimingSettings:
             part_top_mm=limits.clamp_position(PART, num("part_top_mm")),
             feed_cavity_mm=limits.clamp_position(FEED, num("feed_cavity_mm")),
             level_recoat_end_mm=limits.clamp_position(RECOATER, num("level_recoat_end_mm")),
-            level_recoat_return_mm=limits.clamp_position(RECOATER, num("level_recoat_return_mm")),
+            level_recoat_start_mm=limits.clamp_position(RECOATER, num("level_recoat_start_mm")),
             n_level_passes=int(_clamp(passes, 1, MAX_LEVEL_PASSES)),
             part_speed=limits.clamp_speed(PART, num("part_speed")),
             part_accel=limits.clamp_accel(PART, num("part_accel")),
@@ -255,7 +255,7 @@ def compile_priming_setup(s: PrimingSettings, limits: SafetyLimits) -> tuple[Ste
     for _ in range(s.n_level_passes):
         add("move_abs", RECOATER, s.level_recoat_end_mm, "level spread")
         add("wait")
-        add("move_abs", RECOATER, s.level_recoat_return_mm, "return")
+        add("move_abs", RECOATER, s.level_recoat_start_mm, "return")
         add("wait")
         add("dwell", value=s.settle_s)
     add("mark", label="priming_done")
@@ -337,7 +337,7 @@ import assert from "node:assert/strict";
 import { primingSteps } from "./priming.ts";
 
 test("plain-language priming sequence: up, down, load, level", () => {
-  const s = { part_top_mm: 0, feed_cavity_mm: 30, level_recoat_end_mm: 925, level_recoat_return_mm: 350, n_level_passes: 1 };
+  const s = { part_top_mm: 0, feed_cavity_mm: 30, level_recoat_end_mm: 925, level_recoat_start_mm: 350, n_level_passes: 1 };
   const lines = primingSteps(s);
   assert.match(lines[0], /build.*piston.*up/i);
   assert.match(lines[1], /feed.*piston.*down/i);
@@ -350,7 +350,7 @@ test("plain-language priming sequence: up, down, load, level", () => {
 ```ts
 export interface PrimingSettings {
   part_top_mm: number; feed_cavity_mm: number; level_recoat_end_mm: number;
-  level_recoat_return_mm: number; n_level_passes: number;
+  level_recoat_start_mm: number; n_level_passes: number;
 }
 /** Plain-language "what this will do" lines for the priming setup routine. */
 export function primingSteps(s: PrimingSettings): string[] {
@@ -360,13 +360,13 @@ export function primingSteps(s: PrimingSettings): string[] {
     `HOLD — load powder into the feed, then Resume`,
   ];
   for (let i = 0; i < s.n_level_passes; i++)
-    lines.push(`Level pass ${i + 1}: spread to ${s.level_recoat_end_mm} mm, return to ${s.level_recoat_return_mm} mm`);
+    lines.push(`Level pass ${i + 1}: spread to ${s.level_recoat_end_mm} mm, return to ${s.level_recoat_start_mm} mm`);
   return lines;
 }
 ```
 - [ ] **Step 4: Run, watch pass** — same command → PASS.
 - [ ] **Step 5: Update `api.ts`** — change `PrimingPayload` to `{ settings: Record<string, number>; validation: string[]; n_steps: number; n_level_passes: number; limits: Record<string, unknown> }`.
-- [ ] **Step 6: Rebuild `PrimingPanel.tsx`** — READ it first. Replace the old param fields (feed start / thick layer / thick count / feed step / recoat end/return) with the new ones: `feed_cavity_mm`, `part_top_mm`, `level_recoat_end_mm`, `level_recoat_return_mm`, `n_level_passes` (all editable via the existing `field(k,label)` pattern + `api.setPriming`). Show the plain-language `primingSteps(settings)` list ("what this will do"). Keep RUN PRIMING (`api.primingRun`) + ABORT; ADD a **RESUME** button (`api.printResume`) shown when the print state is `paused`, labeled "Powder loaded — resume", so the operator can continue past the hold. Show `n_level_passes` and `n_steps` in the summary. Import `primingSteps` + `type PrimingSettings` from `../lib/priming.ts`; cast `p.settings` to `PrimingSettings` for the preview.
+- [ ] **Step 6: Rebuild `PrimingPanel.tsx`** — READ it first. Replace the old param fields (feed start / thick layer / thick count / feed step / recoat end/return) with the new ones: `feed_cavity_mm`, `part_top_mm`, `level_recoat_end_mm`, `level_recoat_start_mm`, `n_level_passes` (all editable via the existing `field(k,label)` pattern + `api.setPriming`). Show the plain-language `primingSteps(settings)` list ("what this will do"). Keep RUN PRIMING (`api.primingRun`) + ABORT; ADD a **RESUME** button (`api.printResume`) shown when the print state is `paused`, labeled "Powder loaded — resume", so the operator can continue past the hold. Show `n_level_passes` and `n_steps` in the summary. Import `primingSteps` + `type PrimingSettings` from `../lib/priming.ts`; cast `p.settings` to `PrimingSettings` for the preview.
 - [ ] **Step 7: Verify** — `cd frontend && node --experimental-strip-types --test src/lib/priming.test.ts` (PASS), full lib suite (all pass), `npm run build` (tsc clean).
 - [ ] **Step 8: Commit** — `git add frontend/src/lib/priming.ts frontend/src/lib/priming.test.ts frontend/src/lib/api.ts frontend/src/components/PrimingPanel.tsx` then commit `feat(priming): panel for the setup routine — position, hold-for-powder, level` + trailer.
 

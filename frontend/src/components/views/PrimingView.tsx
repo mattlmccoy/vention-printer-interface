@@ -178,16 +178,16 @@ export function PrimingView({ status, gates, call, onJob }: { status: StatusPayl
 
           {cur.id === "level" && (
             <>
-              <div className="hint">Spread the powder across the bed, then return the recoater. Repeat as many passes as it takes to get an even layer.</div>
+              <div className="hint">First move the recoater to the start position (past the feed piston), then spread across the bed. Repeat until the layer is even.</div>
               <div className="kv">
+                <span>start (past feed)</span><span>{fmt(target("level_recoat_start_mm"))}</span>
                 <span>spread to</span><span>{fmt(target("level_recoat_end_mm"))}</span>
-                <span>return to</span><span>{fmt(target("level_recoat_return_mm"))}</span>
               </div>
               <div className="actions">
-                <button className="cta primary" disabled={!ok || target("level_recoat_end_mm") === null}
-                  onClick={() => call("spread", () => api.move(4, "abs", target("level_recoat_end_mm") as number))}>Spread</button>
-                <button className="cta" disabled={!ok || target("level_recoat_return_mm") === null}
-                  onClick={() => call("return recoater", () => api.move(4, "abs", target("level_recoat_return_mm") as number))}>Return</button>
+                <button className="cta primary" disabled={!ok || target("level_recoat_start_mm") === null}
+                  onClick={() => call("move to start", () => api.move(4, "abs", target("level_recoat_start_mm") as number))}>Move to start</button>
+                <button className="cta" disabled={!ok || target("level_recoat_end_mm") === null}
+                  onClick={() => call("spread", () => api.move(4, "abs", target("level_recoat_end_mm") as number))}>Spread ▶</button>
               </div>
               <div className="hint">The ◀/▶ recoater controls on the diagram also work for manual nudges.</div>
             </>

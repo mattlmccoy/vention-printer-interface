@@ -27,7 +27,7 @@ class PrimingSettings:
     part_top_mm: float = 0.0
     feed_cavity_mm: float = 30.0
     level_recoat_end_mm: float = 925.0
-    level_recoat_return_mm: float = 350.0
+    level_recoat_start_mm: float = 350.0
     n_level_passes: int = 1
     part_speed: float = 2.5
     part_accel: float = 15.0
@@ -44,7 +44,7 @@ class PrimingSettings:
             ("part_top_mm", PART, self.part_top_mm),
             ("feed_cavity_mm", FEED, self.feed_cavity_mm),
             ("level_recoat_end_mm", RECOATER, self.level_recoat_end_mm),
-            ("level_recoat_return_mm", RECOATER, self.level_recoat_return_mm),
+            ("level_recoat_start_mm", RECOATER, self.level_recoat_start_mm),
         )
         for label, axis, v in checks:
             lo, hi = lim.travel_min[axis], lim.travel_max[axis]
@@ -79,7 +79,7 @@ class PrimingSettings:
             part_top_mm=limits.clamp_position(PART, num("part_top_mm")),
             feed_cavity_mm=limits.clamp_position(FEED, num("feed_cavity_mm")),
             level_recoat_end_mm=limits.clamp_position(RECOATER, num("level_recoat_end_mm")),
-            level_recoat_return_mm=limits.clamp_position(RECOATER, num("level_recoat_return_mm")),
+            level_recoat_start_mm=limits.clamp_position(RECOATER, num("level_recoat_start_mm")),
             n_level_passes=int(_clamp(passes, 1, MAX_LEVEL_PASSES)),
             part_speed=limits.clamp_speed(PART, num("part_speed")),
             part_accel=limits.clamp_accel(PART, num("part_accel")),
@@ -113,9 +113,9 @@ def compile_priming_setup(s: PrimingSettings, limits: SafetyLimits) -> tuple[Ste
     add("wait")
     add("hold", None, None, "Load powder into the feed cavity, then Resume")
     for _ in range(s.n_level_passes):
-        add("move_abs", RECOATER, s.level_recoat_end_mm, "level spread")
+        add("move_abs", RECOATER, s.level_recoat_start_mm, "move to start (past feed piston)")
         add("wait")
-        add("move_abs", RECOATER, s.level_recoat_return_mm, "return")
+        add("move_abs", RECOATER, s.level_recoat_end_mm, "spread across the bed")
         add("wait")
         add("dwell", value=s.settle_s)
     add("mark", label="priming_done")

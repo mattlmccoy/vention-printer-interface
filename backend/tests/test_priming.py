@@ -26,9 +26,10 @@ def test_positions_pistons_then_holds_then_levels() -> None:
     assert i_part < i_hold and i_feed < i_hold
     holds = [st for st in steps if st.kind == "hold"]
     assert len(holds) == 1 and "powder" in holds[0].label.lower()
-    i_level = next(n for n, st in enumerate(steps)
-                   if st.kind == "move_abs" and st.axis == RECOATER and n > i_hold)
-    assert i_level > i_hold
+    # Each level pass positions first (recoater moves to start, past the feed piston), then spreads.
+    i_start = ks.index(("move_abs", RECOATER, s.level_recoat_start_mm))
+    i_spread = ks.index(("move_abs", RECOATER, s.level_recoat_end_mm))
+    assert i_hold < i_start < i_spread
 
 
 def test_no_piston_is_ever_homed() -> None:

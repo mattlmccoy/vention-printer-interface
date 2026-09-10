@@ -183,7 +183,7 @@ enabled?: boolean;                                 // default true; false = grey
 
   **Load powder (HOLD) step:** instruction to pour powder into the open cavity; a **“Powder loaded — next”** button advances the stepper (this is a manual gate, no motor move). (If a macro run is in progress and `paused`, also surface the existing `api.printResume` "resume" — keep that path working.)
 
-  **Level step:** a **“Spread”** button (recoater → `level_recoat_end_mm`) and **“Return”** (→ `level_recoat_return_mm`) — **operator-repeatable**: they press Spread/Return as many times as needed until level (per the approved design; NOT a fixed pass count). The `ControlStrip` recoater buttons cover this too.
+  **Level step:** a **“Spread”** button (recoater → `level_recoat_end_mm`) and **“Return”** (→ `level_recoat_start_mm`) — **operator-repeatable**: they press Spread/Return as many times as needed until level (per the approved design; NOT a fixed pass count). The `ControlStrip` recoater buttons cover this too.
 
   **Ready step:** a **"Bed is primed — finish"** button calls `api.primedCapture()`
   (`POST /api/primed/capture`, added in Task 7a) which snapshots the controller's live piston

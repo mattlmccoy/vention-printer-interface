@@ -29,7 +29,7 @@ export function usePriming(call: Call) {
   return { p, s, invalid, edit, setEdit, save, setParam };
 }
 
-/** The editable priming parameters (feed cavity, part top, level recoat end/return, level passes)
+/** The editable priming parameters (feed cavity, part top, level recoat end/start, level passes)
  *  with the save button. State, validation and the save handler come from usePriming; `ok` gates
  *  every input exactly as the print routine editor does. */
 export function PrimingFields({ s, edit, setEdit, ok, save }: {
@@ -51,7 +51,7 @@ export function PrimingFields({ s, edit, setEdit, ok, save }: {
       {field("feed_cavity_mm", "feed cavity")}
       {field("part_top_mm", "part top")}
       {field("level_recoat_end_mm", "level recoat end")}
-      {field("level_recoat_return_mm", "level recoat return")}
+      {field("level_recoat_start_mm", "level start (past feed)")}
       {field("n_level_passes", "level passes")}
       <button className="small" style={{ gridColumn: "1 / -1", justifySelf: "start" }}
         disabled={!ok || Object.keys(edit).length === 0} onClick={save}>save</button>
