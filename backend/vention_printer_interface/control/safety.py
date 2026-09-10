@@ -15,7 +15,8 @@ from typing import TYPE_CHECKING, Any
 if TYPE_CHECKING:
     from vention_printer_interface.device.printer import Telemetry
 
-TRAVEL_MM: dict[int, float] = {1: 145.0, 2: 145.0, 3: 970.0, 4: 972.0}  # recoater end stop 972 (2026-09-09)
+# Measured axis end stops (mm): printhead 970, recoater 972 (2026-09-09).
+TRAVEL_MM: dict[int, float] = {1: 145.0, 2: 145.0, 3: 970.0, 4: 972.0}
 TRAVEL_FLOOR = -50.0  # axes home to negative positions (recoater ~-22 mm, 2026-09-09)
 
 Bound = tuple[float, float]

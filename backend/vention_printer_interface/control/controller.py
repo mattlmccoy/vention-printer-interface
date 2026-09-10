@@ -378,9 +378,9 @@ class Controller:
                     return
                 time.sleep(0.2)
         raise RuntimeError(
-            f"controller did not release the e-stop within {ESTOP_READY_WAIT_S:.0f}s — this firmware "
-            "rejects a software release; twist out the physical E-STOP and press RESET on the "
-            "MachineMotion, then Clear Fault"
+            f"controller did not release the e-stop within {ESTOP_READY_WAIT_S:.0f}s — "
+            "this firmware rejects a software release; twist out the physical E-STOP and press "
+            "RESET on the MachineMotion, then Clear Fault"
         )
 
     # ---- safe-direction (ungated) -----------------------------------------------------------
@@ -416,7 +416,7 @@ class Controller:
                 steps["estop_trigger"] = (
                     "ok"
                     if engaged
-                    else "not engaged — controller rejected the software e-stop; motion still halted"
+                    else "not engaged: controller rejected it (motion still halted)"
                 )
             except Exception as exc:  # noqa: BLE001 - report, never raise from E-STOP
                 steps["estop_trigger"] = f"failed: {exc}"
