@@ -17,7 +17,7 @@ import type { Call } from "./types.ts";
 const SW: Record<AxisNo, string> = { 1: "sw-part", 2: "sw-feed", 3: "sw-ph", 4: "sw-rc" };
 const SHORT: Record<AxisNo, string> = { 1: "build", 2: "feed", 3: "printhead", 4: "recoater" };
 
-export function PrimingView({ status, gates, call, onJob }: { status: StatusPayload | null; gates: Gates; call: Call; onJob: () => void }) {
+export function PrimingView({ status, gates, call, onJob, onPrint }: { status: StatusPayload | null; gates: Gates; call: Call; onJob: () => void; onPrint: () => void }) {
   const { p, s, invalid, edit, setEdit, save, setParam } = usePriming(call);
   const ok = gates.controllable && !gates.printActive;
   const r = status?.print ?? null;
@@ -221,12 +221,16 @@ export function PrimingView({ status, gates, call, onJob }: { status: StatusPayl
                   onClick={() => call("capture primed", () => api.primedCapture().then((x) => setPrimed(x.primed)))}>Bed is primed — finish</button>
               </div>
               {primed ? (
-                <div className="kv">
-                  <span>captured part</span><span>{primed.part_mm} mm</span>
-                  <span>captured feed</span><span>{primed.feed_mm} mm</span>
-                </div>
-              ) : <div className="hint">No primed bed captured yet.</div>}
-              <div className="hint">Switch to the Print tab to start a print from the captured bed.</div>
+                <>
+                  <div className="kv">
+                    <span>captured part</span><span>{primed.part_mm} mm</span>
+                    <span>captured feed</span><span>{primed.feed_mm} mm</span>
+                  </div>
+                  <div className="actions one" style={{ marginTop: 12 }}>
+                    <button className="cta primary" onClick={onPrint}>Priming complete — go to Print →</button>
+                  </div>
+                </>
+              ) : <div className="hint">No primed bed captured yet. The Print tab starts from the captured bed.</div>}
             </>
           )}
         </div>
