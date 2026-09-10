@@ -37,7 +37,10 @@ export function JobView({ status, gates, call, order, sizes, onOrder, onResize, 
   const start = async () => {
     if (!plan) return;
     if (dirty) await save();
-    if (!dry && !window.confirm(`Start ${job ? job.name : "the manual print"} on the machine?\n${layers} layers · ${total.toFixed(1)} mm · heater ${plan.heater_enabled ? "ENABLED" : "off"} · about ${fmtSecs(estimateDurationS(plan))}`)) return;
+    if (!dry) {
+      const heat = plan.heater_enabled ? "HEATER ON — fires each printing layer" : "⚠ HEATER OFF — no in-situ heating";
+      if (!window.confirm(`Start ${job ? job.name : "the manual print"} on the machine?\n\n${heat}\n${layers} layers · ${total.toFixed(1)} mm · ~${fmtSecs(estimateDurationS(plan))}`)) return;
+    }
     await call("start", () => api.printStart({ dry_run: dry, single_step: single, name: name || job?.name || "print" }).then(onStarted));
   };
   const modules: Module[] = [
@@ -98,7 +101,8 @@ export function JobView({ status, gates, call, order, sizes, onOrder, onResize, 
       <>
         <div className="est" style={{ gridTemplateColumns: "1fr 1fr" }}><div><div className="l">about</div><div className="v" style={{ fontSize: 26 }}>{fmtSecs(estimateDurationS(plan))}</div></div><div><div className="l">layers</div><div className="v" style={{ fontSize: 26 }}>{layers}</div></div></div>
         <div className="chk" style={{ margin: "16px 0" }}>
-          <label><input type="checkbox" checked={dry} onChange={(e) => setDry(e.target.checked)} /> dry run (heater off)</label>
+          <label><input type="checkbox" checked={dry} onChange={(e) => setDry(e.target.checked)} /> dry run (motion only — no heat / no jet)</label>
+          <label title="Fires the IR heater during the printing layers (after the precoats). Forced off in a dry run."><input type="checkbox" checked={plan.heater_enabled && !dry} disabled={dry || running} onChange={(e) => edit({ heater_enabled: e.target.checked })} /> <b>heater {plan.heater_enabled && !dry ? "ON" : "OFF"}</b>{dry ? " (off in dry run)" : ""}</label>
           <label><input type="checkbox" checked={single} onChange={(e) => setSingle(e.target.checked)} /> single-step</label>
           <label><input type="checkbox" checked={status?.auto_log ?? true} onChange={(e) => call("auto-log", () => api.setAutoLog(e.target.checked))} /> record</label>
         </div>

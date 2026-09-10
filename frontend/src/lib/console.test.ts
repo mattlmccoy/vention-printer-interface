@@ -16,7 +16,7 @@ test("console state validates on load", () => {
   const st = new Mem();
   st.setItem("vpi.console.v1", JSON.stringify({ view: "nope", gantryStep: 7, pistonStep: 100, order: { print: ["b", 3, "a"], junk: ["x"] }, readOnlyConnect: "yes" }));
   const c = loadConsole(st);
-  assert.equal(c.view, "print"); assert.equal(c.gantryStep, 10); assert.equal(c.pistonStep, 100);
+  assert.equal(c.view, "job"); assert.equal(c.gantryStep, 10); assert.equal(c.pistonStep, 100);
   assert.deepEqual(c.order, { print: ["b", "a"] });
   assert.deepEqual(c.sizes, {});
   assert.equal(c.readOnlyConnect, false);

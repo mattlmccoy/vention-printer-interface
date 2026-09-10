@@ -14,7 +14,8 @@ export interface ConsoleState {
   sizes: Partial<Record<View, Record<string, ModuleSize>>>;
   readOnlyConnect: boolean;
 }
-export const DEFAULT_CONSOLE: ConsoleState = Object.freeze({ view: "print", gantryStep: 10, pistonStep: 1, order: {}, sizes: {}, readOnlyConnect: false }) as ConsoleState;
+// Open on Job — the start of the operator flow (Job → Priming → Print).
+export const DEFAULT_CONSOLE: ConsoleState = Object.freeze({ view: "job", gantryStep: 10, pistonStep: 1, order: {}, sizes: {}, readOnlyConnect: false }) as ConsoleState;
 export const MODULE_MIN = { w: 240, h: 120 } as const;
 export const MODULE_MAX = { w: 1400, h: 900 } as const;
 
