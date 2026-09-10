@@ -184,3 +184,30 @@ pistons for loading, they load powder), then (2) the **print** which runs AFTER 
   arrives. Heater confirmed = IO module 1, pin 0 (detectIOModules + HEATER_PIN=0 in their code).
 UI done now (safe regardless of the redesign): "HOME ALL" → "HOME GANTRIES" (axes 3,4 only);
 per-piston home ⌂ requires a powder-eject confirm; LOAD CART relabeled "empty cart only".
+
+## 2026-09-09 LIVE — fault storm on jog/home ROOT-CAUSED + FIXED (safety.py)
+Symptom (user, in lab): "software throwing faults left and right. Jogging, homing, etc."
+Evidence (serve.log, real controller 192.168.7.2): every fault was `FAULT: telemetry stale
+(2.1–2.8s > 2.0s)`. Smoking gun — inside ONE telemetry read (5 sequential HTTP GETs: /position +
+/complete/{X,Y,Z,W}), a single `/complete/Z` query stalled 1.887s while the controller serviced a
+`G28 W` home. The read SUCCEEDED (200 OK, fresh data), but the loop computes
+`age = now - previous_read` which INCLUDES the read's own duration, so a slow-but-successful read
+was judged "stale" → latched FAULT → fired M410 → aborted the very motion. Staleness fault was also
+NOT relaxed during motion (position limits already are).
+FIX (root cause, not band-aid): two-threshold model in `safety.evaluate`.
+  - `telemetry_timeout_s` (2.0s) stays the COMMAND-freshness bound (arm/move_relative) and now also
+    the "telemetry slow" WARNING band.
+  - new `stale_fault_s` (default 6.0s, HARD_BOUNDS 2–30, clamped >= telemetry_timeout_s) is the
+    blind-period FAULT threshold. 6.0 > 5.0s per-request HTTP cap, so a single stalled-but-successful
+    request cannot false-fault; a genuine multi-second blind period still faults (even during homing).
+  Read failures/timeouts still fault immediately via the poll-loop exception path (unchanged).
+Verified: backend suite green (ruff+mypy clean); simulator reproduction — 0.5s/reply (~2.5s reads)
+warns + stays CONNECTED, 1.4s/reply (~7s reads) faults. NOT yet re-run live (needs backend restart:
+old process pid 4565 still has pre-fix code). Follow-up opt: make the read cheaper (fewer/parallel
+GETs) to shrink stall exposure — separate change.
+
+## 2026-09-09 HW FACT (user): gantry home directions
+Printhead gantry (axis 3) homes to the LEFT side; recoater gantry (axis 4) homes to the RIGHT side.
+G28 direction is controller-configured (our G28 <letter> is unaffected), but this fixes the sign
+convention for travel bounds and the MachineImage overlay direction — TODO: reconcile travel_min/max
+signs per axis and the overlay left/right mapping against this.

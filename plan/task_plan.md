@@ -106,3 +106,27 @@ Plans: `docs/superpowers/plans/2026-09-08-backend-core.md` (Plan 1), Plan 2 reci
 - Lab commissioning (docs/commissioning.md), then reconcile fixtures from plan/probe_report.json.
 - v2: MetPrint hot-folder sync per layer (queue the job's TIFFs so MetPrint prints page N on
   pass N), FLIR/T&C links, deploy/ LaunchAgent, embed the wireframe.
+
+## Plan 4 — operator asks, live in lab (2026-09-09)
+- [x] A. jog/home telemetry-stale false-fault → two-threshold model (stale_fault_s=6.0). Live-proven.
+- [x] B. heater: removed the extra HEATER ON window.confirm (title tooltip kept).
+- [x] C. Control: per-axis VELOCITY + ACCELERATION for all 4 axes (speed·accel·move-to disclosure,
+      current value as placeholder, cap shown). Backend PUT /api/axes/{n}/motion already supported it.
+- [x] D. home-direction arrows: printhead (3) homes LEFT (◀ home / away ▶), recoater (4) homes RIGHT
+      (home ▶ / ◀ away). tested `GANTRY_HOME_SIDE` + `gantryJogLabels`. Frontend 5/5, build green.
+- [x] E. POWDER-PREP (priming) routine EXPOSED. `control/priming.py` (PrimingSettings + validate +
+      bounded + compile_priming, faithful to the script incl. piston-break + feed-exhaustion → home
+      recoater, never homes a piston), `control/priming_store.py`, API `/api/priming` GET/PUT/run,
+      frontend `PrimingPanel` in Control (editable params, cycle/step preview, RUN + ABORT). TDD:
+      test_priming (6) + test_api_priming (3). Live sim run: 14-step routine ran to done.
+- [x] F. PRINT routine was ALREADY exposed — JobView START PRINT / START DRY RUN + PrintView
+      PAUSE/ABORT drive `compile_print` (the full precoat→printing→postcoat async routine).
+- [x] G. recoater travel_max 930 → 972 (measured end stop) in safety.py TRAVEL_MM[4], printer.py,
+      simulated.py, print_settings _TRAVEL, frontend telemetry.ts/estimate.ts/print_settings.ts/
+      machine_calib, + tests. recoater_end_mm print spread left at 930 (editable). Printhead 840
+      unchanged (user did not flag it).
+
+## Status
+**All of B–G done + verified (backend full suite green, frontend 36/36, ruff+mypy clean, browser +
+live-sim priming run OK). REMAINING: the two E-STOP bugs. NOTE: the lab's live :8020 backend must be
+RESTARTED to pick up the priming routes + 972 (its running process predates this work).**
