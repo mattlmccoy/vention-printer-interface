@@ -15,6 +15,9 @@ import { RunsView } from "./components/views/RunsView.tsx";
 
 const storage = typeof localStorage === "undefined" ? null : localStorage;
 
+const INSTALL_SH = "curl -fsSL https://raw.githubusercontent.com/mattlmccoy/vention-printer-interface/main/install.sh | bash";
+const INSTALL_PS = "irm https://raw.githubusercontent.com/mattlmccoy/vention-printer-interface/main/install.ps1 | iex";
+
 export function App() {
   const [ui, setUi] = useState(() => loadConsole(storage));
   useEffect(() => saveConsole(storage, ui), [ui]);
@@ -26,6 +29,8 @@ export function App() {
   const [version, setVersion] = useState<string | null>(null);
   const [handshake, setHandshake] = useState<string | null>(null);
   const [busy, setBusy] = useState<string | null>(null);
+  const [showHelp, setShowHelp] = useState(false);
+  const [copied, setCopied] = useState(false);
   const [showConnect, setShowConnect] = useState(false);
   const [choice, setChoice] = useState("simulated");
   const [candidates, setCandidates] = useState<Candidate[]>([]);
@@ -57,6 +62,15 @@ export function App() {
     if (!showConnect) return;
     api.discovery().then((d) => setCandidates(d.candidates as Candidate[])).catch(() => undefined);
   }, [showConnect, base]);
+
+  // In site mode (the hosted UI), if the local operator stays unreachable for a moment, show
+  // the "how to start it" help — delayed so a brief WS reconnect doesn't flash it.
+  useEffect(() => {
+    if (reachable) { setShowHelp(false); return; }
+    const t = window.setTimeout(() => setShowHelp(true), 2500);
+    return () => clearTimeout(t);
+  }, [reachable]);
+  const copyInstall = () => { navigator.clipboard?.writeText(INSTALL_SH).then(() => { setCopied(true); window.setTimeout(() => setCopied(false), 1500); }).catch(() => undefined); };
 
   const call = useCallback(async (label: string, fn: () => Promise<unknown>) => {
     setBusy(label);
@@ -131,6 +145,33 @@ export function App() {
             </div>
           )}
         </div>
+        {SITE_MODE && showHelp && !reachable && (
+          <div className="setup-help">
+            <div className="setup-title">Operator not found on this computer</div>
+            <p className="setup-lead">
+              This page runs in your browser but needs the local <b>operator</b> running at <code>{base}</code>,
+              and it isn’t responding. Start it once and this page reconnects on its own (it retries every second).
+            </p>
+            <ol className="setup-steps">
+              <li>
+                Open a terminal on <b>this machine</b> and run:
+                <div className="cmd">
+                  <code>{INSTALL_SH}</code>
+                  <button className="small" onClick={copyInstall}>{copied ? "copied" : "copy"}</button>
+                </div>
+                <div className="hint">Windows (PowerShell): <code>{INSTALL_PS}</code></div>
+              </li>
+              <li>It installs an always-on background service (starts at login, restarts if it dies). No further steps — this page connects automatically.</li>
+              <li>
+                Operator already running somewhere else? Point this page at it:
+                <div className="cmd">
+                  <input type="text" value={baseInput} onChange={(e) => setBaseInput(e.target.value)} onKeyDown={(e) => { if (e.key === "Enter") applyBase(); }} placeholder={base} />
+                  <button className="small" onClick={applyBase}>use this URL</button>
+                </div>
+              </li>
+            </ol>
+          </div>
+        )}
         {ui.view === "print" && <PrintView status={status} gates={g} call={call} order={ui.order.print} sizes={ui.sizes.print} onOrder={setOrder("print")} onResize={setResize("print")} onJob={() => setView("job")} />}
         {ui.view === "job" && <JobView status={status} gates={g} call={call} order={ui.order.job} sizes={ui.sizes.job} onOrder={setOrder("job")} onResize={setResize("job")} onStarted={() => setView("print")} />}
         {ui.view === "control" && <ControlView status={status} gates={g} call={call} gantryStep={ui.gantryStep} pistonStep={ui.pistonStep} setGantryStep={(s) => setUi((u) => ({ ...u, gantryStep: s }))} setPistonStep={(s) => setUi((u) => ({ ...u, pistonStep: s }))} order={ui.order.control} sizes={ui.sizes.control} onOrder={setOrder("control")} onResize={setResize("control")} />}
