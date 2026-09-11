@@ -39,21 +39,28 @@ def test_priming_get_put_persists(client: TestClient) -> None:
     assert client.get("/api/priming").json()["settings"]["feed_cavity_mm"] == 22.0
 
 
-def test_priming_run_requires_arm_then_holds_for_powder(client: TestClient) -> None:
-    assert client.post("/api/priming/run").status_code == 409  # not armed
-    connect_arm(client)
-    # sim axes start at 50 mm and pistons cap at 5 mm/s; keep the pre-hold piston targets near the
-    # start so each move's wait finishes inside the fixture's 5 s step timeout (the default part
-    # target 0 mm would take ~20 s and fault before the hold).
-    client.put("/api/priming", json={"part_top_mm": 48.0, "feed_cavity_mm": 48.0})
-    r = client.post("/api/priming/run")
-    assert r.status_code == 200 and r.json()["macro"] == "priming"
-    for _ in range(200):
-        if client.get("/api/status").json()["print"]["state"] == "paused":
-            break
-        time.sleep(0.05)
-    assert client.get("/api/status").json()["print"]["state"] == "paused"
-    client.post("/api/print/abort")
+def test_priming_run_requires_arm_then_holds_for_powder(tmp_path: Path) -> None:
+    from vention_printer_interface.control.safety import SafetyLimits
+
+    # The flow homes BOTH pistons to 0 first (from the sim's 50 mm start); run all axes fast so each
+    # sim move finishes inside the step timeout instead of ~20 s at the default 2.5 mm/s.
+    lim = SafetyLimits.bounded(max_speed={"1": 20, "2": 20, "3": 300, "4": 300})
+    app = create_app(
+        backend="none", experiments_root=tmp_path, poll_interval_s=0.05,
+        print_min_wait_s=0.1, print_step_timeout_s=5.0, limits=lim,
+    )
+    with TestClient(app) as c:
+        assert c.post("/api/priming/run").status_code == 409  # not armed
+        connect_arm(c)
+        c.put("/api/priming", json={"part_speed": 20, "feed_speed": 20, "recoater_speed": 300})
+        r = c.post("/api/priming/run")
+        assert r.status_code == 200 and r.json()["macro"] == "priming"
+        for _ in range(300):
+            if c.get("/api/status").json()["print"]["state"] == "paused":
+                break
+            time.sleep(0.05)
+        assert c.get("/api/status").json()["print"]["state"] == "paused"  # reached the powder hold
+        c.post("/api/print/abort")
 
 
 def test_priming_bounded_clamps_recoater(client: TestClient) -> None:

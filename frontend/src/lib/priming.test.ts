@@ -6,7 +6,8 @@ test("plain-language priming sequence: up, down, load, thick precoats", () => {
   const s = { part_top_mm: 0, feed_cavity_mm: 30, level_recoat_end_mm: 350, level_recoat_start_mm: 950, n_thick_precoats: 2, thick_feed_mm: 7 };
   const lines = primingSteps(s);
   assert.match(lines[0], /build.*piston.*up/i);
-  assert.match(lines[1], /feed.*piston.*down/i);
+  assert.match(lines[1], /feed.*piston.*up/i);
+  assert.match(lines[2], /feed.*piston.*down/i);
   assert.ok(lines.some((l) => /load powder/i.test(l)));
   const thick = lines.filter((l) => /thick precoat/i.test(l));
   assert.equal(thick.length, 2); // one line per thick precoat

@@ -116,19 +116,26 @@ def compile_priming_setup(s: PrimingSettings, limits: SafetyLimits) -> tuple[Ste
     add("set_speed", RECOATER, limits.clamp_speed(RECOATER, s.recoater_speed))
     add("set_accel", RECOATER, limits.clamp_accel(RECOATER, s.recoater_accel))
 
+    # 1) Home BOTH pistons UP to 0 (flush), then drop the feed to the set cavity distance.
     add("move_abs", PART, s.part_top_mm, "build piston up")
+    add("wait")
+    add("move_abs", FEED, 0.0, "feed piston up")
     add("wait")
     add("move_abs", FEED, s.feed_cavity_mm, "feed piston down (open powder cavity)")
     add("wait")
+    # 2) Park the recoater at the start (left of the feed piston) BEFORE the powder load, so it is
+    # out of the way and positioned to sweep across on the first spread.
+    add("move_abs", RECOATER, s.level_recoat_start_mm, "recoater to start (left of feed)")
+    add("wait")
     add("hold", None, None, "Load powder into the feed cavity, then Resume")
+    # 3) Fill: spread across -> recoater back -> feed up, N times. The build piston stays FIXED
+    # (backfill); the feed advance supplies powder. The build piston first drops in the print.
     for _ in range(s.n_thick_precoats):
-        # Build piston stays FIXED for every thick precoat — the feed advance backfills the runway
-        # and fills the build cavity; the build piston first drops in the print's thin precoats.
-        add("move_abs", RECOATER, s.level_recoat_start_mm, "move to start (past feed piston)")
-        add("wait")
         add("move_abs", RECOATER, s.level_recoat_end_mm, "spread across the bed")
         add("wait")
-        add("move_rel", FEED, -s.thick_feed_mm, "feed up — supply powder")  # part FIXED
+        add("move_abs", RECOATER, s.level_recoat_start_mm, "recoater back")
+        add("wait")
+        add("move_rel", FEED, -s.thick_feed_mm, "feed up — supply powder")  # build FIXED
         add("wait")
         add("dwell", value=s.settle_s)
     add("mark", label="priming_done")

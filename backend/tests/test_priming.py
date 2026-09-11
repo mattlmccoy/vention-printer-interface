@@ -25,16 +25,20 @@ def test_positions_pistons_then_holds_then_thick_precoats() -> None:
     assert ("set_speed", PART, s.part_speed) in ks
     assert ("set_speed", FEED, s.feed_speed) in ks
     assert ("set_speed", RECOATER, s.recoater_speed) in ks
-    i_part = ks.index(("move_abs", PART, s.part_top_mm))
-    i_feed = ks.index(("move_abs", FEED, s.feed_cavity_mm))
     i_hold = next(n for n, st in enumerate(steps) if st.kind == "hold")
-    assert i_part < i_hold and i_feed < i_hold
+    # both pistons home UP to 0 first, THEN the feed drops to the cavity — all before the hold
+    i_part0 = ks.index(("move_abs", PART, s.part_top_mm))
+    i_feed0 = ks.index(("move_abs", FEED, 0.0))
+    i_feed_cavity = ks.index(("move_abs", FEED, s.feed_cavity_mm))
+    assert i_part0 < i_hold and i_feed0 < i_feed_cavity < i_hold
+    # the recoater is parked at the start (left of the feed) BEFORE the powder-load hold
+    i_start = ks.index(("move_abs", RECOATER, s.level_recoat_start_mm))
+    assert i_start < i_hold
     holds = [st for st in steps if st.kind == "hold"]
     assert len(holds) == 1 and "powder" in holds[0].label.lower()
-    # First thick precoat pass: recoater to start (past feed piston) -> spread to end -> feed up.
-    i_start = ks.index(("move_abs", RECOATER, s.level_recoat_start_mm))
+    # after the hold, the first fill move is the spread across the bed
     i_spread = ks.index(("move_abs", RECOATER, s.level_recoat_end_mm))
-    assert i_hold < i_start < i_spread
+    assert i_hold < i_spread
 
 
 def test_thick_precoat_pass_body_feeds_but_never_moves_part() -> None:
@@ -45,11 +49,11 @@ def test_thick_precoat_pass_body_feeds_but_never_moves_part() -> None:
     i_done = next(n for n, st in enumerate(steps) if st.kind == "mark")
     loop = steps[i_hold + 1 : i_done]
     ks = kinds(loop)
-    # n_thick_precoats identical passes, each: start -> spread -> FEED up -> dwell
+    # n_thick_precoats identical passes, each: spread across -> recoater back -> FEED up -> dwell
     one_pass = [
-        ("move_abs", RECOATER, s.level_recoat_start_mm),
-        ("wait", None, None),
         ("move_abs", RECOATER, s.level_recoat_end_mm),
+        ("wait", None, None),
+        ("move_abs", RECOATER, s.level_recoat_start_mm),
         ("wait", None, None),
         ("move_rel", FEED, -s.thick_feed_mm),
         ("wait", None, None),

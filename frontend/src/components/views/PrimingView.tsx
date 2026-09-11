@@ -90,6 +90,14 @@ export function PrimingView({ status, gates, call, onJob, onPrint }: { status: S
             <button className="small" disabled={!gates.connected} style={{ marginLeft: paused ? 6 : "auto" }} onClick={() => call("abort", api.printAbort)}>Abort</button>
           </div>
         )}
+        {r?.macro === "priming" && r.state === "done" && (
+          <div className="banner" style={{ marginBottom: 12 }}>
+            <b>PRIMING COMPLETE</b>
+            <span className="reason">capture the primed bed (sends the final build + feed positions to the print), then start printing</span>
+            <button className="cta primary small" disabled={!gates.controllable} style={{ marginLeft: "auto" }}
+              onClick={() => call("capture primed", () => api.primedCapture().then((x) => { setPrimed(x.primed); onPrint(); }))}>Capture &amp; go to Print →</button>
+          </div>
+        )}
 
         {/* walkthrough's OWN progress — never the compiled macro step count */}
         <ol className="step-rail" aria-label="priming walkthrough steps">
