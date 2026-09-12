@@ -59,7 +59,7 @@
 - [ ] **Step 1: Add deps.** Under `[project].dependencies` add `"numpy>=1.26"` and `"opencv-python-headless>=4.9"`.
 - [ ] **Step 2: Lock + verify import.**
 
-Run: `cd backend && uv sync && uv run python -c "import cv2, numpy; print(cv2.__version__, numpy.__version__)"`
+Run: `cd backend && uv sync --extra dev && uv run python -c "import cv2, numpy; print(cv2.__version__, numpy.__version__)"` (use `--extra dev` — the repo convention — so pytest/ruff/mypy stay installed)
 Expected: prints versions, no error.
 
 - [ ] **Step 3: Commit.** `git add backend/pyproject.toml backend/uv.lock && git commit -m "build(vision): add numpy + opencv-python-headless"`
