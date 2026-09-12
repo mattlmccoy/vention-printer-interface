@@ -8,6 +8,7 @@ from vention_printer_interface.vision.registration import (
     apply_homography,
     compute_homography,
     reprojection_error,
+    warp_to_bed,
 )
 
 __all__ = [
@@ -18,4 +19,5 @@ __all__ = [
     "apply_homography",
     "compute_homography",
     "reprojection_error",
+    "warp_to_bed",
 ]
