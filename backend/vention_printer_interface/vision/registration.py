@@ -1,6 +1,10 @@
 """Bed-plane registration: pure functions over point correspondences + calibration IO."""
 from __future__ import annotations
 
+import json
+from dataclasses import asdict, dataclass
+from pathlib import Path
+
 import numpy as np
 
 
@@ -62,3 +66,38 @@ def warp_to_bed(
     warp_matrix = scale @ h_matrix  # image -> output pixels
     result: np.ndarray = cv2.warpPerspective(image, warp_matrix, (out_w, out_h))
     return result
+
+
+@dataclass
+class Calibration:
+    """Persisted bed-plane calibration. Field names are a stable on-disk contract."""
+
+    H: np.ndarray  # noqa: N815 - fixed field name, consumed by later phases
+    mm_per_px: float
+    bed_extent_mm: tuple[float, float, float, float]
+    version: str
+    reprojection_error: float
+
+
+def save_calibration(path: Path, calib: Calibration) -> None:
+    """Write `calib` to `path` as JSON."""
+    payload = asdict(calib)
+    payload["H"] = calib.H.tolist()
+    payload["bed_extent_mm"] = list(calib.bed_extent_mm)
+    Path(path).write_text(json.dumps(payload, indent=2), encoding="utf-8")
+
+
+def load_calibration(path: Path) -> Calibration | None:
+    """Read a `Calibration` from `path`, or return None when the file is absent."""
+    p = Path(path)
+    if not p.exists():
+        return None
+    payload = json.loads(p.read_text(encoding="utf-8"))
+    bed_extent = payload["bed_extent_mm"]
+    return Calibration(
+        H=np.array(payload["H"]),
+        mm_per_px=payload["mm_per_px"],
+        bed_extent_mm=(bed_extent[0], bed_extent[1], bed_extent[2], bed_extent[3]),
+        version=payload["version"],
+        reprojection_error=payload["reprojection_error"],
+    )
