@@ -1,8 +1,9 @@
 # Layerwise Vision — Design (Slice 1: Capture + Register + Store)
 
 **Date:** 2026-09-12
-**Status:** Draft for review
+**Status:** Approved 2026-09-12
 **Author:** Matt McCoy (with Claude)
+**Platforms:** macOS, Windows, Linux. The operator is cross-platform (`install.sh` + `install.ps1`); the vision module preserves that — `pathlib` paths, `opencv-python-headless`, a per-OS OpenCV capture backend (AVFoundation / V4L2 / DirectShow), configurable device selection, and best-effort (never-raising) camera controls. All unit tests are hardware-free and OS-agnostic.
 
 ## Goal
 
