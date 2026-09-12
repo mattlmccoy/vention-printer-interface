@@ -51,3 +51,49 @@ class SimulatedFrameSource(FrameSource):
         img[:, :, 1] = np.linspace(0, 255, self.width, dtype=np.uint8)[None, :]
         img[self.height // 4 : self.height // 2, self.width // 4 : self.width // 2] = 255
         return Frame(image=img, timestamp_ns=time.time_ns(), settings=dict(self._settings))
+
+
+class UvcFrameSource(FrameSource):
+    """OpenCV VideoCapture over a UVC device. Real capture is verified on hardware."""
+
+    def __init__(
+        self,
+        device_index: int = 0,
+        width: int | None = None,
+        height: int | None = None,
+        backend: int | None = None,
+    ) -> None:
+        self.device_index = device_index
+        self.width, self.height = width, height
+        self.backend = backend  # per-OS cv2.CAP_* (from cameras.default_backend())
+        self._settings: dict[str, Any] = {"focus": "manual-fixed"}
+        self._cap: Any = None
+
+    def open(self) -> None:
+        import cv2
+
+        cap = (
+            cv2.VideoCapture(self.device_index, self.backend)
+            if self.backend is not None
+            else cv2.VideoCapture(self.device_index)
+        )
+        if self.width:
+            cap.set(cv2.CAP_PROP_FRAME_WIDTH, self.width)
+        if self.height:
+            cap.set(cv2.CAP_PROP_FRAME_HEIGHT, self.height)
+        if not cap.isOpened():
+            raise RuntimeError(f"cannot open UVC device {self.device_index}")
+        self._cap = cap
+
+    def close(self) -> None:
+        if self._cap is not None:
+            self._cap.release()
+            self._cap = None
+
+    def grab(self) -> Frame:
+        if self._cap is None:
+            raise RuntimeError("source not open")
+        ok, img = self._cap.read()
+        if not ok or img is None:
+            raise RuntimeError("frame grab failed")
+        return Frame(image=img, timestamp_ns=time.time_ns(), settings=dict(self._settings))

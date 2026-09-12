@@ -1,6 +1,10 @@
 import numpy as np
 
-from vention_printer_interface.vision.frame_source import Frame, SimulatedFrameSource
+from vention_printer_interface.vision.frame_source import (
+    Frame,
+    SimulatedFrameSource,
+    UvcFrameSource,
+)
 
 
 def test_simulated_source_grabs_configured_frame():
@@ -21,3 +25,9 @@ def test_configure_records_effective_settings():
     f = src.grab()
     assert f.settings == {"exposure": 0.02, "gain": 1.5, "focus": "manual-fixed"}
     src.close()
+
+
+def test_uvc_source_constructs_without_opening_hardware():
+    src = UvcFrameSource(device_index=2)
+    assert src.device_index == 2
+    assert hasattr(src, "open") and hasattr(src, "grab") and hasattr(src, "close")
