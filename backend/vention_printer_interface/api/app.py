@@ -57,7 +57,15 @@ from vention_printer_interface.vision.board_gen import (
     generate_charuco_svg,
     resolve_preset,
 )
-from vention_printer_interface.vision.cameras import CameraConfig
+from vention_printer_interface.vision.cameras import (
+    CameraConfig,
+    CameraSpec,
+    enumerate_devices,
+    load_role_map,
+    resolve_roles,
+    save_role_map,
+    unresolved_roles,
+)
 from vention_printer_interface.vision.capture import VisionService
 from vention_printer_interface.vision.frame_source import FrameSource, UvcFrameSource
 from vention_printer_interface.vision.overview import OverviewStreamer
@@ -220,6 +228,12 @@ class VisionCalibrateBody(BaseModel):
     validation: CalibrationValidationBody | None = None
 
 
+class RoleMapBody(BaseModel):
+    """PUT /api/vision/roles body: the operator-confirmed stable_id -> role assignment."""
+
+    mapping: dict[str, str]
+
+
 def _tcp_open(ip: str, port: int, timeout_s: float = 0.5) -> bool:
     try:
         with socket.create_connection((ip, port), timeout=timeout_s):
@@ -271,11 +285,14 @@ def create_app(
     jobs_roots: list[Path] | None = None,
     vision_source: FrameSource | None = None,
     overview_source: FrameSource | None = None,
+    device_enumerator: Callable[[], list[dict[str, Any]]] | None = None,
 ) -> FastAPI:
     root = experiments_root or Path.cwd() / "experiments"
     jobs = JobStore(jobs_roots or [root.parent / "jobs"])
     camera_config = CameraConfig.from_env()
     vision_calibration_path = root / ".vision_calibration.json"
+    vision_roles_path = root / ".vision_roles.json"
+    enumerator = device_enumerator or enumerate_devices
 
     @asynccontextmanager
     async def lifespan(app: FastAPI) -> AsyncIterator[None]:
@@ -289,26 +306,55 @@ def create_app(
         events = EventLog()
         events.add_sink(recorder.event)  # every event also lands in the durable run record
 
+        def _vision_sink(label: str, data: dict[str, Any]) -> None:
+            # Indirection so PUT /api/vision/roles can swap app.state.vision to a freshly
+            # (re)opened VisionService without ever registering a second EventLog sink.
+            vision = app.state.vision
+            if vision is not None:
+                vision.on_event(label, data)
+
+        events.add_sink(_vision_sink)
+
+        # Camera auto-connect + persistent role memory (A7): enumerate -> load the persisted
+        # stable_id->role map -> resolve_roles, then auto-open the mapped overview+science
+        # sources below (no per-device operator selection on a normal connect). `unresolved_roles`
+        # is deliberately stricter than resolve_roles' index fallback -- it only trusts a role
+        # whose device a currently-enumerated stable_id is CONFIRMED mapped to -- and is what
+        # GET /api/vision/status's roles_resolved/unresolved (and the quick-start wizard) gate
+        # on; auto-open itself still uses resolve_roles' best-effort fallback so a fresh machine
+        # is never left with no cameras just because roles aren't confirmed yet.
+        def refresh_role_resolution() -> dict[str, CameraSpec]:
+            try:
+                enumerated = enumerator()
+            except Exception as exc:  # noqa: BLE001 - enumeration must never block startup
+                log.warning("camera enumeration failed (%s); serving without auto-resolve", exc)
+                enumerated = []
+            mapping = load_role_map(vision_roles_path)
+            resolved = resolve_roles(enumerated, mapping, camera_config)
+            app.state.vision_enumerated_devices = enumerated
+            app.state.vision_role_map = mapping
+            app.state.vision_unresolved_roles = unresolved_roles(enumerated, mapping)
+            return resolved
+
         # Vision: a science-camera capture worker fed by capture:* marks off the same EventLog.
         # Guard hardware: an absent/broken camera must never block or crash app startup.
-        science = camera_config.science
-        source = vision_source or UvcFrameSource(
-            science.index, science.width, science.height, science.effective_backend()
-        )
-        vision_svc = VisionService(
-            source=source,
-            run_dir_provider=lambda: recorder.current_run_dir,
-            calibration=load_calibration(vision_calibration_path),
-            camera_role="science",
-        )
-        try:
-            vision_svc.start()
-            events.add_sink(vision_svc.on_event)
-            app.state.vision = vision_svc
-        except Exception as exc:  # noqa: BLE001 - a missing/broken camera must not block startup
-            log.warning("vision service start failed (%s); serving without capture", exc)
-            app.state.vision = None
-        app.state.vision_source = source
+        def open_science(spec: CameraSpec) -> None:
+            source = vision_source or UvcFrameSource(
+                spec.index, spec.width, spec.height, spec.effective_backend()
+            )
+            vision_svc = VisionService(
+                source=source,
+                run_dir_provider=lambda: recorder.current_run_dir,
+                calibration=load_calibration(vision_calibration_path),
+                camera_role="science",
+            )
+            try:
+                vision_svc.start()
+                app.state.vision = vision_svc
+            except Exception as exc:  # noqa: BLE001 - a missing/broken camera must not block startup
+                log.warning("vision service start failed (%s); serving without capture", exc)
+                app.state.vision = None
+            app.state.vision_source = source
 
         # Overview: a separate OVERVIEW camera for the live-view stream, distinct from the
         # science capture source above. Opened once here and shared across stream clients via
@@ -317,20 +363,28 @@ def create_app(
         # second reader racing its cv2.VideoCapture.read() is the I1 hazard). Guard hardware:
         # an absent/broken overview camera must never block or crash app startup — the stream
         # route then answers 503 instead of silently reusing the science camera.
-        overview = camera_config.overview
-        ov_source = overview_source or UvcFrameSource(
-            overview.index, overview.width, overview.height, overview.effective_backend()
-        )
-        app.state.overview_source = None
-        app.state.overview_streamer = None
-        try:
-            ov_source.open()
-            app.state.overview_source = ov_source
-            streamer = OverviewStreamer(ov_source)
-            streamer.start()
-            app.state.overview_streamer = streamer
-        except Exception as exc:  # noqa: BLE001 - a missing/broken overview camera must not block
-            log.warning("overview camera open failed (%s); serving without overview", exc)
+        def open_overview(spec: CameraSpec) -> None:
+            ov_source = overview_source or UvcFrameSource(
+                spec.index, spec.width, spec.height, spec.effective_backend()
+            )
+            app.state.overview_source = None
+            app.state.overview_streamer = None
+            try:
+                ov_source.open()
+                app.state.overview_source = ov_source
+                streamer = OverviewStreamer(ov_source)
+                streamer.start()
+                app.state.overview_streamer = streamer
+            except Exception as exc:  # noqa: BLE001 - a missing/broken overview camera must not block
+                log.warning("overview camera open failed (%s); serving without overview", exc)
+
+        app.state.vision_refresh_role_resolution = refresh_role_resolution
+        app.state.vision_open_science = open_science
+        app.state.vision_open_overview = open_overview
+
+        resolved = refresh_role_resolution()
+        open_science(resolved.get("science", camera_config.science))
+        open_overview(resolved.get("overview", camera_config.overview))
 
         def on_print_event(label: str, data: dict[str, Any]) -> None:
             events.append(label, data)
@@ -971,11 +1025,14 @@ def create_app(
         if vision is not None:
             active_roles.append(camera_config.science.role)
         calib: Calibration | None = vision.calibration if vision is not None else None
+        unresolved: list[str] = list(getattr(app.state, "vision_unresolved_roles", []))
         return {
             "cameras": active_roles,
             "calibration": calib.version if calib is not None else None,
             "queue": {"drops": vision.drops if vision is not None else 0},
             "active": bool(active_roles),
+            "roles_resolved": not unresolved,
+            "unresolved": unresolved,
         }
 
     @app.get("/api/vision/cameras")
@@ -984,6 +1041,77 @@ def create_app(
             "overview": dataclasses.asdict(camera_config.overview),
             "science": dataclasses.asdict(camera_config.science),
         }
+
+    @app.get("/api/vision/devices")
+    def vision_devices() -> list[dict[str, Any]]:
+        """Detected cameras (A7 auto-connect/quick-start): each enumerated device plus its
+        currently RESOLVED role (via `resolve_roles` against the persisted map — `None` when
+        not yet assigned) and, best-effort, a live preview URL when that role's dedicated
+        source is already open. Never touches the science source directly (I1: only the
+        overview live-view stream is safe to share across concurrent readers)."""
+        try:
+            enumerated = enumerator()
+        except Exception as exc:  # noqa: BLE001 - enumeration must never fail the request
+            log.warning("device enumeration failed (%s)", exc)
+            enumerated = []
+        mapping = load_role_map(vision_roles_path)
+        resolved = resolve_roles(enumerated, mapping, camera_config)
+        role_by_index = {spec.index: role for role, spec in resolved.items()}
+        overview_active = overview_streamer() is not None
+        devices: list[dict[str, Any]] = []
+        for device in enumerated:
+            role = role_by_index.get(int(device["index"]))
+            preview_url = (
+                "/api/vision/overview/stream" if role == "overview" and overview_active else None
+            )
+            devices.append(
+                {
+                    "index": device.get("index"),
+                    "stable_id": device.get("stable_id"),
+                    "name": device.get("name"),
+                    "role": role,
+                    "preview_url": preview_url,
+                }
+            )
+        return devices
+
+    @app.get("/api/vision/roles")
+    def vision_get_roles() -> dict[str, str]:
+        return load_role_map(vision_roles_path)
+
+    @app.put("/api/vision/roles")
+    def vision_put_roles(body: RoleMapBody) -> dict[str, Any]:
+        """Persist the operator-confirmed stable_id->role map, then (re)open the mapped
+        overview+science sources so the change takes effect immediately -- guarded end to end
+        so a role pointed at a device that isn't currently plugged in can never crash the
+        request or leave the app in a half-open state."""
+        save_role_map(vision_roles_path, body.mapping)
+        resolved = app.state.vision_refresh_role_resolution()
+
+        vision = vision_service()
+        if vision is not None:
+            try:
+                vision.stop()
+            except Exception as exc:  # noqa: BLE001 - a stuck worker must not block the reopen
+                log.warning("vision service stop before reopen failed (%s)", exc)
+        app.state.vision_open_science(resolved.get("science", camera_config.science))
+
+        streamer = overview_streamer()
+        if streamer is not None:
+            try:
+                streamer.stop()
+            except Exception as exc:  # noqa: BLE001 - guarded reopen
+                log.warning("overview streamer stop before reopen failed (%s)", exc)
+        src = overview_src()
+        if src is not None:
+            try:
+                src.close()
+            except Exception as exc:  # noqa: BLE001 - guarded reopen
+                log.warning("overview source close before reopen failed (%s)", exc)
+        app.state.vision_open_overview(resolved.get("overview", camera_config.overview))
+
+        unresolved: list[str] = list(app.state.vision_unresolved_roles)
+        return {"mapping": body.mapping, "roles_resolved": not unresolved, "unresolved": unresolved}
 
     @app.get("/api/vision/board")
     def vision_board(

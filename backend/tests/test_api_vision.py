@@ -617,3 +617,150 @@ def test_board_endpoint_engrave_black_false_differs(client: TestClient) -> None:
     r_false = client.get("/api/vision/board", params={**base, "engrave_black": "false"})
     assert r_true.status_code == 200 and r_false.status_code == 200
     assert r_true.text != r_false.text
+
+
+# ---- camera auto-connect + persistent role memory + quick-start (A7) ------------------------
+#
+# Both ELP cameras enumerate alike (same sensor/near-identical names), so a `device_enumerator`
+# is injected here -- never real hardware -- returning a fixed, stubbed device list per test.
+
+
+def _fake_devices() -> list[dict[str, Any]]:
+    return [
+        {"index": 0, "stable_id": "usb-A-overview", "name": "ELP overview"},
+        {"index": 1, "stable_id": "usb-B-science", "name": "ELP science"},
+    ]
+
+
+def _vision_app(tmp_path: Path, **overrides: Any) -> FastAPI:
+    kwargs: dict[str, Any] = {
+        "backend": "none",
+        "experiments_root": tmp_path,
+        "poll_interval_s": 0.05,
+        "print_min_wait_s": 0.1,
+        "print_step_timeout_s": 5.0,
+        "vision_source": SimulatedFrameSource(width=32, height=24),
+        "overview_source": SimulatedFrameSource(width=8, height=8),
+        "device_enumerator": _fake_devices,
+    }
+    kwargs.update(overrides)
+    return create_app(**kwargs)
+
+
+def test_vision_status_roles_resolved_true_and_both_active_with_full_role_map(
+    tmp_path: Path,
+) -> None:
+    from vention_printer_interface.vision.cameras import save_role_map
+
+    save_role_map(
+        tmp_path / ".vision_roles.json",
+        {"usb-A-overview": "overview", "usb-B-science": "science"},
+    )
+    app = _vision_app(tmp_path)
+    with TestClient(app) as c:
+        status = c.get("/api/vision/status").json()
+        assert status["roles_resolved"] is True
+        assert status["unresolved"] == []
+        assert set(status["cameras"]) == {"overview", "science"}
+
+
+def test_vision_status_roles_unresolved_when_map_missing_current_stable_ids(
+    tmp_path: Path,
+) -> None:
+    """An empty (new-machine) role map -> both roles unresolved, listed, and reported False --
+    even though the science/overview sources still auto-open via resolve_roles' index fallback
+    (auto-connect keeps working; only the *confirmed* status flips false)."""
+    app = _vision_app(tmp_path)
+    with TestClient(app) as c:
+        status = c.get("/api/vision/status").json()
+        assert status["roles_resolved"] is False
+        assert status["unresolved"] == ["overview", "science"]
+        assert set(status["cameras"]) == {"overview", "science"}
+
+
+def test_vision_devices_lists_stubbed_devices_with_resolved_roles(tmp_path: Path) -> None:
+    """The role field comes straight from `resolve_roles` (as the spec/plan direct), so an
+    unmapped device sitting at a role's configured default index still resolves via that
+    fallback -- same fallback GET /api/vision/status's `unresolved` would flag as unconfirmed."""
+    from vention_printer_interface.vision.cameras import save_role_map
+
+    save_role_map(tmp_path / ".vision_roles.json", {"usb-A-overview": "overview"})
+    app = _vision_app(tmp_path)
+    with TestClient(app) as c:
+        r = c.get("/api/vision/devices")
+        assert r.status_code == 200
+        devices = r.json()
+        assert len(devices) == 2
+        by_index = {d["index"]: d for d in devices}
+        assert by_index[0]["stable_id"] == "usb-A-overview"
+        assert by_index[0]["role"] == "overview"
+        assert by_index[1]["stable_id"] == "usb-B-science"
+        assert by_index[1]["role"] == "science"  # index-fallback resolved, not operator-confirmed
+
+
+def test_vision_roles_get_returns_persisted_map(tmp_path: Path) -> None:
+    from vention_printer_interface.vision.cameras import save_role_map
+
+    save_role_map(tmp_path / ".vision_roles.json", {"usb-A-overview": "overview"})
+    app = _vision_app(tmp_path)
+    with TestClient(app) as c:
+        r = c.get("/api/vision/roles")
+        assert r.status_code == 200
+        assert r.json() == {"usb-A-overview": "overview"}
+
+
+def test_vision_roles_get_empty_dict_when_no_map_saved_yet(tmp_path: Path) -> None:
+    app = _vision_app(tmp_path)
+    with TestClient(app) as c:
+        assert c.get("/api/vision/roles").json() == {}
+
+
+def test_vision_roles_put_persists_reopens_and_flips_roles_resolved(tmp_path: Path) -> None:
+    app = _vision_app(tmp_path)
+    with TestClient(app) as c:
+        assert c.get("/api/vision/status").json()["roles_resolved"] is False
+
+        r = c.put(
+            "/api/vision/roles",
+            json={"mapping": {"usb-A-overview": "overview", "usb-B-science": "science"}},
+        )
+        assert r.status_code == 200
+        out = r.json()
+        assert out["roles_resolved"] is True
+        assert out["unresolved"] == []
+
+        status_after = c.get("/api/vision/status").json()
+        assert status_after["roles_resolved"] is True
+        # (re)opened, guarded: both roles still report active after the PUT-triggered reopen.
+        assert set(status_after["cameras"]) == {"overview", "science"}
+
+
+def test_vision_roles_put_survives_a_recreated_app_at_the_same_root(tmp_path: Path) -> None:
+    app = _vision_app(tmp_path)
+    with TestClient(app) as c:
+        r = c.put(
+            "/api/vision/roles",
+            json={"mapping": {"usb-A-overview": "overview", "usb-B-science": "science"}},
+        )
+        assert r.status_code == 200
+
+    app2 = _vision_app(tmp_path)
+    with TestClient(app2) as c2:
+        status2 = c2.get("/api/vision/status").json()
+        assert status2["roles_resolved"] is True
+        assert set(status2["cameras"]) == {"overview", "science"}
+
+
+def test_vision_roles_put_with_unknown_device_never_crashes(tmp_path: Path) -> None:
+    """A role pointed at a stable_id that isn't (yet) plugged in must be guarded -- persisted,
+    reported unresolved for that role, but never a 500 and never crashes the reopen."""
+    app = _vision_app(tmp_path)
+    with TestClient(app) as c:
+        r = c.put(
+            "/api/vision/roles",
+            json={"mapping": {"usb-A-overview": "overview", "usb-not-plugged-in": "science"}},
+        )
+        assert r.status_code == 200
+        out = r.json()
+        assert out["roles_resolved"] is False
+        assert out["unresolved"] == ["science"]
