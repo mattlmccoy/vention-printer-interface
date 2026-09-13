@@ -234,6 +234,9 @@ class RoleMapBody(BaseModel):
     mapping: dict[str, str]
 
 
+_VALID_ROLES = {"overview", "science"}
+
+
 def _tcp_open(ip: str, port: int, timeout_s: float = 0.5) -> bool:
     try:
         with socket.create_connection((ip, port), timeout=timeout_s):
@@ -1085,6 +1088,11 @@ def create_app(
         overview+science sources so the change takes effect immediately -- guarded end to end
         so a role pointed at a device that isn't currently plugged in can never crash the
         request or leave the app in a half-open state."""
+        bad_roles = sorted(set(body.mapping.values()) - _VALID_ROLES)
+        if bad_roles:
+            raise HTTPException(
+                400, f"invalid role value(s): {bad_roles!r} (must be in {sorted(_VALID_ROLES)!r})"
+            )
         save_role_map(vision_roles_path, body.mapping)
         resolved = app.state.vision_refresh_role_resolution()
 

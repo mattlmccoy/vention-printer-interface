@@ -764,3 +764,35 @@ def test_vision_roles_put_with_unknown_device_never_crashes(tmp_path: Path) -> N
         out = r.json()
         assert out["roles_resolved"] is False
         assert out["unresolved"] == ["science"]
+
+
+# ---- M-2: PUT /api/vision/roles must validate role values ------------------------------------
+def test_vision_roles_put_rejects_bad_role_value_and_persists_nothing(tmp_path: Path) -> None:
+    app = _vision_app(tmp_path)
+    with TestClient(app) as c:
+        r = c.put(
+            "/api/vision/roles",
+            json={"mapping": {"usb-A-overview": "Science"}},  # bad case
+        )
+        assert r.status_code in (400, 422)
+
+        # nothing persisted: a fresh app at the same root still sees an empty map.
+        assert c.get("/api/vision/roles").json() == {}
+
+    app2 = _vision_app(tmp_path)
+    with TestClient(app2) as c2:
+        assert c2.get("/api/vision/roles").json() == {}
+
+
+def test_vision_roles_put_still_persists_a_valid_mapping(tmp_path: Path) -> None:
+    app = _vision_app(tmp_path)
+    with TestClient(app) as c:
+        r = c.put(
+            "/api/vision/roles",
+            json={"mapping": {"usb-A-overview": "overview", "usb-B-science": "science"}},
+        )
+        assert r.status_code == 200
+        assert c.get("/api/vision/roles").json() == {
+            "usb-A-overview": "overview",
+            "usb-B-science": "science",
+        }
