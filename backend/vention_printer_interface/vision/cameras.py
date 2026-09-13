@@ -226,11 +226,15 @@ def _stable_id_for_index(index: int) -> str:
 def enumerate_devices(max_index: int = 4) -> list[dict[str, Any]]:
     """Best-effort real camera enumerator: probe a small index range with `cv2.VideoCapture`.
 
-    Returns `{"index", "stable_id", "name"}` per device that opens successfully. Verified on
-    hardware, NOT exercised by unit tests (tests inject a fake `device_enumerator` into
-    `create_app` instead of calling this). Never raises -- a probe failure at one index is
-    skipped, not propagated, so a missing/locked camera can never block startup or a
-    `GET /api/vision/devices` request.
+    Returns `{"index", "stable_id", "name", "has_frame"}` per device that opens successfully.
+    `has_frame` is a one-shot `read()` attempt on the just-opened device: on macOS, a camera
+    that isn't authorized under Privacy & Security still reports `isOpened() == True` but every
+    `read()` fails -- `has_frame=False` is exactly that "opened but permission-denied" signature,
+    which `camera_access_state` aggregates into the overall access state. Verified on hardware,
+    NOT exercised by unit tests beyond a stubbed `cv2.VideoCapture` (tests inject a fake
+    `device_enumerator` into `create_app` instead of calling this for API-level behavior). Never
+    raises -- a probe failure at one index is skipped, not propagated, so a missing/locked
+    camera can never block startup or a `GET /api/vision/devices` request.
     """
     import cv2
 
@@ -242,8 +246,19 @@ def enumerate_devices(max_index: int = 4) -> list[dict[str, Any]]:
             cap = cv2.VideoCapture(index, backend)
             if not cap.isOpened():
                 continue
+            has_frame = False
+            try:
+                ok, frame = cap.read()
+                has_frame = bool(ok) and frame is not None
+            except Exception as exc:  # noqa: BLE001 - a read failure must never crash enumeration
+                log.warning("camera frame probe failed at index %d: %s", index, exc)
             devices.append(
-                {"index": index, "stable_id": _stable_id_for_index(index), "name": None}
+                {
+                    "index": index,
+                    "stable_id": _stable_id_for_index(index),
+                    "name": None,
+                    "has_frame": has_frame,
+                }
             )
         except Exception as exc:  # noqa: BLE001 - a probe failure must never crash enumeration
             log.warning("camera probe failed at index %d: %s", index, exc)
@@ -251,6 +266,24 @@ def enumerate_devices(max_index: int = 4) -> list[dict[str, Any]]:
             if cap is not None:
                 cap.release()
     return devices
+
+
+def camera_access_state(devices: list[dict[str, Any]]) -> str:
+    """Overall camera-permission signal aggregated from enumerated devices' `has_frame` flags.
+
+    - `"no_devices"`: nothing was enumerated at all (nothing plugged in, or the probe found
+      nothing).
+    - `"denied"`: one or more devices enumerated (opened) but NONE yielded a frame -- the
+      macOS "camera plugged in, permission not granted" signature (see `enumerate_devices`). A
+      device missing the `has_frame` key entirely (an enumerator not yet upgraded to report it)
+      counts as no-frame here too -- unknown must never render as verified-good.
+    - `"ok"`: at least one enumerated device yielded a frame.
+    """
+    if not devices:
+        return "no_devices"
+    if any(bool(device.get("has_frame")) for device in devices):
+        return "ok"
+    return "denied"
 
 
 def save_role_map(path: Path, mapping: dict[str, str]) -> None:

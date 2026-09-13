@@ -60,6 +60,7 @@ from vention_printer_interface.vision.board_gen import (
 from vention_printer_interface.vision.cameras import (
     CameraConfig,
     CameraSpec,
+    camera_access_state,
     enumerate_devices,
     load_role_map,
     resolve_roles,
@@ -1150,12 +1151,20 @@ def create_app(
         }
 
     @app.get("/api/vision/devices")
-    def vision_devices() -> list[dict[str, Any]]:
-        """Detected cameras (A7 auto-connect/quick-start): each enumerated device plus its
-        currently RESOLVED role (via `resolve_roles` against the persisted map — `None` when
-        not yet assigned) and, best-effort, a live preview URL when that role's dedicated
-        source is already open. Never touches the science source directly (I1: only the
-        overview live-view stream is safe to share across concurrent readers)."""
+    def vision_devices() -> dict[str, Any]:
+        """Detected cameras (A7 auto-connect/quick-start) plus an overall camera-permission
+        signal. Each device carries its currently RESOLVED role (via `resolve_roles` against the
+        persisted map — `None` when not yet assigned), a best-effort live preview URL when that
+        role's dedicated source is already open, and `has_frame` (whether `enumerate_devices`'s
+        probe actually got a frame off it — never touches the science source directly here; I1:
+        only the overview live-view stream is safe to share across concurrent readers).
+
+        `camera_access` aggregates `has_frame` across every enumerated device (see
+        `camera_access_state`): `"no_devices"` when nothing enumerated, `"denied"` when device(s)
+        enumerated but none yielded a frame (the macOS Privacy & Security "not authorized"
+        signature), `"ok"` otherwise -- this is what the quick-start UI shows in place of an
+        empty/silent device list when the OS is simply blocking camera access.
+        """
         try:
             enumerated = enumerator()
         except Exception as exc:  # noqa: BLE001 - enumeration must never fail the request
@@ -1178,9 +1187,10 @@ def create_app(
                     "name": device.get("name"),
                     "role": role,
                     "preview_url": preview_url,
+                    "has_frame": device.get("has_frame"),
                 }
             )
-        return devices
+        return {"devices": devices, "camera_access": camera_access_state(enumerated)}
 
     @app.get("/api/vision/roles")
     def vision_get_roles() -> dict[str, str]:

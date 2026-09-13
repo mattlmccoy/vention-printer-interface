@@ -731,8 +731,8 @@ def test_board_endpoint_valid_explicit_params_still_returns_200(client: TestClie
 
 def _fake_devices() -> list[dict[str, Any]]:
     return [
-        {"index": 0, "stable_id": "usb-A-overview", "name": "ELP overview"},
-        {"index": 1, "stable_id": "usb-B-science", "name": "ELP science"},
+        {"index": 0, "stable_id": "usb-A-overview", "name": "ELP overview", "has_frame": True},
+        {"index": 1, "stable_id": "usb-B-science", "name": "ELP science", "has_frame": True},
     ]
 
 
@@ -793,13 +793,65 @@ def test_vision_devices_lists_stubbed_devices_with_resolved_roles(tmp_path: Path
     with TestClient(app) as c:
         r = c.get("/api/vision/devices")
         assert r.status_code == 200
-        devices = r.json()
+        body = r.json()
+        assert body["camera_access"] == "ok"
+        devices = body["devices"]
         assert len(devices) == 2
         by_index = {d["index"]: d for d in devices}
         assert by_index[0]["stable_id"] == "usb-A-overview"
         assert by_index[0]["role"] == "overview"
+        assert by_index[0]["has_frame"] is True
         assert by_index[1]["stable_id"] == "usb-B-science"
         assert by_index[1]["role"] == "science"  # index-fallback resolved, not operator-confirmed
+        assert by_index[1]["has_frame"] is True
+
+
+# ---- GET /api/vision/devices camera_access (macOS permission-denied signal) -------------------
+def _fake_devices_denied() -> list[dict[str, Any]]:
+    """Both devices enumerate (opened successfully) but neither yields a frame -- the macOS
+    "camera permission not granted" signature."""
+    return [
+        {"index": 0, "stable_id": "usb-A-overview", "name": "ELP overview", "has_frame": False},
+        {"index": 1, "stable_id": "usb-B-science", "name": "ELP science", "has_frame": False},
+    ]
+
+
+def _fake_devices_mixed() -> list[dict[str, Any]]:
+    return [
+        {"index": 0, "stable_id": "usb-A-overview", "name": "ELP overview", "has_frame": False},
+        {"index": 1, "stable_id": "usb-B-science", "name": "ELP science", "has_frame": True},
+    ]
+
+
+def test_vision_devices_camera_access_denied_when_no_device_yields_a_frame(tmp_path: Path) -> None:
+    app = _vision_app(tmp_path, device_enumerator=_fake_devices_denied)
+    with TestClient(app) as c:
+        r = c.get("/api/vision/devices")
+        assert r.status_code == 200
+        body = r.json()
+        assert body["camera_access"] == "denied"
+        assert all(d["has_frame"] is False for d in body["devices"])
+
+
+def test_vision_devices_camera_access_no_devices_when_enumerator_returns_empty(
+    tmp_path: Path,
+) -> None:
+    app = _vision_app(tmp_path, device_enumerator=lambda: [])
+    with TestClient(app) as c:
+        r = c.get("/api/vision/devices")
+        assert r.status_code == 200
+        body = r.json()
+        assert body["camera_access"] == "no_devices"
+        assert body["devices"] == []
+
+
+def test_vision_devices_camera_access_ok_when_at_least_one_device_yields_a_frame(
+    tmp_path: Path,
+) -> None:
+    app = _vision_app(tmp_path, device_enumerator=_fake_devices_mixed)
+    with TestClient(app) as c:
+        body = c.get("/api/vision/devices").json()
+        assert body["camera_access"] == "ok"
 
 
 def test_vision_roles_get_returns_persisted_map(tmp_path: Path) -> None:
