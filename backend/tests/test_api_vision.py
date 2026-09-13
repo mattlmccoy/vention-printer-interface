@@ -18,6 +18,11 @@ from fastapi.testclient import TestClient
 
 from vention_printer_interface.api.app import create_app
 from vention_printer_interface.vision.frame_source import Frame, FrameSource, SimulatedFrameSource
+from vention_printer_interface.vision.registration import (
+    apply_homography,
+    load_calibration,
+    register_frame,
+)
 
 
 class _FailingSource(FrameSource):
@@ -372,3 +377,176 @@ def test_vision_run_file_404_when_missing(
         params={"path": "vision/layer_0001/no_such_stage.png"},
     )
     assert r.status_code == 404
+
+
+# ---- intrinsics/distortion calibration (Phase 6b, /api/vision/calibrate) --------------------
+#
+# Hardware-free: all points are SYNTHESIZED from a known pinhole model (K, zero distortion)
+# via cv2.projectPoints -- no camera. With zero distortion the corrected path must reduce to
+# the homography-only path (dist=0 equivalence), which anchors the geometry contract.
+_K_TRUE = np.array([[800.0, 0.0, 320.0], [0.0, 800.0, 240.0], [0.0, 0.0, 1.0]])
+_IMAGE_SIZE = (640, 480)
+_ZERO_DIST = np.zeros(5)
+# One fixed camera pose looking at the bed plane (Z=0); the bed correspondence points are its
+# exact projection, so world(x,y) -> image is an exact planar homography.
+_BED_RVEC = np.array([0.02, -0.03, 0.01])
+_BED_TVEC = np.array([-50.0, -40.0, 500.0])
+_BED_WORLD = np.array([[0.0, 0.0], [100.0, 0.0], [100.0, 80.0], [0.0, 80.0], [50.0, 40.0]])
+_BED_EXTENT = [0.0, 0.0, 100.0, 80.0]
+_MM_PER_PX = 0.5
+
+
+def _project_bed(world_xy: np.ndarray) -> list[list[float]]:
+    """Project bed-plane world points (mm, Z=0) through the fixed bed pose + known K."""
+    import cv2
+
+    obj = np.stack(
+        [world_xy[:, 0], world_xy[:, 1], np.zeros(len(world_xy))], axis=1
+    ).astype(np.float64)
+    img, _ = cv2.projectPoints(obj, _BED_RVEC, _BED_TVEC, _K_TRUE, _ZERO_DIST)
+    result: list[list[float]] = img.reshape(-1, 2).tolist()
+    return result
+
+
+def _intrinsics_block() -> dict[str, Any]:
+    """A multi-view planar-target intrinsics block synthesized from the known K (zero dist)."""
+    import cv2
+
+    grid_x, grid_y = np.meshgrid(np.arange(7, dtype=float), np.arange(5, dtype=float))
+    target = np.stack([grid_x.ravel(), grid_y.ravel(), np.zeros(grid_x.size)], axis=1) * 20.0
+    poses = [
+        (np.array([0.1, -0.2, 0.05]), np.array([-60.0, -40.0, 400.0])),
+        (np.array([-0.15, 0.1, 0.1]), np.array([-50.0, -30.0, 450.0])),
+        (np.array([0.05, 0.15, -0.1]), np.array([-70.0, -50.0, 420.0])),
+        (np.array([0.2, 0.0, 0.0]), np.array([-40.0, -35.0, 380.0])),
+    ]
+    views: list[dict[str, Any]] = []
+    for rvec, tvec in poses:
+        proj, _ = cv2.projectPoints(target, rvec, tvec, _K_TRUE, _ZERO_DIST)
+        views.append(
+            {"object_points": target.tolist(), "image_points": proj.reshape(-1, 2).tolist()}
+        )
+    return {"image_size": list(_IMAGE_SIZE), "views": views}
+
+
+def _common_bed_body() -> dict[str, Any]:
+    """The homography-only request payload (bed correspondence + raster params)."""
+    return {
+        "image_points": _project_bed(_BED_WORLD),
+        "world_points_mm": _BED_WORLD.tolist(),
+        "mm_per_px": _MM_PER_PX,
+        "bed_extent_mm": _BED_EXTENT,
+    }
+
+
+def test_vision_calibrate_intrinsics_path_corrected_and_reaches_runtime(
+    app_and_client: tuple[FastAPI, TestClient], tmp_path: Path
+) -> None:
+    """Intrinsics provided -> distortion-corrected calibration, persisted AND live at runtime."""
+    app, client = app_and_client
+    body = {**_common_bed_body(), "intrinsics": _intrinsics_block()}
+
+    r = client.post("/api/vision/calibrate", json=body)
+    assert r.status_code == 200
+    out = r.json()
+    assert out["corrected"] is True
+    assert out["intrinsics_rms"] is not None
+    assert out["intrinsics_rms"] < 1.0
+    assert out["reprojection_error"] < 1e-3
+
+    # Persisted with a non-null camera_matrix.
+    loaded = load_calibration(tmp_path / ".vision_calibration.json")
+    assert loaded is not None
+    assert loaded.camera_matrix is not None
+    assert loaded.dist_coeffs is not None
+    assert loaded.image_size == _IMAGE_SIZE
+
+    # Proof it reached the runtime capture worker -> the corrected register path is now live.
+    assert app.state.vision.calibration is not None
+    assert app.state.vision.calibration.camera_matrix is not None
+
+
+def test_vision_calibrate_dist0_equivalence_matches_homography_only(
+    app_and_client: tuple[FastAPI, TestClient],
+) -> None:
+    """With zero distortion the corrected result must equal the homography-only result:
+    tiny reprojection error, identical bed geometry, and sub-pixel-identical registration."""
+    app, client = app_and_client
+    common = _common_bed_body()
+
+    corr_body = {**common, "intrinsics": _intrinsics_block()}
+    r_corr = client.post("/api/vision/calibrate", json=corr_body)
+    assert r_corr.status_code == 200
+    assert r_corr.json()["corrected"] is True
+    assert r_corr.json()["reprojection_error"] < 1e-3
+    cal_corrected = app.state.vision.calibration
+    h_corrected = cal_corrected.H.copy()
+
+    r_plain = client.post("/api/vision/calibrate", json=common)
+    assert r_plain.status_code == 200
+    assert r_plain.json()["corrected"] is False
+    assert r_plain.json()["reprojection_error"] < 1e-3
+    cal_plain = app.state.vision.calibration
+    h_plain = cal_plain.H.copy()
+
+    bed_img = np.asarray(common["image_points"], dtype=float)
+    # Both homographies map the bed points to the same world coords (sub-mm), and to truth.
+    world_corr = apply_homography(h_corrected, bed_img)
+    world_plain = apply_homography(h_plain, bed_img)
+    assert np.allclose(world_corr, world_plain, atol=1e-3)
+    assert np.allclose(world_corr, _BED_WORLD, atol=1e-3)
+
+    # End-to-end: the two calibrations register the same frame to the same raster (dist=0
+    # undistort is an identity map, so corrected reduces to homography-only).
+    rng = np.random.default_rng(7)
+    img = rng.integers(0, 255, (_IMAGE_SIZE[1], _IMAGE_SIZE[0], 3), dtype=np.uint8).astype(np.uint8)
+    reg_corrected, _ = register_frame(img, cal_corrected)
+    reg_plain, _ = register_frame(img, cal_plain)
+    assert reg_corrected.shape == reg_plain.shape
+    assert np.allclose(reg_corrected.astype(float), reg_plain.astype(float), atol=1.0)
+
+
+def test_vision_calibrate_without_intrinsics_is_backward_compatible(
+    app_and_client: tuple[FastAPI, TestClient], tmp_path: Path
+) -> None:
+    """No intrinsics -> homography-only, corrected=False, null camera_matrix on disk + runtime."""
+    app, client = app_and_client
+
+    r = client.post("/api/vision/calibrate", json=_common_bed_body())
+    assert r.status_code == 200
+    out = r.json()
+    assert out["corrected"] is False
+    assert out["intrinsics_rms"] is None
+    assert out["validation"] is None
+
+    loaded = load_calibration(tmp_path / ".vision_calibration.json")
+    assert loaded is not None
+    assert loaded.camera_matrix is None
+    assert loaded.dist_coeffs is None
+    assert loaded.image_size is None
+
+    assert app.state.vision.calibration is not None
+    assert app.state.vision.calibration.camera_matrix is None
+
+
+def test_vision_calibrate_validation_block_reports_small_rms(
+    app_and_client: tuple[FastAPI, TestClient],
+) -> None:
+    """A validation block (independent points) -> response validation.rms_mm present + small."""
+    app, client = app_and_client
+    val_world = np.array([[25.0, 25.0], [70.0, 55.0], [40.0, 60.0]])
+    body = {
+        **_common_bed_body(),
+        "intrinsics": _intrinsics_block(),
+        "validation": {
+            "image_points": _project_bed(val_world),
+            "world_points_mm": val_world.tolist(),
+        },
+    }
+
+    r = client.post("/api/vision/calibrate", json=body)
+    assert r.status_code == 200
+    out = r.json()
+    assert out["validation"] is not None
+    assert "rms_mm" in out["validation"]
+    assert out["validation"]["rms_mm"] < 0.1

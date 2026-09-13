@@ -58,10 +58,14 @@ from vention_printer_interface.vision.frame_source import FrameSource, UvcFrameS
 from vention_printer_interface.vision.overview import OverviewStreamer
 from vention_printer_interface.vision.registration import (
     Calibration,
+    apply_homography,
+    calibrate_intrinsics,
     compute_homography,
     load_calibration,
     reprojection_error,
     save_calibration,
+    undistort_points,
+    validate_dimensions,
 )
 from vention_printer_interface.vision.store import read_manifest
 
@@ -186,11 +190,28 @@ class JobSelectBody(BaseModel):
     path: str
 
 
+class IntrinsicsView(BaseModel):
+    object_points: list[tuple[float, float, float]]
+    image_points: list[tuple[float, float]]
+
+
+class IntrinsicsBody(BaseModel):
+    image_size: tuple[int, int]
+    views: list[IntrinsicsView]
+
+
+class CalibrationValidationBody(BaseModel):
+    image_points: list[tuple[float, float]]
+    world_points_mm: list[tuple[float, float]]
+
+
 class VisionCalibrateBody(BaseModel):
     image_points: list[tuple[float, float]]
     world_points_mm: list[tuple[float, float]]
     mm_per_px: float
     bed_extent_mm: tuple[float, float, float, float]
+    intrinsics: IntrinsicsBody | None = None
+    validation: CalibrationValidationBody | None = None
 
 
 def _tcp_open(ip: str, port: int, timeout_s: float = 0.5) -> bool:
@@ -960,23 +981,70 @@ def create_app(
 
     @app.post("/api/vision/calibrate")
     def vision_calibrate(body: VisionCalibrateBody) -> dict[str, Any]:
-        image_pts = np.asarray(body.image_points, dtype=float)
-        world_pts = np.asarray(body.world_points_mm, dtype=float)
-        h_matrix = compute_homography(image_pts, world_pts)
-        err = reprojection_error(h_matrix, image_pts, world_pts)
+        # Bed correspondence points (raw image px <-> world mm on the bed plane).
+        bed_image_pts = np.asarray(body.image_points, dtype=float)
+        bed_world_pts = np.asarray(body.world_points_mm, dtype=float)
         version = datetime.now(UTC).strftime("cal-%Y%m%dT%H%M%SZ")
+
+        k_matrix: np.ndarray | None = None
+        dist_coeffs: np.ndarray | None = None
+        image_size: tuple[int, int] | None = None
+        intrinsics_rms: float | None = None
+
+        # Coordinate contract: when intrinsics are provided, the bed homography MUST be built on
+        # UNDISTORTED image points, so it composes with the runtime `undistort_image -> warp_to_bed`
+        # path (Calibration.H is defined on undistorted-image coordinates). Without intrinsics, keep
+        # the homography-only behavior on raw points (back-compat, camera_matrix=None).
+        if body.intrinsics is not None:
+            image_size = (int(body.intrinsics.image_size[0]), int(body.intrinsics.image_size[1]))
+            object_points = [
+                np.asarray(v.object_points, dtype=float) for v in body.intrinsics.views
+            ]
+            view_image_points = [
+                np.asarray(v.image_points, dtype=float) for v in body.intrinsics.views
+            ]
+            k_matrix, dist_coeffs, intrinsics_rms = calibrate_intrinsics(
+                object_points, view_image_points, image_size
+            )
+            bed_img_for_h = undistort_points(bed_image_pts, k_matrix, dist_coeffs)
+        else:
+            bed_img_for_h = bed_image_pts
+
+        h_matrix = compute_homography(bed_img_for_h, bed_world_pts)
+        err = reprojection_error(h_matrix, bed_img_for_h, bed_world_pts)
+
+        validation: dict[str, Any] | None = None
+        if body.validation is not None:
+            val_image_pts = np.asarray(body.validation.image_points, dtype=float)
+            val_world_pts = np.asarray(body.validation.world_points_mm, dtype=float)
+            if k_matrix is not None and dist_coeffs is not None:
+                val_image_pts = undistort_points(val_image_pts, k_matrix, dist_coeffs)
+            measured_mm = apply_homography(h_matrix, val_image_pts)
+            validation = validate_dimensions(val_world_pts, measured_mm)
+
         calib = Calibration(
             H=h_matrix,
             mm_per_px=body.mm_per_px,
             bed_extent_mm=body.bed_extent_mm,
             version=version,
             reprojection_error=err,
+            camera_matrix=k_matrix,
+            dist_coeffs=dist_coeffs,
+            distortion_model="opencv-5",
+            image_size=image_size,
+            validation=validation or {},
         )
         save_calibration(vision_calibration_path, calib)
         vision = vision_service()
         if vision is not None:
             vision.set_calibration(calib)
-        return {"reprojection_error": err, "calibration_version": version}
+        return {
+            "calibration_version": version,
+            "reprojection_error": err,
+            "intrinsics_rms": intrinsics_rms,
+            "validation": validation,
+            "corrected": k_matrix is not None,
+        }
 
     @app.get("/api/vision/captures")
     def vision_captures(run: str) -> list[dict[str, Any]]:
