@@ -42,6 +42,39 @@ def test_capture_request_fields():
     assert req.job == {"id": "j1"}
 
 
+class _TrackingSource(FrameSource):
+    """Records open()/close()/grab() calls; grab() requires the source to be open.
+
+    The camera-on-demand fix requires the science source to be opened only around a capture
+    and released when idle, never held open between captures -- these counters are how the
+    hardware-free tests below assert that.
+    """
+
+    def __init__(self):
+        self.open_count = 0
+        self.close_count = 0
+        self.grab_count = 0
+        self._open = False
+
+    @property
+    def is_open(self):
+        return self._open
+
+    def open(self):
+        self.open_count += 1
+        self._open = True
+
+    def close(self):
+        self.close_count += 1
+        self._open = False
+
+    def grab(self):
+        if not self._open:
+            raise RuntimeError("source not open")
+        self.grab_count += 1
+        return Frame(image=np.zeros((4, 4, 3), np.uint8), timestamp_ns=time.time_ns())
+
+
 def _svc(tmp_path, source=None, calibration=None, camera_role=None):
     return VisionService(
         source=source or SimulatedFrameSource(32, 24),
@@ -60,6 +93,71 @@ def test_capture_event_writes_files(tmp_path):
     assert (tmp_path / "vision" / "layer_0002" / "post_jet.png").exists()
     assert (tmp_path / "vision" / "layer_0002" / "post_jet.raw.png").exists()
     svc.stop()
+
+
+# ---- camera-on-demand: science source opened per-capture, never idle-open ----------------
+
+
+def test_start_does_not_open_the_science_source(tmp_path):
+    """Nothing opens a camera at startup: VisionService.start() launches the worker but must
+    NOT open the device (that is what kept the camera light on continuously)."""
+    src = _TrackingSource()
+    svc = _svc(tmp_path, source=src)
+    svc.start()
+    try:
+        assert src.open_count == 0
+        assert not src.is_open
+    finally:
+        svc.stop()
+
+
+def test_capture_opens_then_closes_the_source_and_writes(tmp_path):
+    """A capture drives open -> grab -> close; the file is still written."""
+    src = _TrackingSource()
+    svc = _svc(tmp_path, source=src)
+    svc.start()
+    svc.on_event("capture:post_jet", {"layer": 1, "axis_positions_mm": {"build": 0.0}})
+    svc.drain(timeout=2.0)
+    svc.stop()
+    assert src.open_count >= 1
+    assert src.grab_count >= 1
+    assert src.close_count == src.open_count  # every open paired with a close
+    assert not src.is_open
+    assert (tmp_path / "vision" / "layer_0001" / "post_jet.png").exists()
+
+
+def test_science_source_not_held_open_when_idle(tmp_path):
+    """After a capture drains, the source must be closed (idle); firing several more capture
+    events must never leave it open when the worker is idle again."""
+    src = _TrackingSource()
+    svc = _svc(tmp_path, source=src)
+    svc.start()
+    try:
+        svc.on_event("capture:pre_jet", {"layer": 1})
+        svc.drain(timeout=2.0)
+        assert not src.is_open, "science source left open while idle"
+        assert src.close_count >= 1
+
+        svc.on_event("capture:post_jet", {"layer": 2})
+        svc.on_event("capture:post_heat", {"layer": 3})
+        svc.drain(timeout=2.0)
+        assert not src.is_open
+        assert src.open_count == src.close_count  # balanced: never idle-open
+    finally:
+        svc.stop()
+
+
+def test_grab_once_opens_grabs_and_closes_for_interactive_flow(tmp_path):
+    """The interactive calibration/validation path grabs a single frame with the same
+    open -> grab -> close discipline (never leaves the device open)."""
+    src = _TrackingSource()
+    svc = _svc(tmp_path, source=src)
+    frame = svc.grab_once()
+    assert frame is not None
+    assert src.open_count == 1
+    assert src.close_count == 1
+    assert src.grab_count == 1
+    assert not src.is_open
 
 
 def test_non_capture_labels_ignored(tmp_path):
