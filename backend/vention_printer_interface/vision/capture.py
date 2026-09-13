@@ -116,13 +116,14 @@ class VisionService:
             return
 
         frame = self._source.grab_fresh()
-        frame = self._ensure_fresh(frame, req)
+        frame, stale = self._ensure_fresh(frame, req)
         registered, registered_space = register_frame(frame.image, self._calibration)
 
         meta: dict[str, Any] = {
             "run_id": Path(base).name,
             "host_timestamp_ns": req.host_timestamp_ns or frame.timestamp_ns,
             "frame_timestamp_ns": frame.timestamp_ns,
+            "stale": stale,
             "job": req.job,
             "axis_positions_mm": req.axis_positions_mm,
             "camera": {
@@ -169,7 +170,7 @@ class VisionService:
             },
         )
 
-    def _ensure_fresh(self, frame: Frame, req: CaptureRequest) -> Frame:
+    def _ensure_fresh(self, frame: Frame, req: CaptureRequest) -> tuple[Frame, bool]:
         """Capture-freshness guard: never hand a pre-event frame to the wrong stage.
 
         `grab_fresh()` already flushes the driver's buffer, but a frame can still
@@ -177,11 +178,15 @@ class VisionService:
         count). When the event carries a `host_timestamp_ns`, re-grab once; if the
         second frame is still older than the event, accept it (never silently drop
         the capture) but log a warning so the staleness is recorded, not hidden.
+
+        Returns `(frame, stale)` where `stale` is True only when the frame still
+        predates the event after the re-grab — the sidecar records that flag so the
+        staleness is durable, not merely a log line.
         """
         if not req.host_timestamp_ns:
-            return frame
+            return frame, False
         if frame.timestamp_ns >= req.host_timestamp_ns:
-            return frame
+            return frame, False
         frame = self._source.grab_fresh()
         if frame.timestamp_ns < req.host_timestamp_ns:
             log.warning(
@@ -192,7 +197,8 @@ class VisionService:
                 frame.timestamp_ns,
                 req.host_timestamp_ns,
             )
-        return frame
+            return frame, True
+        return frame, False
 
     def _calibration_meta(self) -> dict[str, Any] | None:
         calibration = self._calibration
