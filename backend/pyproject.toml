@@ -13,6 +13,7 @@ dependencies = [
   "pillow>=10",
   "numpy>=1.26",
   "opencv-contrib-python-headless>=4.9",
+  "ezdxf>=1.1",
 ]
 
 [project.optional-dependencies]
