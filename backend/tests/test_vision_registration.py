@@ -5,6 +5,7 @@ import numpy as np
 
 from vention_printer_interface.vision.registration import (
     Calibration,
+    build_bed_remap,
     calibrate_intrinsics,
     compute_homography,
     load_calibration,
@@ -194,3 +195,18 @@ def test_undistort_points_with_zero_distortion_matches_input():
 
     assert result.shape == pts.shape
     assert np.allclose(result, pts, atol=1e-3)
+
+
+def test_build_bed_remap_output_dimensions():
+    k_matrix = np.array([[100.0, 0.0, 32.0], [0.0, 100.0, 24.0], [0.0, 0.0, 1.0]])
+    dist = np.zeros(5)
+    h_identity = np.eye(3)
+
+    map1, map2 = build_bed_remap(
+        k_matrix, dist, h_identity, mm_per_px=0.5, bed_extent_mm=(0, 0, 100, 80)
+    )
+
+    assert map1.shape == (160, 200)
+    assert map2.shape == (160, 200)
+    assert map1.dtype == np.float32
+    assert map2.dtype == np.float32

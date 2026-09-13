@@ -111,6 +111,51 @@ def undistort_points(pts: np.ndarray, k_matrix: np.ndarray, dist_coeffs: np.ndar
     return result
 
 
+def build_bed_remap(
+    k_matrix: np.ndarray,
+    dist_coeffs: np.ndarray,
+    h_matrix: np.ndarray,
+    mm_per_px: float,
+    bed_extent_mm: tuple[float, float, float, float],
+) -> tuple[np.ndarray, np.ndarray]:
+    """Precompute a fused undistort+homography remap for `cv2.remap` on the RAW frame.
+
+    For each output bed-mm pixel, `h_matrix` (defined on undistorted-image
+    coordinates) is inverted to find the undistorted-image pixel, then the
+    camera model (`k_matrix`, `dist_coeffs`) is applied forward to find the
+    corresponding pixel in the RAW, distorted source frame. `(map1, map2)`
+    are `CV_32FC1` x/y source-pixel maps, one resampling instead of two.
+    """
+    import cv2
+
+    x0, y0, x1, y1 = bed_extent_mm
+    out_w = int(round((x1 - x0) / mm_per_px))
+    out_h = int(round((y1 - y0) / mm_per_px))
+
+    us, vs = np.meshgrid(np.arange(out_w, dtype=float), np.arange(out_h, dtype=float))
+    xs_mm = x0 + us * mm_per_px
+    ys_mm = y0 + vs * mm_per_px
+
+    h_inv = np.linalg.inv(h_matrix)
+    world_hom = np.stack([xs_mm.ravel(), ys_mm.ravel(), np.ones(xs_mm.size)], axis=1)
+    undistorted_hom = (h_inv @ world_hom.T).T
+    undistorted_px = undistorted_hom[:, :2] / undistorted_hom[:, 2:]
+
+    k_inv = np.linalg.inv(k_matrix)
+    undistorted_hom_px = np.hstack([undistorted_px, np.ones((len(undistorted_px), 1))])
+    normalized = (k_inv @ undistorted_hom_px.T).T  # Nx3 camera-normalized points, z==1
+
+    object_pts = normalized.astype(np.float32).reshape(-1, 1, 3)
+    rvec = np.zeros(3)
+    tvec = np.zeros(3)
+    distorted_px, _ = cv2.projectPoints(object_pts, rvec, tvec, k_matrix, dist_coeffs)
+    distorted_px = distorted_px.reshape(-1, 2)
+
+    map1 = distorted_px[:, 0].reshape(out_h, out_w).astype(np.float32)
+    map2 = distorted_px[:, 1].reshape(out_h, out_w).astype(np.float32)
+    return map1, map2
+
+
 @dataclass
 class Calibration:
     """Persisted bed-plane calibration. Field names are a stable on-disk contract.
