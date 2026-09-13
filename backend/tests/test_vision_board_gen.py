@@ -262,6 +262,49 @@ def test_dxf_roundtrips_and_entity_count_matches_svg_filled_cells() -> None:
         assert len(msp.query("LWPOLYLINE")) == n_filled
 
 
+# --- M-3: generate -> detect round trip (strengthens the "detectable" guarantee) -------------
+def _rasterize_black_polarity(spec: BoardSpec, *, px_per_mm: float) -> np.ndarray:
+    """Draw the generated (engrave_black=True) board geometry to a numpy image.
+
+    White background, black filled rectangles for every generated ``sq``/``bit`` cell (in that
+    polarity the filled cells ARE exactly the black regions of a normal printed board), scaled
+    from the SVG's own mm coordinates -- no SVG rasterization dependency, no rendering path
+    other than the one this test is verifying (data-contract-verification: reality, not belief).
+    """
+    import cv2
+
+    svg = generate_charuco_svg(spec, engrave_black=True, label=False)
+    m = _SVG_OPEN_RE.search(svg)
+    assert m is not None
+    total_w, total_h = (float(v) for v in m.group("vb").split()[2:4])
+    w_px = int(round(total_w * px_per_mm))
+    h_px = int(round(total_h * px_per_mm))
+    img = np.full((h_px, w_px), 255, dtype=np.uint8)
+    for r in _rects(svg):
+        x0 = int(round(r["x"] * px_per_mm))
+        y0 = int(round(r["y"] * px_per_mm))
+        x1 = int(round((r["x"] + r["w"]) * px_per_mm))
+        y1 = int(round((r["y"] + r["h"]) * px_per_mm))
+        cv2.rectangle(img, (x0, y0), (x1, y1), color=0, thickness=-1)
+    return img
+
+
+def test_generated_board_rasterized_is_detected_by_charuco_detector() -> None:
+    from vention_printer_interface.vision.registration import detect_board
+
+    image = _rasterize_black_polarity(_SPEC, px_per_mm=8.0)
+
+    detection = detect_board(image, _SPEC)
+
+    assert detection is not None, "generated board was not detected at all"
+    n_inner_corners = (_SPEC.squares_x - 1) * (_SPEC.squares_y - 1)
+    expected_ids = set(range(n_inner_corners))
+    got_ids = set(int(i) for i in detection.ids.ravel())
+    assert got_ids == expected_ids
+    assert len(detection.image_points) == n_inner_corners
+    assert len(detection.object_points) == n_inner_corners
+
+
 def test_dxf_and_svg_include_label_when_requested() -> None:
     import io
 
