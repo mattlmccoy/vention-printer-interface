@@ -39,6 +39,14 @@ export interface PrintSettingsPayload { plan: Record<string, unknown>; validatio
 export interface AxisMotion { max_speed: number | null; max_accel: number | null; bounds: { max_speed: [number, number]; max_accel: [number, number] }; limit_speed: number; limit_accel: number }
 export interface PrimingPayload { settings: Record<string, number>; validation: string[]; n_steps: number; n_thick_precoats: number; limits: Record<string, unknown> }
 export interface PrimedPayload { primed: { part_mm: number; feed_mm: number; captured_at: number } | null }
+export interface VisionStatus { cameras: string[]; calibration: string | null; queue: { drops: number }; active: boolean }
+export interface VisionCameraSpec { role: string; index: number; path: string | null; backend: number | null; width: number | null; height: number | null }
+export interface VisionCameras { overview: VisionCameraSpec; science: VisionCameraSpec }
+// Raw manifest record shape from GET /api/vision/captures — see backend
+// vention_printer_interface/vision/capture.py's append_manifest call.
+export interface VisionCaptureRecord { run_id: string; layer: number; stage: string; registered: string; host_timestamp_ns: number }
+export interface VisionCalibrateBody { image_points: [number, number][]; world_points_mm: [number, number][]; mm_per_px: number; bed_extent_mm: [number, number, number, number] }
+export interface VisionCalibrateResult { reprojection_error: number; calibration_version: string }
 
 export const api = {
   health: () => req<Health>("GET", "/api/health"),
@@ -87,4 +95,8 @@ export const api = {
   events: () => req<{ events: StatusPayload["events"] }>("GET", "/api/events"),
   autoLog: () => req<{ enabled: boolean }>("GET", "/api/auto-log"),
   setAutoLog: (enabled: boolean) => req<{ enabled: boolean }>("PUT", "/api/auto-log", { enabled }),
+  visionStatus: () => req<VisionStatus>("GET", "/api/vision/status"),
+  visionCameras: () => req<VisionCameras>("GET", "/api/vision/cameras"),
+  visionCaptures: (run: string) => req<VisionCaptureRecord[]>("GET", `/api/vision/captures?run=${encodeURIComponent(run)}`),
+  visionCalibrate: (body: VisionCalibrateBody) => req<VisionCalibrateResult>("POST", "/api/vision/calibrate", body),
 };
