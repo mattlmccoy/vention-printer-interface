@@ -1,6 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { formatCaptureMetaValue, overviewStreamUrl, panelVisible, parseCaptures, setPanelVisible } from "./vision.ts";
+import { dismissQuickStart, formatCaptureMetaValue, overviewStreamUrl, panelVisible, parseCaptures, setPanelVisible, shouldShowQuickStart } from "./vision.ts";
 
 class Mem implements Storage {
   m = new Map<string, string>();
@@ -120,4 +120,58 @@ test("panelVisible/setPanelVisible tolerate a storage that throws", () => {
   assert.doesNotThrow(() => setPanelVisible("control", false, st));
   assert.equal(panelVisible("control", null), true);
   assert.doesNotThrow(() => setPanelVisible("control", false, null));
+});
+
+// shouldShowQuickStart (A7): gates the first-run camera-role wizard on GET /api/vision/status's
+// roles_resolved/unresolved, and remembers a dismissal per the *set* of currently-unresolved
+// roles (a "device-set" signature) so a later camera swap that leaves a different role
+// unresolved re-opens the wizard instead of staying silently hidden forever.
+test("shouldShowQuickStart is false when status is unknown (null) — never show on no data", () => {
+  const st = new Mem();
+  assert.equal(shouldShowQuickStart(null, st), false);
+});
+
+test("shouldShowQuickStart is false once every role is resolved", () => {
+  const st = new Mem();
+  assert.equal(shouldShowQuickStart({ roles_resolved: true, unresolved: [] }, st), false);
+});
+
+test("shouldShowQuickStart is true when unresolved and not yet dismissed", () => {
+  const st = new Mem();
+  assert.equal(
+    shouldShowQuickStart({ roles_resolved: false, unresolved: ["overview", "science"] }, st),
+    true,
+  );
+});
+
+test("shouldShowQuickStart is false after dismissQuickStart for the same unresolved set", () => {
+  const st = new Mem();
+  const status = { roles_resolved: false, unresolved: ["overview", "science"] };
+  dismissQuickStart(status, st);
+  assert.equal(shouldShowQuickStart(status, st), false);
+});
+
+test("shouldShowQuickStart reopens when the unresolved device-set changes after a dismissal", () => {
+  const st = new Mem();
+  dismissQuickStart({ roles_resolved: false, unresolved: ["overview", "science"] }, st);
+  // A camera got swapped: overview is now confirmed, but a NEW unresolved set (science only)
+  // must not be silently swallowed by the old dismissal.
+  assert.equal(shouldShowQuickStart({ roles_resolved: false, unresolved: ["science"] }, st), true);
+});
+
+test("shouldShowQuickStart dismissal is order-independent within the same unresolved set", () => {
+  const st = new Mem();
+  dismissQuickStart({ roles_resolved: false, unresolved: ["science", "overview"] }, st);
+  assert.equal(
+    shouldShowQuickStart({ roles_resolved: false, unresolved: ["overview", "science"] }, st),
+    false,
+  );
+});
+
+test("shouldShowQuickStart/dismissQuickStart tolerate a storage that throws", () => {
+  const st = new ThrowingStorage();
+  const status = { roles_resolved: false, unresolved: ["science"] };
+  assert.equal(shouldShowQuickStart(status, st), true);
+  assert.doesNotThrow(() => dismissQuickStart(status, st));
+  assert.equal(shouldShowQuickStart(null, st), false);
 });

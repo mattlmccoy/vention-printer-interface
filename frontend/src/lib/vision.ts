@@ -71,3 +71,36 @@ export function setPanelVisible(view: View, visible: boolean, storage: Storage |
     storage?.setItem(PANEL_KEY, JSON.stringify(p));
   } catch { /* ignore */ }
 }
+
+/** Camera auto-connect + quick-start (A7): the minimal shape read off `GET /api/vision/status`
+ *  (see backend vention_printer_interface/api/app.py's vision_status) — kept local rather than
+ *  imported from api.ts so this pure module has no dependency on the fetch layer. */
+export interface VisionStatusLike { roles_resolved: boolean; unresolved: string[] }
+
+const QUICKSTART_DISMISS_KEY = "vpi.vision.quickstart_dismissed.v1";
+
+/** A stable, order-independent signature for a set of unresolved roles, used as the "device-set"
+ *  a dismissal is recorded against — so a dismissal survives while nothing changes, but a later
+ *  camera swap that leaves a *different* role unresolved re-opens the wizard instead of being
+ *  silently swallowed by a stale dismissal. */
+function unresolvedSignature(unresolved: string[]): string {
+  return [...unresolved].sort().join(",");
+}
+
+/** True when the first-run camera-role wizard should be shown: roles are not fully resolved
+ *  AND the operator has not already dismissed the wizard for this exact unresolved set. `null`
+ *  status (not loaded yet, or the endpoint failed) never shows it — showing a setup wizard on
+ *  missing data would be a false prompt, not a real gap (data-contract-verification). */
+export function shouldShowQuickStart(status: VisionStatusLike | null, storage: Storage | null): boolean {
+  if (!status || status.roles_resolved) return false;
+  let dismissedSig: string | null = null;
+  try { dismissedSig = storage?.getItem(QUICKSTART_DISMISS_KEY) ?? null; } catch { dismissedSig = null; }
+  return dismissedSig !== unresolvedSignature(status.unresolved);
+}
+
+/** Record that the operator dismissed the wizard for the current unresolved set. Reopening it
+ *  from Settings is a separate, explicit action (component-local state) — this only suppresses
+ *  the automatic on-connect prompt for this exact device-set going forward. */
+export function dismissQuickStart(status: VisionStatusLike, storage: Storage | null): void {
+  try { storage?.setItem(QUICKSTART_DISMISS_KEY, unresolvedSignature(status.unresolved)); } catch { /* ignore */ }
+}
