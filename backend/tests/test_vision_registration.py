@@ -4,6 +4,7 @@ from vention_printer_interface.vision.registration import (
     Calibration,
     compute_homography,
     load_calibration,
+    register_frame,
     reprojection_error,
     save_calibration,
     warp_to_bed,
@@ -53,3 +54,26 @@ def test_calibration_round_trip(tmp_path):
 
 def test_load_calibration_returns_none_when_missing(tmp_path):
     assert load_calibration(tmp_path / "does_not_exist.json") is None
+
+
+def test_register_frame_passes_through_when_no_calibration():
+    img = np.zeros((10, 10, 3), np.uint8)
+    img[0, 0] = (1, 2, 3)
+    registered, space = register_frame(img, None)
+    assert registered is img
+    assert space is None
+
+
+def test_register_frame_warps_via_homography_when_calibrated():
+    img = np.zeros((480, 640, 3), np.uint8)
+    calib = Calibration(
+        H=np.eye(3),
+        mm_per_px=0.5,
+        bed_extent_mm=(0.0, 0.0, 100.0, 80.0),
+        version="v1",
+        reprojection_error=0.01,
+    )
+    registered, space = register_frame(img, calib)
+    assert registered.shape == (160, 200, 3)
+    assert registered.dtype == np.uint8
+    assert space == {"mm_per_px": 0.5, "bed_extent_mm": [0.0, 0.0, 100.0, 80.0]}

@@ -4,6 +4,7 @@ from __future__ import annotations
 import json
 from dataclasses import asdict, dataclass
 from pathlib import Path
+from typing import Any
 
 import numpy as np
 
@@ -101,3 +102,24 @@ def load_calibration(path: Path) -> Calibration | None:
         version=payload["version"],
         reprojection_error=payload["reprojection_error"],
     )
+
+
+def register_frame(
+    image: np.ndarray, calibration: Calibration | None
+) -> tuple[np.ndarray, dict[str, Any] | None]:
+    """Register a raw frame into bed-plane coordinates, or pass it through uncalibrated.
+
+    Homography-only for now (stable call signature for the capture worker): a later
+    chunk upgrades the internals to fused undistort+homography once camera intrinsics
+    are available on `Calibration`, without changing this function's signature.
+    """
+    if calibration is None:
+        return image, None
+    registered = warp_to_bed(
+        image, calibration.H, calibration.mm_per_px, calibration.bed_extent_mm
+    )
+    registered_space = {
+        "mm_per_px": calibration.mm_per_px,
+        "bed_extent_mm": list(calibration.bed_extent_mm),
+    }
+    return registered, registered_space
