@@ -619,6 +619,108 @@ def test_board_endpoint_engrave_black_false_differs(client: TestClient) -> None:
     assert r_true.text != r_false.text
 
 
+# ---- I-1: GET /api/vision/board must validate params -> 400 (never 500 / CPU-burn) ----------
+def test_board_endpoint_dict_not_a_real_aruco_dictionary_name_returns_400(
+    client: TestClient,
+) -> None:
+    """``CharucoBoard`` is a real attribute of cv2.aruco, but not a DICT_* dictionary name --
+    the allowlist must be built from real dictionary names, not just ``hasattr``."""
+    r = client.get(
+        "/api/vision/board",
+        params={
+            "format": "svg",
+            "squares_x": 5,
+            "squares_y": 7,
+            "square_mm": 20.0,
+            "marker_mm": 15.0,
+            "dict": "CharucoBoard",
+        },
+    )
+    assert r.status_code == 400
+
+
+def test_board_endpoint_marker_mm_greater_equal_square_mm_returns_400(
+    client: TestClient,
+) -> None:
+    r = client.get(
+        "/api/vision/board",
+        params={
+            "format": "svg",
+            "squares_x": 5,
+            "squares_y": 7,
+            "square_mm": 15.0,
+            "marker_mm": 15.0,
+            "dict": "DICT_4X4_50",
+        },
+    )
+    assert r.status_code == 400
+
+
+def test_board_endpoint_squares_x_zero_returns_400(client: TestClient) -> None:
+    r = client.get(
+        "/api/vision/board",
+        params={
+            "format": "svg",
+            "squares_x": 0,
+            "squares_y": 7,
+            "square_mm": 20.0,
+            "marker_mm": 15.0,
+            "dict": "DICT_4X4_50",
+        },
+    )
+    assert r.status_code == 400
+
+
+def test_board_endpoint_squares_x_negative_returns_400(client: TestClient) -> None:
+    r = client.get(
+        "/api/vision/board",
+        params={
+            "format": "svg",
+            "squares_x": -3,
+            "squares_y": 7,
+            "square_mm": 20.0,
+            "marker_mm": 15.0,
+            "dict": "DICT_4X4_50",
+        },
+    )
+    assert r.status_code == 400
+
+
+def test_board_endpoint_huge_squares_rejected_fast(client: TestClient) -> None:
+    """squares_x=squares_y=300 must be rejected by validation BEFORE any cv2 board-generation
+    compute -- so this request must return 400 quickly, not burn CPU building a 300x300 board."""
+    start = time.monotonic()
+    r = client.get(
+        "/api/vision/board",
+        params={
+            "format": "svg",
+            "squares_x": 300,
+            "squares_y": 300,
+            "square_mm": 20.0,
+            "marker_mm": 15.0,
+            "dict": "DICT_4X4_50",
+        },
+    )
+    elapsed = time.monotonic() - start
+    assert r.status_code == 400
+    assert elapsed < 1.0, f"rejection took {elapsed:.2f}s -- validation did not short-circuit"
+
+
+def test_board_endpoint_valid_explicit_params_still_returns_200(client: TestClient) -> None:
+    r = client.get(
+        "/api/vision/board",
+        params={
+            "format": "svg",
+            "squares_x": 5,
+            "squares_y": 7,
+            "square_mm": 20.0,
+            "marker_mm": 15.0,
+            "dict": "DICT_4X4_50",
+        },
+    )
+    assert r.status_code == 200
+
+
 # ---- camera auto-connect + persistent role memory + quick-start (A7) ------------------------
 #
 # Both ELP cameras enumerate alike (same sensor/near-identical names), so a `device_enumerator`

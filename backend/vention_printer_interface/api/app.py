@@ -1145,6 +1145,15 @@ def create_app(
         if fmt not in ("svg", "dxf"):
             raise HTTPException(400, "format must be 'svg' or 'dxf'")
 
+        # I-1: validate BEFORE touching cv2/board_gen -- an unbounded squares_x/squares_y or a
+        # bogus dict name must never reach board generation (CPU-burn / crash risk).
+        import cv2
+        import cv2.aruco as aruco
+
+        dict_allowlist = {name for name in dir(aruco) if name.startswith("DICT_")}
+        if dict_name not in dict_allowlist:
+            raise HTTPException(400, f"unknown aruco dictionary: {dict_name!r}")
+
         try:
             if preset is not None:
                 overrides: dict[str, Any] = {}
@@ -1178,6 +1187,15 @@ def create_app(
         except KeyError as exc:
             raise HTTPException(400, f"unknown preset: {preset!r}") from exc
 
+        # Range/consistency validation on the FINAL resolved spec (covers both the explicit
+        # path and a preset with overrides) -- still before any cv2 board-generation compute.
+        if not (1 <= spec.squares_x <= 40):
+            raise HTTPException(400, "squares_x must be between 1 and 40")
+        if not (1 <= spec.squares_y <= 40):
+            raise HTTPException(400, "squares_y must be between 1 and 40")
+        if not (0 < spec.marker_length_mm < spec.square_length_mm):
+            raise HTTPException(400, "marker_mm must be > 0 and less than square_mm")
+
         polarity = "black" if engrave_black else "white"
         try:
             if fmt == "svg":
@@ -1192,7 +1210,7 @@ def create_app(
                     },
                 )
             dxf = generate_charuco_dxf(spec, engrave_black=engrave_black, label=label)
-        except (ValueError, AttributeError) as exc:
+        except (ValueError, AttributeError, TypeError, cv2.error) as exc:
             raise HTTPException(400, f"invalid board spec: {exc}") from exc
         return Response(
             content=dxf,
