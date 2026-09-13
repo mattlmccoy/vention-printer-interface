@@ -72,6 +72,27 @@ def warp_to_bed(
     return result
 
 
+def calibrate_intrinsics(
+    object_points: list[np.ndarray],
+    image_points: list[np.ndarray],
+    image_size: tuple[int, int],
+) -> tuple[np.ndarray, np.ndarray, float]:
+    """Calibrate camera intrinsics + distortion from multiple planar-target views.
+
+    `object_points`/`image_points` are one array per view of matched 3D (mm,
+    typically Z=0 on a planar target) / 2D (px) correspondences, as consumed
+    by `cv2.calibrateCamera`. Returns `(camera_matrix, dist_coeffs, rms)`.
+    """
+    import cv2
+
+    obj = [np.asarray(pts, np.float32) for pts in object_points]
+    img = [np.asarray(pts, np.float32) for pts in image_points]
+    rms, k_matrix, dist_coeffs, _rvecs, _tvecs = cv2.calibrateCamera(
+        obj, img, image_size, None, None
+    )
+    return k_matrix, dist_coeffs, float(rms)
+
+
 @dataclass
 class Calibration:
     """Persisted bed-plane calibration. Field names are a stable on-disk contract.

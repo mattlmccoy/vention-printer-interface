@@ -5,6 +5,7 @@ import numpy as np
 
 from vention_printer_interface.vision.registration import (
     Calibration,
+    calibrate_intrinsics,
     compute_homography,
     load_calibration,
     register_frame,
@@ -134,3 +135,37 @@ def test_load_calibration_back_compat_without_intrinsics(tmp_path, caplog):
     assert loaded.image_size is None
     assert loaded.validation == {}
     assert any("intrinsics" in rec.message.lower() for rec in caplog.records)
+
+
+def test_calibrate_intrinsics_recovers_known_camera_matrix():
+    import cv2
+
+    k_true = np.array([[900.0, 0.0, 320.0], [0.0, 900.0, 240.0], [0.0, 0.0, 1.0]])
+    dist_true = np.zeros(5)
+    image_size = (640, 480)
+
+    grid_x, grid_y = np.meshgrid(np.arange(7, dtype=float), np.arange(5, dtype=float))
+    object_pts = np.stack([grid_x.ravel(), grid_y.ravel(), np.zeros(grid_x.size)], axis=1) * 20.0
+
+    poses = [
+        (np.array([0.1, -0.2, 0.05]), np.array([-60.0, -40.0, 400.0])),
+        (np.array([-0.15, 0.1, 0.1]), np.array([-50.0, -30.0, 450.0])),
+        (np.array([0.05, 0.15, -0.1]), np.array([-70.0, -50.0, 420.0])),
+        (np.array([0.2, 0.0, 0.0]), np.array([-40.0, -35.0, 380.0])),
+    ]
+
+    object_points = []
+    image_points = []
+    for rvec, tvec in poses:
+        projected, _ = cv2.projectPoints(object_pts, rvec, tvec, k_true, dist_true)
+        image_points.append(projected.reshape(-1, 2))
+        object_points.append(object_pts.astype(np.float32))
+
+    k_computed, dist_computed, rms = calibrate_intrinsics(object_points, image_points, image_size)
+
+    assert rms < 1.0
+    assert np.isclose(k_computed[0, 0], k_true[0, 0], rtol=0.05)
+    assert np.isclose(k_computed[1, 1], k_true[1, 1], rtol=0.05)
+    assert np.isclose(k_computed[0, 2], k_true[0, 2], atol=15)
+    assert np.isclose(k_computed[1, 2], k_true[1, 2], atol=15)
+    assert dist_computed.size == 5
