@@ -2,11 +2,14 @@
 from __future__ import annotations
 
 import json
-from dataclasses import asdict, dataclass
+import logging
+from dataclasses import asdict, dataclass, field
 from pathlib import Path
 from typing import Any
 
 import numpy as np
+
+log = logging.getLogger(__name__)
 
 
 def compute_homography(image_pts: np.ndarray, world_pts_mm: np.ndarray) -> np.ndarray:
@@ -71,13 +74,23 @@ def warp_to_bed(
 
 @dataclass
 class Calibration:
-    """Persisted bed-plane calibration. Field names are a stable on-disk contract."""
+    """Persisted bed-plane calibration. Field names are a stable on-disk contract.
+
+    `camera_matrix`/`dist_coeffs`/`image_size` are optional: older (Phase-2)
+    calibration files predate the intrinsics pipeline and carry only the
+    homography fields. `load_calibration` tolerates their absence.
+    """
 
     H: np.ndarray  # noqa: N815 - fixed field name, consumed by later phases
     mm_per_px: float
     bed_extent_mm: tuple[float, float, float, float]
     version: str
     reprojection_error: float
+    camera_matrix: np.ndarray | None = None
+    dist_coeffs: np.ndarray | None = None
+    distortion_model: str = "opencv-5"
+    image_size: tuple[int, int] | None = None
+    validation: dict[str, Any] = field(default_factory=dict)
 
 
 def save_calibration(path: Path, calib: Calibration) -> None:
@@ -85,22 +98,51 @@ def save_calibration(path: Path, calib: Calibration) -> None:
     payload = asdict(calib)
     payload["H"] = calib.H.tolist()
     payload["bed_extent_mm"] = list(calib.bed_extent_mm)
+    payload["camera_matrix"] = (
+        calib.camera_matrix.tolist() if calib.camera_matrix is not None else None
+    )
+    payload["dist_coeffs"] = calib.dist_coeffs.tolist() if calib.dist_coeffs is not None else None
+    payload["image_size"] = list(calib.image_size) if calib.image_size is not None else None
     Path(path).write_text(json.dumps(payload, indent=2), encoding="utf-8")
 
 
 def load_calibration(path: Path) -> Calibration | None:
-    """Read a `Calibration` from `path`, or return None when the file is absent."""
+    """Read a `Calibration` from `path`, or return None when the file is absent.
+
+    Tolerates Phase-2 files that predate the intrinsics fields: missing keys
+    fall back to `None`/defaults and a warning is logged.
+    """
     p = Path(path)
     if not p.exists():
         return None
     payload = json.loads(p.read_text(encoding="utf-8"))
     bed_extent = payload["bed_extent_mm"]
+
+    camera_matrix_raw = payload.get("camera_matrix")
+    dist_coeffs_raw = payload.get("dist_coeffs")
+    image_size_raw = payload.get("image_size")
+    if camera_matrix_raw is None or dist_coeffs_raw is None or image_size_raw is None:
+        log.warning(
+            "calibration file %s has no intrinsics; falling back to homography-only "
+            "(back-compat with Phase-2 calibration files)",
+            p,
+        )
+
+    image_size: tuple[int, int] | None = None
+    if image_size_raw is not None:
+        image_size = (int(image_size_raw[0]), int(image_size_raw[1]))
+
     return Calibration(
         H=np.array(payload["H"]),
         mm_per_px=payload["mm_per_px"],
         bed_extent_mm=(bed_extent[0], bed_extent[1], bed_extent[2], bed_extent[3]),
         version=payload["version"],
         reprojection_error=payload["reprojection_error"],
+        camera_matrix=np.array(camera_matrix_raw) if camera_matrix_raw is not None else None,
+        dist_coeffs=np.array(dist_coeffs_raw) if dist_coeffs_raw is not None else None,
+        distortion_model=payload.get("distortion_model", "opencv-5"),
+        image_size=image_size,
+        validation=payload.get("validation") or {},
     )
 
 
