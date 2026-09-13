@@ -1,6 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { dismissQuickStart, formatCaptureMetaValue, overviewStreamUrl, panelVisible, parseCaptures, setPanelVisible, shouldShowQuickStart } from "./vision.ts";
+import { calibrationReady, cameraAccessMessage, dismissQuickStart, formatCaptureMetaValue, formatValidation, overviewStreamUrl, panelVisible, parseCaptures, setPanelVisible, shouldShowQuickStart } from "./vision.ts";
 
 class Mem implements Storage {
   m = new Map<string, string>();
@@ -174,4 +174,59 @@ test("shouldShowQuickStart/dismissQuickStart tolerate a storage that throws", ()
   assert.equal(shouldShowQuickStart(status, st), true);
   assert.doesNotThrow(() => dismissQuickStart(status, st));
   assert.equal(shouldShowQuickStart(null, st), false);
+});
+
+// cameraAccessMessage (camera-permission signal from GET /api/vision/devices' camera_access,
+// see backend vention_printer_interface/vision/cameras.py's camera_access_state): the user-
+// facing string shown in place of an empty/silent device list when the OS is blocking access.
+test("cameraAccessMessage explains a denied camera and points at System Settings", () => {
+  assert.equal(
+    cameraAccessMessage("denied"),
+    "Camera permission not granted — enable it in System Settings → Privacy & Security → Camera, then rescan",
+  );
+});
+
+test("cameraAccessMessage reports no cameras detected", () => {
+  assert.match(cameraAccessMessage("no_devices"), /no camera/i);
+});
+
+test("cameraAccessMessage is empty/non-alarming when access is ok", () => {
+  assert.doesNotMatch(cameraAccessMessage("ok"), /permission|not granted|denied/i);
+});
+
+// calibrationReady (guided calibration-capture session, GET/POST /api/vision/calibrate/session):
+// n_views >= 3 (_MIN_CALIB_VIEWS in backend vention_printer_interface/api/app.py).
+test("calibrationReady is false below 3 accumulated views", () => {
+  assert.equal(calibrationReady({ n_views: 0 }), false);
+  assert.equal(calibrationReady({ n_views: 2 }), false);
+});
+
+test("calibrationReady is true at 3 or more accumulated views", () => {
+  assert.equal(calibrationReady({ n_views: 3 }), true);
+  assert.equal(calibrationReady({ n_views: 5 }), true);
+});
+
+// formatValidation (POST /api/vision/validate's {rms_mm, max_mm, scale_bias, ...} result, see
+// backend vention_printer_interface/api/app.py's vision_validate) scored against a +/-0.1mm
+// dimensional target (protocol default) — max_mm within tolerance AND scale_bias within the
+// same tolerance treated as a fraction (0.1 -> +/-10%), so a pure homography scale error (which
+// the rigid, no-scale residual fit deliberately does not absorb) still fails validation.
+test("formatValidation passes within the default 0.1mm / scale-bias tolerance", () => {
+  const result = formatValidation({ rms_mm: 0.03, max_mm: 0.08, scale_bias: 1.02 });
+  assert.deepEqual(result, { rmsMm: 0.03, maxMm: 0.08, scaleBias: 1.02, pass: true });
+});
+
+test("formatValidation fails when max_mm exceeds the tolerance", () => {
+  const result = formatValidation({ rms_mm: 0.05, max_mm: 0.15, scale_bias: 1.0 });
+  assert.equal(result.pass, false);
+});
+
+test("formatValidation fails when scale_bias drifts outside tolerance even with tiny residuals", () => {
+  const result = formatValidation({ rms_mm: 0.01, max_mm: 0.02, scale_bias: 1.2 });
+  assert.equal(result.pass, false);
+});
+
+test("formatValidation honors an explicit tolMm override", () => {
+  const result = formatValidation({ rms_mm: 0.15, max_mm: 0.15, scale_bias: 1.1 }, 0.2);
+  assert.equal(result.pass, true);
 });

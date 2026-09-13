@@ -116,6 +116,7 @@ details > .body { margin-top: 12px; }
 .kv span:nth-child(even) { font-family: var(--font-mono); text-align: right; color: var(--fg-strong); }
 .kv .warnv { color: var(--warn); }
 .kv .bad { color: var(--err); }
+.kv .good { color: var(--live); }
 .actions { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; margin-top: 26px; }
 .actions.one { grid-template-columns: 1fr; }
 button.cta { height: 52px; border: 1px solid var(--line-control); background: var(--panel); color: var(--fg-strong); font: 600 14px var(--font-mono); letter-spacing: .08em; border-radius: var(--radius); cursor: pointer; }
