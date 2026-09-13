@@ -86,6 +86,16 @@ def test_double_start_refused(tmp_path: Path) -> None:
         raise AssertionError("second start should be refused")
 
 
+def test_current_run_dir_tracks_active_run(tmp_path: Path) -> None:
+    rec = Recorder(tmp_path)
+    assert rec.current_run_dir is None
+    run = rec.start("vision")
+    assert rec.current_run_dir == run
+    assert rec.current_run_dir is not None and rec.current_run_dir.exists()
+    rec.stop()
+    assert rec.current_run_dir is None
+
+
 def test_layers_csv(tmp_path: Path) -> None:
     rec = Recorder(tmp_path)
     run = rec.start("layers")

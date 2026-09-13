@@ -103,6 +103,15 @@ class Recorder:
         self.event("recording_started", {"name": name})
         return run
 
+    @property
+    def current_run_dir(self) -> Path | None:
+        """The active run directory (already created in ``start()``), or ``None`` when idle.
+
+        Lets co-located artifacts (e.g. vision captures) write under the same run without
+        duplicating the run-naming/collision logic in ``start()``.
+        """
+        return self.active
+
     def record(self, snapshot: dict[str, Any]) -> None:
         with self._lock:
             if self.active is None or not snapshot.get("telemetry"):
