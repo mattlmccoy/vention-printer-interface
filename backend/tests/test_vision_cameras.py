@@ -5,9 +5,11 @@ from vention_printer_interface.vision.cameras import (
     CameraConfig,
     CameraSpec,
     default_backend,
+    enumerate_devices,
     load_role_map,
     resolve_roles,
     save_role_map,
+    unresolved_roles,
 )
 
 
@@ -151,3 +153,48 @@ def test_save_and_load_role_map_round_trips(tmp_path: Path):
 
 def test_load_role_map_returns_empty_dict_when_missing(tmp_path: Path):
     assert load_role_map(tmp_path / "does_not_exist.json") == {}
+
+
+# ---- unresolved_roles (A7: auto-connect + persistent roles) ---------------------------------
+def test_unresolved_roles_empty_when_both_roles_confidently_mapped():
+    """A role counts resolved only when a CURRENTLY ENUMERATED device's stable_id is present
+    in the persisted map for that role -- not merely via resolve_roles' index fallback."""
+    enumerated = [
+        {"index": 0, "stable_id": "usb-A-overview"},
+        {"index": 1, "stable_id": "usb-B-science"},
+    ]
+    mapping = {"usb-A-overview": "overview", "usb-B-science": "science"}
+    assert unresolved_roles(enumerated, mapping) == []
+
+
+def test_unresolved_roles_lists_role_when_mapping_is_empty():
+    enumerated = [
+        {"index": 0, "stable_id": "usb-unknown-0"},
+        {"index": 1, "stable_id": "usb-unknown-1"},
+    ]
+    assert unresolved_roles(enumerated, {}) == ["overview", "science"]
+
+
+def test_unresolved_roles_lists_role_when_mapped_stable_id_not_currently_plugged_in():
+    """The map knows about a device that isn't enumerated right now (swapped/unplugged) --
+    that role must be reported unresolved even though resolve_roles would still fall back to
+    an index guess for it."""
+    enumerated = [
+        {"index": 0, "stable_id": "usb-new-0"},
+        {"index": 1, "stable_id": "usb-B-science"},
+    ]
+    mapping = {"usb-old-overview": "overview", "usb-B-science": "science"}
+    assert unresolved_roles(enumerated, mapping) == ["overview"]
+
+
+def test_unresolved_roles_ignores_devices_with_no_stable_id():
+    enumerated = [{"index": 0, "stable_id": None}]
+    assert unresolved_roles(enumerated, {}) == ["overview", "science"]
+
+
+# ---- enumerate_devices (A7: real best-effort enumerator, hardware-verified not unit-tested) --
+def test_enumerate_devices_returns_a_list_and_never_raises():
+    # No camera hardware assumed present in CI; this only proves the guarded, bounded probe
+    # completes and returns a list (possibly empty) rather than raising.
+    result = enumerate_devices(max_index=1)
+    assert isinstance(result, list)

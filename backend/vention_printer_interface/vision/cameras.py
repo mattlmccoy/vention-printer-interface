@@ -11,11 +11,14 @@ enumerated device's `stable_id` is known.
 from __future__ import annotations
 
 import json
+import logging
 import os
 import platform
 from dataclasses import dataclass, replace
 from pathlib import Path
 from typing import Any
+
+log = logging.getLogger(__name__)
 
 # Finalized 2026-09-13 (spec "Cameras (finalized 2026-09-13)").
 _OVERVIEW_DEFAULTS: dict[str, Any] = {
@@ -144,6 +147,82 @@ def resolve_roles(
             stable_id=device.get("stable_id", spec.stable_id),
         )
     return resolved
+
+
+def unresolved_roles(
+    enumerated_devices: list[dict[str, Any]], mapping: dict[str, str]
+) -> list[str]:
+    """Roles ("overview"/"science") with no CURRENTLY ENUMERATED device confidently mapped.
+
+    A role counts as resolved only when some enumerated device's `stable_id` is a key in
+    `mapping` pointing at that role -- deliberately stricter than `resolve_roles`, whose index
+    fallback is a best-effort guess for opening a camera, not operator-confirmed identity. This
+    is what drives the quick-start wizard: it must appear whenever the operator has not
+    explicitly confirmed roles for the devices plugged in right now (new machine, a camera
+    swapped, or a mapped stable_id that isn't currently enumerated).
+    """
+    known_stable_ids = {
+        device["stable_id"] for device in enumerated_devices if device.get("stable_id") is not None
+    }
+    resolved: set[str] = {
+        role for stable_id, role in mapping.items() if stable_id in known_stable_ids
+    }
+    return sorted(role for role in ("overview", "science") if role not in resolved)
+
+
+def _stable_id_for_index(index: int) -> str:
+    """Best-effort per-OS stable identifier for a probed device index.
+
+    Linux exposes `/dev/v4l/by-id/*` symlinks keyed on USB vendor/product/serial, which
+    survive re-enumeration/reboot -- resolved here via `pathlib` only (no new dependency).
+    macOS/Windows have no equivalent reachable from the standard library (IOKit/WMI would need
+    an extra platform SDK dependency this project does not carry), so they fall back to the
+    enumeration index -- NOT stable across reboots/USB reorder, which is exactly why the
+    quick-start wizard exists: the operator confirms identity once and the confirmed mapping
+    (keyed on whatever stable_id this function returns) is what `unresolved_roles` trusts.
+    """
+    if platform.system() == "Linux":
+        video_dev = Path(f"/dev/video{index}")
+        by_id_dir = Path("/dev/v4l/by-id")
+        try:
+            if video_dev.exists() and by_id_dir.is_dir():
+                target = video_dev.resolve()
+                for entry in sorted(by_id_dir.iterdir()):
+                    if entry.resolve() == target:
+                        return f"v4l-by-id:{entry.name}"
+        except OSError:
+            pass  # best-effort: fall through to the index fallback below
+    return f"idx:{index}"
+
+
+def enumerate_devices(max_index: int = 4) -> list[dict[str, Any]]:
+    """Best-effort real camera enumerator: probe a small index range with `cv2.VideoCapture`.
+
+    Returns `{"index", "stable_id", "name"}` per device that opens successfully. Verified on
+    hardware, NOT exercised by unit tests (tests inject a fake `device_enumerator` into
+    `create_app` instead of calling this). Never raises -- a probe failure at one index is
+    skipped, not propagated, so a missing/locked camera can never block startup or a
+    `GET /api/vision/devices` request.
+    """
+    import cv2
+
+    backend = default_backend()
+    devices: list[dict[str, Any]] = []
+    for index in range(max_index):
+        cap = None
+        try:
+            cap = cv2.VideoCapture(index, backend)
+            if not cap.isOpened():
+                continue
+            devices.append(
+                {"index": index, "stable_id": _stable_id_for_index(index), "name": None}
+            )
+        except Exception as exc:  # noqa: BLE001 - a probe failure must never crash enumeration
+            log.warning("camera probe failed at index %d: %s", index, exc)
+        finally:
+            if cap is not None:
+                cap.release()
+    return devices
 
 
 def save_role_map(path: Path, mapping: dict[str, str]) -> None:
