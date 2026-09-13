@@ -19,9 +19,11 @@ from fastapi.testclient import TestClient
 from vention_printer_interface.api.app import create_app
 from vention_printer_interface.vision.frame_source import Frame, FrameSource, SimulatedFrameSource
 from vention_printer_interface.vision.registration import (
+    Calibration,
     apply_homography,
     load_calibration,
     register_frame,
+    save_calibration,
 )
 
 
@@ -1090,5 +1092,137 @@ def test_calibrate_finalize_without_bed_view_returns_400(tmp_path: Path) -> None
         r = c.post(
             "/api/vision/calibrate/finalize",
             json={"mm_per_px": 0.5, "bed_extent_mm": [0.0, 0.0, 120.0, 80.0]},
+        )
+        assert r.status_code == 400
+
+
+# ---- checkerboard-validation mode (/api/vision/validate) ------------------------------------
+#
+# Hardware-free: a synthetic checkerboard image + a KNOWN calibration whose bed homography
+# maps image px -> mm at a controlled scale. Case 1 (H scale == true pitch) -> tiny rms and
+# scale_bias ~= 1. Case 2 (H scale 5% high) -> scale_bias ~= 1.05 caught, while the rigid
+# (no-scale) alignment still strips the large placement offset so rms stays small.
+
+_CHECKER_VALIDATE_SPEC = {
+    "kind": "checkerboard",
+    "cols": 6,
+    "rows": 4,
+    "square_size_mm": 20.0,
+}
+_CHECKER_SQUARE_PX = 40
+_CHECKER_BORDER = 40
+_CHECKER_W = (6 + 1) * _CHECKER_SQUARE_PX + 2 * _CHECKER_BORDER  # 360
+_CHECKER_H = (4 + 1) * _CHECKER_SQUARE_PX + 2 * _CHECKER_BORDER  # 280
+
+
+def _render_checker_validate() -> np.ndarray:
+    n_cols_sq, n_rows_sq = 6 + 1, 4 + 1
+    img = np.full((_CHECKER_H, _CHECKER_W), 255, np.uint8)
+    for r in range(n_rows_sq):
+        for col in range(n_cols_sq):
+            if (r + col) % 2 == 0:
+                y0 = _CHECKER_BORDER + r * _CHECKER_SQUARE_PX
+                x0 = _CHECKER_BORDER + col * _CHECKER_SQUARE_PX
+                img[y0 : y0 + _CHECKER_SQUARE_PX, x0 : x0 + _CHECKER_SQUARE_PX] = 0
+    return img
+
+
+class _CheckerSource(FrameSource):
+    def __init__(self) -> None:
+        self._img = _render_checker_validate()
+
+    def open(self) -> None:
+        pass
+
+    def close(self) -> None:
+        pass
+
+    def grab(self) -> Frame:
+        return Frame(image=self._img.copy(), timestamp_ns=time.time_ns())
+
+
+def _save_checker_calib(path: Path, k_scale: float) -> None:
+    """Persist a calibration whose H maps px -> mm at 0.5*k_scale mm/px (+ a big mm offset)."""
+    scale = 0.5 * k_scale  # px pitch 40 -> mm pitch 20*k_scale
+    h_matrix = np.array([[scale, 0.0, 500.0], [0.0, scale, 300.0], [0.0, 0.0, 1.0]])
+    k_matrix = np.array(
+        [[1000.0, 0.0, _CHECKER_W / 2], [0.0, 1000.0, _CHECKER_H / 2], [0.0, 0.0, 1.0]]
+    )
+    calib = Calibration(
+        H=h_matrix,
+        mm_per_px=0.05,
+        bed_extent_mm=(0.0, 0.0, 400.0, 400.0),
+        version="cal-validate-test",
+        reprojection_error=0.0,
+        camera_matrix=k_matrix,
+        dist_coeffs=np.zeros(5),
+        distortion_model="opencv-5",
+        image_size=(_CHECKER_W, _CHECKER_H),
+    )
+    save_calibration(path, calib)
+
+
+def _validate_app(tmp_path: Path, source: FrameSource) -> FastAPI:
+    return create_app(
+        backend="none",
+        experiments_root=tmp_path,
+        poll_interval_s=0.05,
+        print_min_wait_s=0.1,
+        print_step_timeout_s=5.0,
+        vision_source=source,
+    )
+
+
+def test_validate_true_geometry_small_rms_and_unit_scale_bias(tmp_path: Path) -> None:
+    _save_checker_calib(tmp_path / ".vision_calibration.json", k_scale=1.0)
+    app = _validate_app(tmp_path, _CheckerSource())
+    with TestClient(app) as c:
+        r = c.post(
+            "/api/vision/validate",
+            json={"spec": _CHECKER_VALIDATE_SPEC, "square_size_mm": 20.0},
+        )
+        assert r.status_code == 200
+        out = r.json()
+        assert out["n_points"] == 24
+        assert len(out["per_point"]) == 24
+        assert out["rms_mm"] < 0.5
+        assert out["scale_bias"] == pytest.approx(1.0, abs=0.01)
+
+
+def test_validate_catches_scale_error_after_alignment_removes_offset(tmp_path: Path) -> None:
+    """A 5% scale error must show up in scale_bias (a scaled fit would hide it), while the
+    rigid no-scale alignment still strips the large placement offset so rms stays small."""
+    _save_checker_calib(tmp_path / ".vision_calibration.json", k_scale=1.05)
+    app = _validate_app(tmp_path, _CheckerSource())
+    with TestClient(app) as c:
+        r = c.post(
+            "/api/vision/validate",
+            json={"spec": _CHECKER_VALIDATE_SPEC, "square_size_mm": 20.0},
+        )
+        assert r.status_code == 200
+        out = r.json()
+        assert out["scale_bias"] == pytest.approx(1.05, abs=0.01)  # scale error CAUGHT
+        # the ~580 mm placement offset is removed by the rigid fit; only the scale residual
+        # (0.05 * field radius) remains, well under the raw un-aligned distance.
+        assert out["rms_mm"] < 3.0
+
+
+def test_validate_returns_400_without_calibration(tmp_path: Path) -> None:
+    app = _validate_app(tmp_path, _CheckerSource())  # no calibration file saved
+    with TestClient(app) as c:
+        r = c.post(
+            "/api/vision/validate",
+            json={"spec": _CHECKER_VALIDATE_SPEC, "square_size_mm": 20.0},
+        )
+        assert r.status_code == 400
+
+
+def test_validate_returns_400_when_board_not_detected(tmp_path: Path) -> None:
+    _save_checker_calib(tmp_path / ".vision_calibration.json", k_scale=1.0)
+    app = _validate_app(tmp_path, _BlankSource())  # blank frame -> no checkerboard
+    with TestClient(app) as c:
+        r = c.post(
+            "/api/vision/validate",
+            json={"spec": _CHECKER_VALIDATE_SPEC, "square_size_mm": 20.0},
         )
         assert r.status_code == 400

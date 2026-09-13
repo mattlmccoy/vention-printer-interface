@@ -80,6 +80,7 @@ from vention_printer_interface.vision.registration import (
     detect_board,
     load_calibration,
     reprojection_error,
+    rigid_transform_2d,
     save_calibration,
     undistort_points,
     validate_dimensions,
@@ -290,6 +291,27 @@ _DEFAULT_CALIB_SPEC = BoardSpec(
     marker_length_mm=15.0,
     aruco_dict="DICT_4X4_50",
 )
+
+
+def _grid_scale_bias(
+    known_mm: np.ndarray, measured_mm: np.ndarray, pitch_mm: float
+) -> float:
+    """Ratio (measured mean pitch / certified pitch) over adjacent grid corner pairs.
+
+    Adjacency is taken from the KNOWN grid (pairs one pitch apart); the measured distance of
+    those same pairs is averaged. This is deliberately independent of the rigid alignment so a
+    scale error that a scaled fit would hide is still surfaced (protocol §5.1, Analysis B).
+    """
+    known = np.asarray(known_mm, float)
+    measured = np.asarray(measured_mm, float)
+    n = len(known)
+    iu, ju = np.triu_indices(n, k=1)
+    known_d = np.sqrt(((known[iu] - known[ju]) ** 2).sum(axis=1))
+    adjacent = np.abs(known_d - pitch_mm) < 0.25 * pitch_mm
+    if not np.any(adjacent):
+        return float("nan")
+    measured_d = np.sqrt(((measured[iu[adjacent]] - measured[ju[adjacent]]) ** 2).sum(axis=1))
+    return float(measured_d.mean() / pitch_mm)
 
 
 def _board_spec(body: BoardSpecBody) -> BoardSpec:
@@ -1490,6 +1512,70 @@ def create_app(
             "reprojection_error": err,
             "calibration_version": version,
             "n_views": len(views),
+        }
+
+    # ---- checkerboard-validation mode --------------------------------------------------------
+    @app.post("/api/vision/validate")
+    def vision_validate(body: VisionValidateBody) -> dict[str, Any]:
+        """Validate dimensional accuracy against a certified checkerboard (protocol §5).
+
+        Maps detected corners to bed-mm via point correspondences (undistort_points ->
+        apply_homography on the CURRENT calibration, never off the warped raster), rigidly
+        aligns (rotation + translation, NO scale) the measured points onto the known grid so
+        residuals are not dominated by placement offset, then scores with validate_dimensions.
+        A SEPARATE scale_bias (measured mean pitch / certified pitch) is returned so a scale
+        error — which the no-scale fit deliberately does not absorb — is still caught.
+        """
+        vision = vision_service()
+        calib: Calibration | None = vision.calibration if vision is not None else None
+        if calib is None:
+            raise HTTPException(400, "no calibration loaded; calibrate before validating")
+
+        spec = _board_spec(body.spec)
+        if spec.kind != "checkerboard":
+            raise HTTPException(400, "validate requires a checkerboard spec")
+        if spec.square_size_mm <= 0:
+            raise HTTPException(400, "spec.square_size_mm must be > 0")
+        if body.square_size_mm <= 0:
+            raise HTTPException(400, "square_size_mm (certified pitch) must be > 0")
+
+        source = science_source()
+        if source is None:
+            raise HTTPException(503, "no science camera available")
+        try:
+            frame = source.grab_fresh()
+        except Exception as exc:  # noqa: BLE001 - a grab failure must not 500 the request
+            raise HTTPException(400, f"frame grab failed: {exc}") from exc
+
+        detection = detect_board(frame.image, spec)
+        if detection is None:
+            raise HTTPException(400, "checkerboard not detected in frame")
+
+        # Corners -> bed mm via point correspondences (undistort, then H on undistorted px).
+        img_pts = np.asarray(detection.image_points, dtype=float)
+        if calib.camera_matrix is not None:
+            dist = calib.dist_coeffs if calib.dist_coeffs is not None else np.zeros(5)
+            img_pts = undistort_points(img_pts, calib.camera_matrix, dist)
+        measured_mm = apply_homography(calib.H, img_pts)
+
+        # Known grid at the CERTIFIED pitch, in the SAME order as the detection's own object
+        # points (guaranteed paired with image_points) — avoids any corner-ordering mismatch.
+        known_mm = np.asarray(detection.object_points, dtype=float)[:, :2]
+        known_mm = known_mm * (body.square_size_mm / spec.square_size_mm)
+
+        # Rigid (no-scale) best fit of measured onto known, then score the aligned points.
+        r_mat, t_vec = rigid_transform_2d(measured_mm, known_mm)
+        aligned_mm = measured_mm @ r_mat.T + t_vec
+        scored = validate_dimensions(known_mm, aligned_mm)
+
+        scale_bias = _grid_scale_bias(known_mm, measured_mm, body.square_size_mm)
+
+        return {
+            "rms_mm": scored["rms_mm"],
+            "max_mm": scored["max_mm"],
+            "per_point": scored["points"],
+            "scale_bias": scale_bias,
+            "n_points": int(len(known_mm)),
         }
 
     @app.get("/api/vision/captures")

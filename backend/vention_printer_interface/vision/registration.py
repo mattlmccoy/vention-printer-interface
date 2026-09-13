@@ -305,6 +305,32 @@ def build_bed_remap(
     return map1, map2
 
 
+def rigid_transform_2d(src: np.ndarray, dst: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
+    """Best-fit rigid transform (rotation + translation, NO scale) mapping `src` onto `dst`.
+
+    Kabsch/Umeyama with scale DISABLED: returns `(R, t)` (a 2x2 proper rotation and a
+    length-2 translation) minimizing ``sum ||R @ src_i + t - dst_i||^2``. Apply to row-vector
+    point arrays as ``aligned = src @ R.T + t``.
+
+    Scale is intentionally not a free parameter: for dimensional QA a real scale error must
+    survive into the residual (so a separate scale gate can catch it) rather than be absorbed
+    by the fit. See the dimensional-validation protocol, Section 5.1 (Analysis A).
+    """
+    src_a = np.asarray(src, float)
+    dst_a = np.asarray(dst, float)
+    mu_src = src_a.mean(axis=0)
+    mu_dst = dst_a.mean(axis=0)
+    src_c = src_a - mu_src
+    dst_c = dst_a - mu_dst
+    cov = src_c.T @ dst_c
+    u_mat, _s, vt_mat = np.linalg.svd(cov)
+    d = np.sign(np.linalg.det(vt_mat.T @ u_mat.T))
+    correction = np.diag([1.0, d])
+    r_mat = vt_mat.T @ correction @ u_mat.T
+    t_vec = mu_dst - r_mat @ mu_src
+    return r_mat, t_vec
+
+
 def validate_dimensions(
     known_points_mm: np.ndarray, measured_points_mm: np.ndarray
 ) -> dict[str, Any]:

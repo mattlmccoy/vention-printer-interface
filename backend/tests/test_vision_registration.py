@@ -15,6 +15,7 @@ from vention_printer_interface.vision.registration import (
     load_calibration,
     register_frame,
     reprojection_error,
+    rigid_transform_2d,
     save_calibration,
     undistort_image,
     undistort_points,
@@ -463,3 +464,38 @@ def test_detect_board_blank_returns_none():
     blank = np.full((500, 700), 255, np.uint8)
     assert detect_board(blank, _CHARUCO_SPEC) is None
     assert detect_board(blank, _CHECKER_SPEC) is None
+
+
+# --- rigid (rotation+translation, NO scale) best-fit helper (validation alignment) ---
+
+
+def test_rigid_transform_2d_recovers_known_rotation_and_translation():
+    rng = np.random.default_rng(0)
+    src = rng.uniform(-50.0, 50.0, (12, 2))
+    theta = 0.3
+    r_true = np.array([[np.cos(theta), -np.sin(theta)], [np.sin(theta), np.cos(theta)]])
+    t_true = np.array([10.0, -5.0])
+    dst = src @ r_true.T + t_true
+
+    r_fit, t_fit = rigid_transform_2d(src, dst)
+
+    assert np.allclose(r_fit, r_true, atol=1e-6)
+    assert np.allclose(t_fit, t_true, atol=1e-6)
+    aligned = src @ r_fit.T + t_fit
+    assert np.allclose(aligned, dst, atol=1e-6)
+
+
+def test_rigid_transform_2d_does_not_absorb_scale():
+    """A no-scale fit must leave a scale error in the residual (so a scale gate can catch it),
+    and its rotation must stay a proper orthonormal rotation (det +1, no scale baked in)."""
+    rng = np.random.default_rng(1)
+    src = rng.uniform(-50.0, 50.0, (20, 2))
+    dst = src * 1.10  # pure scale about the origin
+
+    r_fit, t_fit = rigid_transform_2d(src, dst)
+
+    assert np.allclose(r_fit @ r_fit.T, np.eye(2), atol=1e-6)
+    assert np.isclose(np.linalg.det(r_fit), 1.0, atol=1e-6)
+    aligned = src @ r_fit.T + t_fit
+    residual = np.sqrt(((aligned - dst) ** 2).sum(axis=1)).mean()
+    assert residual > 1.0  # scale NOT removed by a rigid fit
