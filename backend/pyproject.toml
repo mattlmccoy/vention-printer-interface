@@ -12,7 +12,7 @@ dependencies = [
   "paho-mqtt>=2.1",
   "pillow>=10",
   "numpy>=1.26",
-  "opencv-python-headless>=4.9",
+  "opencv-contrib-python-headless>=4.9",
 ]
 
 [project.optional-dependencies]
