@@ -5,7 +5,7 @@ import json
 import logging
 from dataclasses import asdict, dataclass, field
 from pathlib import Path
-from typing import Any
+from typing import Any, Literal
 
 import numpy as np
 
@@ -89,6 +89,155 @@ def calibrate_intrinsics(
     img = [np.asarray(pts, np.float32) for pts in image_points]
     rms, k_matrix, dist_coeffs, _rvecs, _tvecs = cv2.calibrateCamera(
         obj, img, image_size, None, None
+    )
+    return k_matrix, dist_coeffs, float(rms)
+
+
+@dataclass(frozen=True)
+class BoardSpec:
+    """Calibration-board geometry driving detection + calibration.
+
+    Two board kinds are supported (ChArUco preferred, checkerboard allowed):
+
+    * ``"charuco"`` — uses ``squares_x``/``squares_y`` (number of chessboard
+      SQUARES per side, the ``cv2.aruco.CharucoBoard`` convention),
+      ``square_length_mm``, ``marker_length_mm``, and ``aruco_dict`` (a
+      predefined-dictionary NAME, e.g. ``"DICT_4X4_50"``). The recoverable
+      chessboard-corner count is ``(squares_x - 1) * (squares_y - 1)``.
+    * ``"checkerboard"`` — uses ``cols``/``rows`` = the number of INNER corners
+      per side (the ``cv2.findChessboardCorners`` convention, so the printed
+      board has ``cols + 1`` by ``rows + 1`` squares) and ``square_size_mm``.
+    """
+
+    kind: Literal["charuco", "checkerboard"]
+    # ChArUco fields.
+    squares_x: int = 0
+    squares_y: int = 0
+    square_length_mm: float = 0.0
+    marker_length_mm: float = 0.0
+    aruco_dict: str = "DICT_4X4_50"
+    # Checkerboard fields (cols/rows = number of INNER corners).
+    cols: int = 0
+    rows: int = 0
+    square_size_mm: float = 0.0
+
+
+@dataclass
+class BoardDetection:
+    """One view's detected board correspondences.
+
+    ``image_points`` is ``Nx2`` float pixel coordinates; ``object_points`` is
+    the matching ``Nx3`` float board coordinates in mm (Z=0, planar target);
+    ``ids`` is ``Nx1`` int ChArUco corner ids, or ``None`` for a checkerboard
+    (whose corners are dense and unlabelled).
+    """
+
+    image_points: np.ndarray
+    object_points: np.ndarray
+    ids: np.ndarray | None = None
+
+
+def _aruco_dictionary(spec: BoardSpec) -> Any:
+    """Build the predefined ``cv2.aruco`` dictionary named by ``spec.aruco_dict``."""
+    import cv2.aruco as aruco
+
+    return aruco.getPredefinedDictionary(getattr(aruco, spec.aruco_dict))
+
+
+def _charuco_board(spec: BoardSpec) -> Any:
+    """Build the ``cv2.aruco.CharucoBoard`` object described by ``spec``."""
+    import cv2.aruco as aruco
+
+    return aruco.CharucoBoard(
+        (spec.squares_x, spec.squares_y),
+        spec.square_length_mm,
+        spec.marker_length_mm,
+        _aruco_dictionary(spec),
+    )
+
+
+def _to_gray(image: np.ndarray) -> np.ndarray:
+    """Return a single-channel uint8 view of ``image`` (BGR->gray if needed)."""
+    import cv2
+
+    if image.ndim == 3:
+        gray: np.ndarray = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
+        return gray
+    return image
+
+
+def _checkerboard_object_points(spec: BoardSpec) -> np.ndarray:
+    """Planar (Z=0) mm object points for a ``cols x rows`` inner-corner grid."""
+    grid = np.zeros((spec.rows * spec.cols, 3), np.float32)
+    xy = np.mgrid[0 : spec.cols, 0 : spec.rows].T.reshape(-1, 2)
+    grid[:, :2] = xy * spec.square_size_mm
+    return grid
+
+
+def detect_board(image: np.ndarray, spec: BoardSpec) -> BoardDetection | None:
+    """Detect a calibration board in ``image``.
+
+    Returns a ``BoardDetection`` on success, or ``None`` when no board is found
+    (e.g. a blank frame) — never raises on an empty image. Checkerboard uses
+    ``findChessboardCorners`` + ``cornerSubPix``; ChArUco uses the new-API
+    ``CharucoDetector.detectBoard`` and ``CharucoBoard.matchImagePoints``.
+    """
+    import cv2
+
+    gray = _to_gray(image)
+
+    if spec.kind == "checkerboard":
+        found, corners = cv2.findChessboardCorners(gray, (spec.cols, spec.rows))
+        if not found or corners is None:
+            return None
+        criteria = (cv2.TERM_CRITERIA_EPS + cv2.TERM_CRITERIA_MAX_ITER, 30, 1e-3)
+        refined = cv2.cornerSubPix(gray, corners, (5, 5), (-1, -1), criteria)
+        image_points = np.asarray(refined, np.float32).reshape(-1, 2)
+        return BoardDetection(
+            image_points=image_points,
+            object_points=_checkerboard_object_points(spec),
+            ids=None,
+        )
+
+    import cv2.aruco as aruco
+
+    board = _charuco_board(spec)
+    detector = aruco.CharucoDetector(board)
+    charuco_corners, charuco_ids, _marker_corners, _marker_ids = detector.detectBoard(gray)
+    if charuco_corners is None or charuco_ids is None or len(charuco_corners) < 4:
+        return None
+    object_points, image_points = board.matchImagePoints(charuco_corners, charuco_ids)
+    if object_points is None or image_points is None or len(object_points) < 4:
+        return None
+    return BoardDetection(
+        image_points=np.asarray(image_points, np.float32).reshape(-1, 2),
+        object_points=np.asarray(object_points, np.float32).reshape(-1, 3),
+        ids=np.asarray(charuco_ids, np.int32).reshape(-1, 1),
+    )
+
+
+def calibrate_intrinsics_boards(
+    views: list[BoardDetection],
+    spec: BoardSpec,
+    image_size: tuple[int, int],
+) -> tuple[np.ndarray, np.ndarray, float]:
+    """Calibrate intrinsics + distortion from per-view board detections.
+
+    ``views`` is a list of ``BoardDetection`` (one per calibration frame);
+    ``image_size`` is ``(width, height)`` in pixels. Both board kinds resolve to
+    per-view object/image correspondences fed to ``cv2.calibrateCamera`` (the
+    new-API replacement for the removed ``calibrateCameraCharuco``). Returns
+    ``(camera_matrix, dist_coeffs, rms)``.
+    """
+    import cv2
+
+    if not views:
+        raise ValueError("calibrate_intrinsics_boards requires at least one view")
+
+    object_points = [np.asarray(v.object_points, np.float32).reshape(-1, 1, 3) for v in views]
+    image_points = [np.asarray(v.image_points, np.float32).reshape(-1, 1, 2) for v in views]
+    rms, k_matrix, dist_coeffs, _rvecs, _tvecs = cv2.calibrateCamera(
+        object_points, image_points, image_size, None, None
     )
     return k_matrix, dist_coeffs, float(rms)
 

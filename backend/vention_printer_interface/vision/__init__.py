@@ -20,11 +20,15 @@ from vention_printer_interface.vision.frame_source import (
 )
 from vention_printer_interface.vision.overview import encode_jpeg, mjpeg_chunk
 from vention_printer_interface.vision.registration import (
+    BoardDetection,
+    BoardSpec,
     Calibration,
     apply_homography,
     build_bed_remap,
     calibrate_intrinsics,
+    calibrate_intrinsics_boards,
     compute_homography,
+    detect_board,
     load_calibration,
     register_frame,
     reprojection_error,
@@ -43,6 +47,8 @@ from vention_printer_interface.vision.store import (
 
 __all__ = [
     "CAPTURE_LABELS",
+    "BoardDetection",
+    "BoardSpec",
     "Calibration",
     "CameraConfig",
     "CameraSpec",
@@ -56,8 +62,10 @@ __all__ = [
     "apply_homography",
     "build_bed_remap",
     "calibrate_intrinsics",
+    "calibrate_intrinsics_boards",
     "capture_dir",
     "compute_homography",
+    "detect_board",
     "default_backend",
     "encode_jpeg",
     "label_to_stage",
