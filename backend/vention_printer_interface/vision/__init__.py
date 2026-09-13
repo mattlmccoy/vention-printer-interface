@@ -1,3 +1,11 @@
+from vention_printer_interface.vision.cameras import (
+    CameraConfig,
+    CameraSpec,
+    default_backend,
+    load_role_map,
+    resolve_roles,
+    save_role_map,
+)
 from vention_printer_interface.vision.capture import VisionService
 from vention_printer_interface.vision.events import (
     CAPTURE_LABELS,
@@ -35,6 +43,8 @@ from vention_printer_interface.vision.store import (
 __all__ = [
     "CAPTURE_LABELS",
     "Calibration",
+    "CameraConfig",
+    "CameraSpec",
     "CaptureRequest",
     "Frame",
     "FrameSource",
@@ -47,12 +57,16 @@ __all__ = [
     "calibrate_intrinsics",
     "capture_dir",
     "compute_homography",
+    "default_backend",
     "label_to_stage",
     "load_calibration",
+    "load_role_map",
     "read_manifest",
     "register_frame",
     "reprojection_error",
+    "resolve_roles",
     "save_calibration",
+    "save_role_map",
     "undistort_image",
     "undistort_points",
     "validate_dimensions",
