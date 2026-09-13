@@ -143,6 +143,10 @@ class PrintSettings:
     ink_carbon_wt: float = 0.25
     ipa_dhvap_j_g: float = 663.0
     heater_section_power_w: float = 75.0
+    # When True, compile_print emits capture:pre_jet / capture:post_jet / capture:post_heat marks
+    # at bed-clear, gantry-parked points in each printing layer for the vision package (Phase 4/9)
+    # to key stage captures off of. Purely additive: no motion changes when False.
+    capture_stages: bool = True
 
     @property
     def total_thickness_mm(self) -> float:
@@ -294,6 +298,7 @@ class PrintSettings:
             heater_section_power_w=_clamp(
                 num("heater_section_power_w", base.heater_section_power_w), 1e-6, 1e5
             ),
+            capture_stages=bool(d.get("capture_stages", base.capture_stages)),
         )
 
 
@@ -434,6 +439,20 @@ def compile_print(plan: PrintSettings) -> tuple[Step, ...]:
 
             # ---- printing ----
             print_layer += 1
+            if plan.capture_stages:
+                # Park the printhead at its start position (bed-clear) before jetting so the
+                # vision package's science camera has a stable, unobstructed view of the
+                # freshly-coated layer.
+                add(
+                    name,
+                    layer_no,
+                    "move_abs",
+                    PRINTHEAD,
+                    plan.printhead_start_mm,
+                    "printhead parked for capture",
+                )
+                add(name, layer_no, "wait")
+                add(name, layer_no, "mark", label="capture:pre_jet")
             # Nozzle-purge schedule (firing is external; we only DWELL at the start position so the
             # printhead can fire): every pass, once per layer, or every N printing layers.
             purge_on = plan.purge_dwell_s > 0
@@ -460,6 +479,10 @@ def compile_print(plan: PrintSettings) -> tuple[Step, ...]:
                 back = plan.printhead_home_mm if last else plan.printhead_multipass_return_mm
                 add(name, layer_no, "move_abs", PRINTHEAD, back)
                 add(name, layer_no, "wait")
+            if plan.capture_stages:
+                # Gantries are already parked here: recoater retracted home for the jet pass,
+                # printhead back home (or midpoint) after the last pass above.
+                add(name, layer_no, "mark", label="capture:post_jet")
             if plan.pre_heater_drop_mm > 0:  # drop before heating (net descent stays one layer)
                 add(name, layer_no, "move_rel", PART, plan.pre_heater_drop_mm, "pre-heater drop")
                 add(name, layer_no, "wait")
@@ -482,6 +505,10 @@ def compile_print(plan: PrintSettings) -> tuple[Step, ...]:
                 add(name, layer_no, "wait")
             add(name, layer_no, "move_abs", RECOATER, plan.recoater_end_mm)  # recoater back to end
             add(name, layer_no, "wait")
+            if plan.capture_stages:
+                # Gantries parked again: recoater back at its far/clear end, printhead still
+                # parked home from the jet pass (the heater block above only moves RECOATER/PART).
+                add(name, layer_no, "mark", label="capture:post_heat")
             add(name, layer_no, "mark", label="layer_end")
         if exhausted:
             break

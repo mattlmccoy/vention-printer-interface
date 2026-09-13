@@ -296,7 +296,12 @@ class PrintController:
                     "part_height_mm": step.part_height_mm,
                     "elapsed_s": round(now - self._started_at, 3),
                 }
-                label = "layer_started" if step.label == "layer_start" else "layer_completed"
+                if step.label and step.label.startswith("capture:"):
+                    label = step.label  # vision capture marks pass through unchanged
+                elif step.label == "layer_start":
+                    label = "layer_started"
+                else:
+                    label = "layer_completed"
                 return (label, data)
             elif step.kind == "hold":
                 return None

@@ -6,6 +6,7 @@ import { fillDepthMm, cavityFillPct, FEED_TRAVEL_MM, type FillSource } from "../
 import { WALKTHROUGH_STEPS, stepHeading } from "../../lib/walkthrough.ts";
 import { Elevation } from "../Elevation.tsx";
 import { PrimingFields, usePriming } from "../PrimingPanel.tsx";
+import { OverviewCameraPanel } from "../OverviewCameraPanel.tsx";
 import type { Call } from "./types.ts";
 
 /** Priming tab: a guided, stepped powder-loading + leveling walkthrough. A persistent live
@@ -17,7 +18,7 @@ import type { Call } from "./types.ts";
 const SW: Record<AxisNo, string> = { 1: "sw-part", 2: "sw-feed", 3: "sw-ph", 4: "sw-rc" };
 const SHORT: Record<AxisNo, string> = { 1: "build", 2: "feed", 3: "printhead", 4: "recoater" };
 
-export function PrimingView({ status, gates, call, onJob, onPrint }: { status: StatusPayload | null; gates: Gates; call: Call; onJob: () => void; onPrint: () => void }) {
+export function PrimingView({ status, gates, call, base, onJob, onPrint }: { status: StatusPayload | null; gates: Gates; call: Call; base: string; onJob: () => void; onPrint: () => void }) {
   const { p, s, invalid, edit, setEdit, save, setParam } = usePriming(call);
   const ok = gates.controllable && !gates.printActive;
   const r = status?.print ?? null;
@@ -269,6 +270,7 @@ export function PrimingView({ status, gates, call, onJob, onPrint }: { status: S
 
       <section className="diagram-col">
         <div className="h">live machine</div>
+        <OverviewCameraPanel base={base} view="priming" />
         <div className="diagram">
           <Elevation
             status={status}

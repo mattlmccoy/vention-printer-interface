@@ -7,18 +7,22 @@ Cross-origin policy is copied from FLIR/T&C: cross-origin state-changing /api/ r
 from __future__ import annotations
 
 import asyncio
+import dataclasses
 import logging
 import platform
 import socket
 import time
 from collections.abc import AsyncIterator, Callable
 from contextlib import asynccontextmanager
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
+from urllib.parse import quote
 
-from fastapi import FastAPI, HTTPException, Request, WebSocket, WebSocketDisconnect
+import numpy as np
+from fastapi import FastAPI, HTTPException, Query, Request, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import FileResponse, JSONResponse, Response
+from fastapi.responses import FileResponse, JSONResponse, Response, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 
@@ -48,6 +52,36 @@ from vention_printer_interface.device.printer import PrinterDevice
 from vention_printer_interface.jobs.store import JobInfo, JobStore, layer_png, load_job
 from vention_printer_interface.protocol import routes as r
 from vention_printer_interface.recording.recorder import Recorder
+from vention_printer_interface.vision.board_gen import (
+    generate_charuco_dxf,
+    generate_charuco_svg,
+    resolve_preset,
+)
+from vention_printer_interface.vision.cameras import (
+    CameraConfig,
+    CameraSpec,
+    enumerate_devices,
+    load_role_map,
+    resolve_roles,
+    save_role_map,
+    unresolved_roles,
+)
+from vention_printer_interface.vision.capture import VisionService
+from vention_printer_interface.vision.frame_source import FrameSource, UvcFrameSource
+from vention_printer_interface.vision.overview import OverviewStreamer
+from vention_printer_interface.vision.registration import (
+    BoardSpec,
+    Calibration,
+    apply_homography,
+    calibrate_intrinsics,
+    compute_homography,
+    load_calibration,
+    reprojection_error,
+    save_calibration,
+    undistort_points,
+    validate_dimensions,
+)
+from vention_printer_interface.vision.store import read_manifest
 
 log = logging.getLogger(__name__)
 
@@ -58,8 +92,22 @@ SAFE_METHODS = frozenset({"GET", "HEAD", "OPTIONS"})
 RUN_FILES = frozenset(
     {"telemetry.csv", "events.json", "metadata.json", "manifest.json", "layers.csv"}
 )
+VISION_FILE_MEDIA_TYPES = {".png": "image/png", ".json": "application/json"}
 _DEFAULT_FRONTEND_DIST = Path(__file__).resolve().parents[3] / "frontend" / "dist"
 DEFAULT_HEATER_IO: tuple[int, int] = (1, 0)  # UNVERIFIED: identify during commissioning
+
+
+def _vision_file_url(run: str, rel_path: str) -> str:
+    """URL for GET /api/vision/runs/{run}/file?path=<rel_path> (see that route below).
+    `rel_path` is a run-relative POSIX path such as "vision/layer_0001/post_jet.png"."""
+    return f"/api/vision/runs/{quote(run, safe='')}/file?path={quote(rel_path, safe='')}"
+
+
+def _sidecar_rel_path(registered_rel_path: str) -> str:
+    """The sidecar JSON's run-relative path for a registered image's run-relative path
+    (vision/store.py writes both `<stage>.png` and `<stage>.json` in the same directory)."""
+    stem, _, _ext = registered_rel_path.rpartition(".")
+    return f"{stem or registered_rel_path}.json"
 
 
 def install_cross_origin_policy(app: FastAPI, *, site_origin: str | None) -> None:
@@ -156,6 +204,39 @@ class JobSelectBody(BaseModel):
     path: str
 
 
+class IntrinsicsView(BaseModel):
+    object_points: list[tuple[float, float, float]]
+    image_points: list[tuple[float, float]]
+
+
+class IntrinsicsBody(BaseModel):
+    image_size: tuple[int, int]
+    views: list[IntrinsicsView]
+
+
+class CalibrationValidationBody(BaseModel):
+    image_points: list[tuple[float, float]]
+    world_points_mm: list[tuple[float, float]]
+
+
+class VisionCalibrateBody(BaseModel):
+    image_points: list[tuple[float, float]]
+    world_points_mm: list[tuple[float, float]]
+    mm_per_px: float
+    bed_extent_mm: tuple[float, float, float, float]
+    intrinsics: IntrinsicsBody | None = None
+    validation: CalibrationValidationBody | None = None
+
+
+class RoleMapBody(BaseModel):
+    """PUT /api/vision/roles body: the operator-confirmed stable_id -> role assignment."""
+
+    mapping: dict[str, str]
+
+
+_VALID_ROLES = {"overview", "science"}
+
+
 def _tcp_open(ip: str, port: int, timeout_s: float = 0.5) -> bool:
     try:
         with socket.create_connection((ip, port), timeout=timeout_s):
@@ -205,9 +286,16 @@ def create_app(
     print_min_wait_s: float = 0.5,
     print_step_timeout_s: float = 120.0,
     jobs_roots: list[Path] | None = None,
+    vision_source: FrameSource | None = None,
+    overview_source: FrameSource | None = None,
+    device_enumerator: Callable[[], list[dict[str, Any]]] | None = None,
 ) -> FastAPI:
     root = experiments_root or Path.cwd() / "experiments"
     jobs = JobStore(jobs_roots or [root.parent / "jobs"])
+    camera_config = CameraConfig.from_env()
+    vision_calibration_path = root / ".vision_calibration.json"
+    vision_roles_path = root / ".vision_roles.json"
+    enumerator = device_enumerator or enumerate_devices
 
     @asynccontextmanager
     async def lifespan(app: FastAPI) -> AsyncIterator[None]:
@@ -220,6 +308,86 @@ def create_app(
         app.state.auto_run_open = False
         events = EventLog()
         events.add_sink(recorder.event)  # every event also lands in the durable run record
+
+        def _vision_sink(label: str, data: dict[str, Any]) -> None:
+            # Indirection so PUT /api/vision/roles can swap app.state.vision to a freshly
+            # (re)opened VisionService without ever registering a second EventLog sink.
+            vision = app.state.vision
+            if vision is not None:
+                vision.on_event(label, data)
+
+        events.add_sink(_vision_sink)
+
+        # Camera auto-connect + persistent role memory (A7): enumerate -> load the persisted
+        # stable_id->role map -> resolve_roles, then auto-open the mapped overview+science
+        # sources below (no per-device operator selection on a normal connect). `unresolved_roles`
+        # is deliberately stricter than resolve_roles' index fallback -- it only trusts a role
+        # whose device a currently-enumerated stable_id is CONFIRMED mapped to -- and is what
+        # GET /api/vision/status's roles_resolved/unresolved (and the quick-start wizard) gate
+        # on; auto-open itself still uses resolve_roles' best-effort fallback so a fresh machine
+        # is never left with no cameras just because roles aren't confirmed yet.
+        def refresh_role_resolution() -> dict[str, CameraSpec]:
+            try:
+                enumerated = enumerator()
+            except Exception as exc:  # noqa: BLE001 - enumeration must never block startup
+                log.warning("camera enumeration failed (%s); serving without auto-resolve", exc)
+                enumerated = []
+            mapping = load_role_map(vision_roles_path)
+            resolved = resolve_roles(enumerated, mapping, camera_config)
+            app.state.vision_enumerated_devices = enumerated
+            app.state.vision_role_map = mapping
+            app.state.vision_unresolved_roles = unresolved_roles(enumerated, mapping)
+            return resolved
+
+        # Vision: a science-camera capture worker fed by capture:* marks off the same EventLog.
+        # Guard hardware: an absent/broken camera must never block or crash app startup.
+        def open_science(spec: CameraSpec) -> None:
+            source = vision_source or UvcFrameSource(
+                spec.index, spec.width, spec.height, spec.effective_backend()
+            )
+            vision_svc = VisionService(
+                source=source,
+                run_dir_provider=lambda: recorder.current_run_dir,
+                calibration=load_calibration(vision_calibration_path),
+                camera_role="science",
+            )
+            try:
+                vision_svc.start()
+                app.state.vision = vision_svc
+            except Exception as exc:  # noqa: BLE001 - a missing/broken camera must not block startup
+                log.warning("vision service start failed (%s); serving without capture", exc)
+                app.state.vision = None
+            app.state.vision_source = source
+
+        # Overview: a separate OVERVIEW camera for the live-view stream, distinct from the
+        # science capture source above. Opened once here and shared across stream clients via
+        # one OverviewStreamer grabber thread — never opened/grabbed per-request, and never
+        # falls back to the science source (that capture is owned by the vision worker; a
+        # second reader racing its cv2.VideoCapture.read() is the I1 hazard). Guard hardware:
+        # an absent/broken overview camera must never block or crash app startup — the stream
+        # route then answers 503 instead of silently reusing the science camera.
+        def open_overview(spec: CameraSpec) -> None:
+            ov_source = overview_source or UvcFrameSource(
+                spec.index, spec.width, spec.height, spec.effective_backend()
+            )
+            app.state.overview_source = None
+            app.state.overview_streamer = None
+            try:
+                ov_source.open()
+                app.state.overview_source = ov_source
+                streamer = OverviewStreamer(ov_source)
+                streamer.start()
+                app.state.overview_streamer = streamer
+            except Exception as exc:  # noqa: BLE001 - a missing/broken overview camera must not block
+                log.warning("overview camera open failed (%s); serving without overview", exc)
+
+        app.state.vision_refresh_role_resolution = refresh_role_resolution
+        app.state.vision_open_science = open_science
+        app.state.vision_open_overview = open_overview
+
+        resolved = refresh_role_resolution()
+        open_science(resolved.get("science", camera_config.science))
+        open_overview(resolved.get("overview", camera_config.overview))
 
         def on_print_event(label: str, data: dict[str, Any]) -> None:
             events.append(label, data)
@@ -288,6 +456,12 @@ def create_app(
         try:
             yield
         finally:
+            if app.state.vision is not None:
+                app.state.vision.stop()
+            if app.state.overview_streamer is not None:
+                app.state.overview_streamer.stop()
+            if app.state.overview_source is not None:
+                app.state.overview_source.close()
             recorder.stop()
             controller.stop()
 
@@ -309,6 +483,15 @@ def create_app(
 
     def printer() -> PrintController:
         return app.state.printer  # type: ignore[no-any-return]
+
+    def vision_service() -> VisionService | None:
+        return app.state.vision  # type: ignore[no-any-return]
+
+    def overview_src() -> FrameSource | None:
+        return app.state.overview_source  # type: ignore[no-any-return]
+
+    def overview_streamer() -> OverviewStreamer | None:
+        return app.state.overview_streamer  # type: ignore[no-any-return]
 
     def ev(label: str, data: dict[str, Any] | None = None) -> None:
         app.state.events.append(label, data)
@@ -834,6 +1017,326 @@ def create_app(
         if target.parent.parent != root.resolve() or not target.exists():
             raise HTTPException(400, "bad run")
         return FileResponse(target)
+
+    # ---- vision (overview + science cameras) -------------------------------------------------
+    @app.get("/api/vision/status")
+    def vision_status() -> dict[str, Any]:
+        vision = vision_service()
+        active_roles: list[str] = []
+        if overview_src() is not None:
+            active_roles.append(camera_config.overview.role)
+        if vision is not None:
+            active_roles.append(camera_config.science.role)
+        calib: Calibration | None = vision.calibration if vision is not None else None
+        unresolved: list[str] = list(getattr(app.state, "vision_unresolved_roles", []))
+        return {
+            "cameras": active_roles,
+            "calibration": calib.version if calib is not None else None,
+            "queue": {"drops": vision.drops if vision is not None else 0},
+            "active": bool(active_roles),
+            "roles_resolved": not unresolved,
+            "unresolved": unresolved,
+        }
+
+    @app.get("/api/vision/cameras")
+    def vision_cameras() -> dict[str, Any]:
+        return {
+            "overview": dataclasses.asdict(camera_config.overview),
+            "science": dataclasses.asdict(camera_config.science),
+        }
+
+    @app.get("/api/vision/devices")
+    def vision_devices() -> list[dict[str, Any]]:
+        """Detected cameras (A7 auto-connect/quick-start): each enumerated device plus its
+        currently RESOLVED role (via `resolve_roles` against the persisted map — `None` when
+        not yet assigned) and, best-effort, a live preview URL when that role's dedicated
+        source is already open. Never touches the science source directly (I1: only the
+        overview live-view stream is safe to share across concurrent readers)."""
+        try:
+            enumerated = enumerator()
+        except Exception as exc:  # noqa: BLE001 - enumeration must never fail the request
+            log.warning("device enumeration failed (%s)", exc)
+            enumerated = []
+        mapping = load_role_map(vision_roles_path)
+        resolved = resolve_roles(enumerated, mapping, camera_config)
+        role_by_index = {spec.index: role for role, spec in resolved.items()}
+        overview_active = overview_streamer() is not None
+        devices: list[dict[str, Any]] = []
+        for device in enumerated:
+            role = role_by_index.get(int(device["index"]))
+            preview_url = (
+                "/api/vision/overview/stream" if role == "overview" and overview_active else None
+            )
+            devices.append(
+                {
+                    "index": device.get("index"),
+                    "stable_id": device.get("stable_id"),
+                    "name": device.get("name"),
+                    "role": role,
+                    "preview_url": preview_url,
+                }
+            )
+        return devices
+
+    @app.get("/api/vision/roles")
+    def vision_get_roles() -> dict[str, str]:
+        return load_role_map(vision_roles_path)
+
+    @app.put("/api/vision/roles")
+    def vision_put_roles(body: RoleMapBody) -> dict[str, Any]:
+        """Persist the operator-confirmed stable_id->role map, then (re)open the mapped
+        overview+science sources so the change takes effect immediately -- guarded end to end
+        so a role pointed at a device that isn't currently plugged in can never crash the
+        request or leave the app in a half-open state."""
+        bad_roles = sorted(set(body.mapping.values()) - _VALID_ROLES)
+        if bad_roles:
+            raise HTTPException(
+                400, f"invalid role value(s): {bad_roles!r} (must be in {sorted(_VALID_ROLES)!r})"
+            )
+        save_role_map(vision_roles_path, body.mapping)
+        resolved = app.state.vision_refresh_role_resolution()
+
+        vision = vision_service()
+        if vision is not None:
+            try:
+                vision.stop()
+            except Exception as exc:  # noqa: BLE001 - a stuck worker must not block the reopen
+                log.warning("vision service stop before reopen failed (%s)", exc)
+        app.state.vision_open_science(resolved.get("science", camera_config.science))
+
+        streamer = overview_streamer()
+        if streamer is not None:
+            try:
+                streamer.stop()
+            except Exception as exc:  # noqa: BLE001 - guarded reopen
+                log.warning("overview streamer stop before reopen failed (%s)", exc)
+        src = overview_src()
+        if src is not None:
+            try:
+                src.close()
+            except Exception as exc:  # noqa: BLE001 - guarded reopen
+                log.warning("overview source close before reopen failed (%s)", exc)
+        app.state.vision_open_overview(resolved.get("overview", camera_config.overview))
+
+        unresolved: list[str] = list(app.state.vision_unresolved_roles)
+        return {"mapping": body.mapping, "roles_resolved": not unresolved, "unresolved": unresolved}
+
+    @app.get("/api/vision/board")
+    def vision_board(
+        fmt: str = Query("svg", alias="format"),
+        kind: str = "charuco",
+        preset: str | None = None,
+        squares_x: int | None = None,
+        squares_y: int | None = None,
+        square_mm: float | None = None,
+        marker_mm: float | None = None,
+        dict_name: str = Query("DICT_4X4_50", alias="dict"),
+        engrave_black: bool = True,
+        label: bool = True,
+    ) -> Response:
+        """Generate a TRUE-VECTOR ChArUco calibration board (SVG or DXF) for laser engraving.
+
+        Either a named ``preset`` (with optional explicit field overrides) or an explicit
+        ``squares_x``/``squares_y``/``square_mm``/``marker_mm`` set must be supplied. Returns
+        the file with the right content-type + an attachment download name; 400 on bad params.
+        """
+        if kind != "charuco":
+            raise HTTPException(400, "only kind=charuco is supported")
+        if fmt not in ("svg", "dxf"):
+            raise HTTPException(400, "format must be 'svg' or 'dxf'")
+
+        # I-1: validate BEFORE touching cv2/board_gen -- an unbounded squares_x/squares_y or a
+        # bogus dict name must never reach board generation (CPU-burn / crash risk).
+        import cv2
+        import cv2.aruco as aruco
+
+        dict_allowlist = {name for name in dir(aruco) if name.startswith("DICT_")}
+        if dict_name not in dict_allowlist:
+            raise HTTPException(400, f"unknown aruco dictionary: {dict_name!r}")
+
+        try:
+            if preset is not None:
+                overrides: dict[str, Any] = {}
+                if squares_x is not None:
+                    overrides["squares_x"] = squares_x
+                if squares_y is not None:
+                    overrides["squares_y"] = squares_y
+                if square_mm is not None:
+                    overrides["square_length_mm"] = square_mm
+                if marker_mm is not None:
+                    overrides["marker_length_mm"] = marker_mm
+                if dict_name != "DICT_4X4_50":
+                    overrides["aruco_dict"] = dict_name
+                spec = resolve_preset(preset, **overrides)
+                filename_base = preset
+            else:
+                if squares_x is None or squares_y is None or square_mm is None or marker_mm is None:
+                    raise HTTPException(
+                        400,
+                        "provide a preset or all of squares_x, squares_y, square_mm, marker_mm",
+                    )
+                spec = BoardSpec(
+                    kind="charuco",
+                    squares_x=squares_x,
+                    squares_y=squares_y,
+                    square_length_mm=square_mm,
+                    marker_length_mm=marker_mm,
+                    aruco_dict=dict_name,
+                )
+                filename_base = f"charuco_{squares_x}x{squares_y}"
+        except KeyError as exc:
+            raise HTTPException(400, f"unknown preset: {preset!r}") from exc
+
+        # Range/consistency validation on the FINAL resolved spec (covers both the explicit
+        # path and a preset with overrides) -- still before any cv2 board-generation compute.
+        if not (1 <= spec.squares_x <= 40):
+            raise HTTPException(400, "squares_x must be between 1 and 40")
+        if not (1 <= spec.squares_y <= 40):
+            raise HTTPException(400, "squares_y must be between 1 and 40")
+        if not (0 < spec.marker_length_mm < spec.square_length_mm):
+            raise HTTPException(400, "marker_mm must be > 0 and less than square_mm")
+
+        polarity = "black" if engrave_black else "white"
+        try:
+            if fmt == "svg":
+                svg = generate_charuco_svg(spec, engrave_black=engrave_black, label=label)
+                return Response(
+                    content=svg,
+                    media_type="image/svg+xml",
+                    headers={
+                        "Content-Disposition": (
+                            f'attachment; filename="{filename_base}_{polarity}.svg"'
+                        )
+                    },
+                )
+            dxf = generate_charuco_dxf(spec, engrave_black=engrave_black, label=label)
+        except (ValueError, AttributeError, TypeError, cv2.error) as exc:
+            raise HTTPException(400, f"invalid board spec: {exc}") from exc
+        return Response(
+            content=dxf,
+            media_type="application/dxf",
+            headers={
+                "Content-Disposition": f'attachment; filename="{filename_base}_{polarity}.dxf"'
+            },
+        )
+
+    @app.post("/api/vision/calibrate")
+    def vision_calibrate(body: VisionCalibrateBody) -> dict[str, Any]:
+        # Bed correspondence points (raw image px <-> world mm on the bed plane).
+        bed_image_pts = np.asarray(body.image_points, dtype=float)
+        bed_world_pts = np.asarray(body.world_points_mm, dtype=float)
+        version = datetime.now(UTC).strftime("cal-%Y%m%dT%H%M%SZ")
+
+        k_matrix: np.ndarray | None = None
+        dist_coeffs: np.ndarray | None = None
+        image_size: tuple[int, int] | None = None
+        intrinsics_rms: float | None = None
+
+        # Coordinate contract: when intrinsics are provided, the bed homography MUST be built on
+        # UNDISTORTED image points, so it composes with the runtime `undistort_image -> warp_to_bed`
+        # path (Calibration.H is defined on undistorted-image coordinates). Without intrinsics, keep
+        # the homography-only behavior on raw points (back-compat, camera_matrix=None).
+        if body.intrinsics is not None:
+            image_size = (int(body.intrinsics.image_size[0]), int(body.intrinsics.image_size[1]))
+            object_points = [
+                np.asarray(v.object_points, dtype=float) for v in body.intrinsics.views
+            ]
+            view_image_points = [
+                np.asarray(v.image_points, dtype=float) for v in body.intrinsics.views
+            ]
+            k_matrix, dist_coeffs, intrinsics_rms = calibrate_intrinsics(
+                object_points, view_image_points, image_size
+            )
+            bed_img_for_h = undistort_points(bed_image_pts, k_matrix, dist_coeffs)
+        else:
+            bed_img_for_h = bed_image_pts
+
+        h_matrix = compute_homography(bed_img_for_h, bed_world_pts)
+        err = reprojection_error(h_matrix, bed_img_for_h, bed_world_pts)
+
+        validation: dict[str, Any] | None = None
+        if body.validation is not None:
+            val_image_pts = np.asarray(body.validation.image_points, dtype=float)
+            val_world_pts = np.asarray(body.validation.world_points_mm, dtype=float)
+            if k_matrix is not None and dist_coeffs is not None:
+                val_image_pts = undistort_points(val_image_pts, k_matrix, dist_coeffs)
+            measured_mm = apply_homography(h_matrix, val_image_pts)
+            validation = validate_dimensions(val_world_pts, measured_mm)
+
+        calib = Calibration(
+            H=h_matrix,
+            mm_per_px=body.mm_per_px,
+            bed_extent_mm=body.bed_extent_mm,
+            version=version,
+            reprojection_error=err,
+            camera_matrix=k_matrix,
+            dist_coeffs=dist_coeffs,
+            distortion_model="opencv-5",
+            image_size=image_size,
+            validation=validation or {},
+        )
+        save_calibration(vision_calibration_path, calib)
+        vision = vision_service()
+        if vision is not None:
+            vision.set_calibration(calib)
+        return {
+            "calibration_version": version,
+            "reprojection_error": err,
+            "intrinsics_rms": intrinsics_rms,
+            "validation": validation,
+            "corrected": k_matrix is not None,
+        }
+
+    @app.get("/api/vision/captures")
+    def vision_captures(run: str) -> list[dict[str, Any]]:
+        target = (root / run).resolve()
+        if target.parent != root.resolve():
+            raise HTTPException(400, "bad run")
+        records = read_manifest(target)
+        for record in records:
+            registered = record.get("registered")
+            if isinstance(registered, str) and registered:
+                record["url"] = _vision_file_url(run, registered)
+                record["sidecar_url"] = _vision_file_url(run, _sidecar_rel_path(registered))
+        return records
+
+    @app.get("/api/vision/runs/{run}/file")
+    def vision_run_file(run: str, path: str) -> FileResponse:
+        """Serve one file from a run's vision/ subtree (registered capture image or sidecar
+        JSON). Security-critical: `path` is attacker-controlled query input, so the resolved
+        real path is checked to still be inside this run's vision/ directory before anything
+        is read from disk — this rejects `..` escapes, absolute-path overrides, and symlink
+        escapes alike (Path.resolve() follows symlinks to their real target)."""
+        run_root = (root / run).resolve()
+        if run_root.parent != root.resolve():
+            raise HTTPException(400, "bad run")
+        vision_root = run_root / "vision"
+        try:
+            vision_root_resolved = vision_root.resolve()
+        except OSError as exc:
+            raise HTTPException(404, "not found") from exc
+        try:
+            resolved = (run_root / path).resolve()
+        except OSError as exc:
+            raise HTTPException(404, "not found") from exc
+        if not resolved.is_relative_to(vision_root_resolved):
+            raise HTTPException(403, "path escapes the run's vision directory")
+        if resolved.suffix.lower() not in VISION_FILE_MEDIA_TYPES:
+            raise HTTPException(403, "unsupported file type")
+        if not resolved.is_file():
+            raise HTTPException(404, "not found")
+        return FileResponse(resolved, media_type=VISION_FILE_MEDIA_TYPES[resolved.suffix.lower()])
+
+    @app.get("/api/vision/overview/stream")
+    def vision_overview_stream() -> StreamingResponse:
+        # The dedicated OVERVIEW camera only — never the science source, which the vision
+        # worker owns and is not safe to share (I1). Absent/broken overview camera -> 503.
+        streamer = overview_streamer()
+        if streamer is None:
+            raise HTTPException(503, "no dedicated overview camera available")
+        return StreamingResponse(
+            streamer.frames(), media_type="multipart/x-mixed-replace; boundary=frame"
+        )
 
     # ---- websocket --------------------------------------------------------------------------
     @app.websocket("/ws/telemetry")

@@ -25,7 +25,11 @@ from vention_printer_interface.control.safety import SafetyLimits
 
 
 def one_layer() -> PrintSettings:
-    """Printing-only, one layer, heater on."""
+    """Printing-only, one layer, heater on.
+
+    ``capture_stages`` is disabled here so the exact-sequence-pinned tests below keep verifying
+    motion only; capture-mark behavior gets its own dedicated tests further down.
+    """
     p = PrintSettings()
     return dataclasses.replace(
         p,
@@ -33,6 +37,7 @@ def one_layer() -> PrintSettings:
         printing=dataclasses.replace(p.printing, n_layers=1),
         postcoat=dataclasses.replace(p.postcoat, n_layers=0),
         heater_enabled=True,
+        capture_stages=False,
     )
 
 
@@ -161,6 +166,7 @@ def three_printing_layers() -> PrintSettings:
         thin_precoat=dataclasses.replace(p.thin_precoat, n_layers=0),
         printing=dataclasses.replace(p.printing, n_layers=3),
         postcoat=dataclasses.replace(p.postcoat, n_layers=0),
+        capture_stages=False,
     )
 
 
@@ -535,6 +541,71 @@ def test_layer_numbers_and_heights_over_a_full_plan() -> None:
     assert heights[2] == pytest.approx(2.4)  # first printing layer (+2.0)
     # thin 0.4 + printing 2.0*10 = 20.4 mm; postcoat adds no part height
     assert heights[-1] == pytest.approx(20.4)
+
+
+# ---- (i) vision capture marks --------------------------------------------------------------------
+
+
+def test_capture_stages_defaults_to_enabled() -> None:
+    assert PrintSettings().capture_stages is True
+
+
+def test_capture_marks_emitted_at_parked_points() -> None:
+    # one_layer() disables captures for the pinned-sequence tests above; re-enable it here.
+    plan = dataclasses.replace(one_layer(), capture_stages=True)
+    steps = compile_print(plan)
+    labels = [s.label for s in steps if s.kind == "mark"]
+
+    assert labels.count("capture:pre_jet") == 1
+    assert labels.count("capture:post_jet") == 1
+    assert labels.count("capture:post_heat") == 1
+    assert (
+        labels.index("capture:pre_jet")
+        < labels.index("capture:post_jet")
+        < labels.index("capture:post_heat")
+    )
+
+    def last_move(kind_axis: int, before: int) -> float | None:
+        moves = [
+            s.value for s in steps[:before] if s.axis == kind_axis and s.kind == "move_abs"
+        ]
+        return moves[-1] if moves else None
+
+    # pre_jet: the layer is coated and the printhead is freshly parked at printhead_start_mm
+    # (bed-clear) before any jetting move — verifiable via the immediately preceding printhead
+    # move_abs.
+    i_pre_jet = next(i for i, s in enumerate(steps) if s.label == "capture:pre_jet")
+    assert last_move(PRINTHEAD, i_pre_jet) == plan.printhead_start_mm
+
+    # post_jet: gantries parked — recoater retracted home for the jet pass, printhead back home
+    # after the (single) jet pass.
+    i_post_jet = next(i for i, s in enumerate(steps) if s.label == "capture:post_jet")
+    assert last_move(RECOATER, i_post_jet) == plan.recoater_home_mm
+    assert last_move(PRINTHEAD, i_post_jet) == plan.printhead_home_mm
+
+    # post_heat: gantries parked — recoater back to its far/clear end after the heater dwell,
+    # printhead still parked home from the jet pass (heater only moves RECOATER/PART).
+    i_post_heat = next(i for i, s in enumerate(steps) if s.label == "capture:post_heat")
+    assert last_move(RECOATER, i_post_heat) == plan.recoater_end_mm
+    assert last_move(PRINTHEAD, i_post_heat) == plan.printhead_home_mm
+
+    # capture:post_heat still precedes the ordinary layer_end mark.
+    assert labels.index("capture:post_heat") < labels.index("layer_end")
+
+
+def test_capture_marks_absent_when_disabled() -> None:
+    plan = dataclasses.replace(one_layer(), capture_stages=False)
+    steps = compile_print(plan)
+    assert not any(s.label.startswith("capture:") for s in steps if s.kind == "mark")
+
+
+def test_bounded_passes_through_capture_stages() -> None:
+    # bounded() must not silently drop capture_stages back to the dataclass default (True) —
+    # an operator turning captures off via PUT /api/print-settings must have that value stick.
+    lim = SafetyLimits()
+    assert PrintSettings.bounded({"capture_stages": False}, lim).capture_stages is False
+    assert PrintSettings.bounded({"capture_stages": True}, lim).capture_stages is True
+    assert PrintSettings.bounded({}, lim).capture_stages is True  # default unchanged
 
 
 def test_estimate_duration_is_positive_and_scales_with_layers() -> None:

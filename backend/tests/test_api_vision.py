@@ -1,0 +1,900 @@
+"""API tests for /api/vision/* (Task 12/13, spec §... layerwise vision Phase 6b).
+
+Mirrors ``test_api_priming.py``'s fixture style. A ``SimulatedFrameSource`` is injected via
+``create_app(..., vision_source=...)`` so nothing here opens a real camera.
+"""
+
+from __future__ import annotations
+
+import time
+from collections.abc import Iterator
+from pathlib import Path
+from typing import Any
+
+import numpy as np
+import pytest
+from fastapi import FastAPI
+from fastapi.testclient import TestClient
+
+from vention_printer_interface.api.app import create_app
+from vention_printer_interface.vision.frame_source import Frame, FrameSource, SimulatedFrameSource
+from vention_printer_interface.vision.registration import (
+    apply_homography,
+    load_calibration,
+    register_frame,
+)
+
+
+class _FailingSource(FrameSource):
+    """Stands in for a missing/broken camera: open() always raises."""
+
+    def open(self) -> None:
+        raise RuntimeError("no camera attached")
+
+    def close(self) -> None:
+        pass
+
+    def grab(self) -> None:  # pragma: no cover - never reached
+        raise RuntimeError("no camera attached")
+
+
+class _CountingGrabSource(FrameSource):
+    """Records how many times grab() was called; never raises.
+
+    Used with the OverviewStreamer's background grabber thread, which runs continuously
+    (unlike a per-request generator, it does not stop on its own) -- so tests that inject
+    this source poll `calls` with a bounded deadline instead of driving the stream endpoint
+    to exhaustion via TestClient (Starlette's in-process TestClient fully drains a streaming
+    response before returning control to the test, so a never-ending generator would hang it;
+    see the stream-header tests below, which stop the streamer before issuing the request).
+    """
+
+    def __init__(self) -> None:
+        self.calls = 0
+
+    def open(self) -> None:
+        pass
+
+    def close(self) -> None:
+        pass
+
+    def grab(self) -> Frame:
+        self.calls += 1
+        return Frame(image=np.zeros((4, 4, 3), dtype=np.uint8), timestamp_ns=self.calls)
+
+
+@pytest.fixture
+def app_and_client(tmp_path: Path) -> Iterator[tuple[FastAPI, TestClient]]:
+    app = create_app(
+        backend="none",
+        experiments_root=tmp_path,
+        poll_interval_s=0.05,
+        print_min_wait_s=0.1,
+        print_step_timeout_s=5.0,
+        vision_source=SimulatedFrameSource(width=32, height=24),
+    )
+    with TestClient(app) as c:
+        yield app, c
+
+
+@pytest.fixture
+def client(app_and_client: tuple[FastAPI, TestClient]) -> TestClient:
+    return app_and_client[1]
+
+
+def test_vision_status_active_with_injected_source(client: TestClient) -> None:
+    r = client.get("/api/vision/status")
+    assert r.status_code == 200
+    body = r.json()
+    assert body["active"] is True
+    assert body["calibration"] is None
+    assert body["queue"] == {"drops": 0}
+    assert body["cameras"] == ["science"]
+
+
+def test_vision_status_returns_200_and_disabled_when_camera_open_fails(tmp_path: Path) -> None:
+    # Guard requirement: a camera that fails to open must never block/crash app startup.
+    app = create_app(
+        backend="none",
+        experiments_root=tmp_path,
+        poll_interval_s=0.05,
+        print_min_wait_s=0.1,
+        print_step_timeout_s=5.0,
+        vision_source=_FailingSource(),
+    )
+    with TestClient(app) as c:
+        r = c.get("/api/vision/status")
+        assert r.status_code == 200
+        body = r.json()
+        assert body["active"] is False
+        assert body["cameras"] == []
+        assert body["calibration"] is None
+        assert body["queue"] == {"drops": 0}
+
+
+def test_vision_cameras_lists_roles(client: TestClient) -> None:
+    r = client.get("/api/vision/cameras")
+    assert r.status_code == 200
+    body = r.json()
+    assert set(body) == {"overview", "science"}
+    assert body["overview"]["role"] == "overview"
+    assert body["science"]["role"] == "science"
+
+
+def test_vision_captures_empty_when_no_run(client: TestClient) -> None:
+    r = client.get("/api/vision/captures", params={"run": "no_such_run"})
+    assert r.status_code == 200
+    assert r.json() == []
+
+
+def test_vision_calibrate_computes_saves_and_hot_swaps(
+    app_and_client: tuple[FastAPI, TestClient], tmp_path: Path
+) -> None:
+    app, client = app_and_client
+    body = {
+        "image_points": [[0, 0], [10, 0], [10, 10], [0, 10]],
+        "world_points_mm": [[0, 0], [100, 0], [100, 100], [0, 100]],
+        "mm_per_px": 0.5,
+        "bed_extent_mm": [0, 0, 200, 200],
+    }
+    r = client.post("/api/vision/calibrate", json=body)
+    assert r.status_code == 200
+    out = r.json()
+    assert out["reprojection_error"] == pytest.approx(0.0, abs=1e-6)
+    assert isinstance(out["calibration_version"], str) and out["calibration_version"]
+
+    calib_path = tmp_path / ".vision_calibration.json"
+    assert calib_path.exists()
+
+    status = client.get("/api/vision/status").json()
+    assert status["calibration"] == out["calibration_version"]  # hot-swapped onto app.state.vision
+
+
+def test_vision_overview_stream_headers_when_overview_source_present(tmp_path: Path) -> None:
+    """200 + multipart/x-mixed-replace headers when a dedicated overview source is active.
+
+    The OverviewStreamer's background grabber thread runs continuously by design (I1/M6),
+    so the stream's body generator never ends on its own; Starlette's in-process TestClient
+    fully drains a streaming response before returning control to the test, so this stops
+    the streamer (app.state.overview_streamer) *before* issuing the request -- frames()
+    then returns immediately (its stop-check is the first thing the loop does), which still
+    exercises the real 200 + header path since StreamingResponse sends those before it reads
+    anything from the body iterator.
+    """
+    app = create_app(
+        backend="none",
+        experiments_root=tmp_path,
+        poll_interval_s=0.05,
+        print_min_wait_s=0.1,
+        print_step_timeout_s=5.0,
+        vision_source=SimulatedFrameSource(width=32, height=24),
+        overview_source=SimulatedFrameSource(width=8, height=8),
+    )
+    with TestClient(app) as c:
+        app.state.overview_streamer.stop()
+        r = c.get("/api/vision/overview/stream")
+        assert r.status_code == 200
+        assert r.headers["content-type"].startswith("multipart/x-mixed-replace")
+
+
+def test_vision_overview_stream_returns_503_when_no_overview_source(tmp_path: Path) -> None:
+    """No dedicated overview camera -> 503, and the science capture source is never touched
+    (I1: the old science-source fallback grabbed from the worker's own capture source, which
+    is not safe to share; it must be gone, not merely unreachable in the happy path)."""
+    science_src = _CountingGrabSource()
+    app = create_app(
+        backend="none",
+        experiments_root=tmp_path,
+        poll_interval_s=0.05,
+        print_min_wait_s=0.1,
+        print_step_timeout_s=5.0,
+        vision_source=science_src,
+        overview_source=_FailingSource(),
+    )
+    with TestClient(app) as c:
+        r = c.get("/api/vision/overview/stream")
+        assert r.status_code == 503
+        assert science_src.calls == 0
+
+
+def test_vision_overview_stream_uses_dedicated_overview_source(tmp_path: Path) -> None:
+    """The overview live view must use its own OVERVIEW camera, not the science camera.
+
+    Injects a distinct, always-succeeding overview_source alongside the science
+    vision_source and waits (bounded) for the background grabber thread to actually call
+    grab() on it, confirming the wiring reads from the dedicated overview source.
+    """
+    overview_src = _CountingGrabSource()
+    science_src = _CountingGrabSource()
+    app = create_app(
+        backend="none",
+        experiments_root=tmp_path,
+        poll_interval_s=0.05,
+        print_min_wait_s=0.1,
+        print_step_timeout_s=5.0,
+        vision_source=science_src,
+        overview_source=overview_src,
+    )
+    with TestClient(app) as c:
+        deadline = time.monotonic() + 2.0
+        while time.monotonic() < deadline and overview_src.calls == 0:
+            time.sleep(0.01)
+        assert overview_src.calls >= 1
+
+        status = c.get("/api/vision/status").json()
+        assert "overview" in status["cameras"]
+
+
+def test_vision_capture_event_writes_file_under_active_run_dir(
+    app_and_client: tuple[FastAPI, TestClient], tmp_path: Path
+) -> None:
+    app, client = app_and_client
+    r = client.post("/api/recording/start", json={"name": "vision-e2e"})
+    assert r.status_code == 200
+    run_name = r.json()["run"]
+
+    app.state.events.append(
+        "capture:post_jet", {"layer": 1, "axis_positions_mm": {"build": 0.0}}
+    )
+    app.state.vision.drain(timeout=2.0)
+
+    captured = tmp_path / run_name / "vision" / "layer_0001" / "post_jet.png"
+    assert captured.exists()
+
+    client.post("/api/recording/stop")
+
+
+def test_vision_captures_endpoint_lists_capture_after_e2e_flow(
+    app_and_client: tuple[FastAPI, TestClient], tmp_path: Path
+) -> None:
+    """Regression guard: the manifest (and therefore this endpoint) must not silently stay
+    empty after a real capture — a debug/status page reading this must never show a false
+    "no captures" when a capture actually happened (data-contract-verification false-green)."""
+    app, client = app_and_client
+    r = client.post("/api/recording/start", json={"name": "vision-captures-e2e"})
+    assert r.status_code == 200
+    run_name = r.json()["run"]
+
+    app.state.events.append(
+        "capture:post_jet", {"layer": 1, "axis_positions_mm": {"build": 0.0}}
+    )
+    app.state.vision.drain(timeout=2.0)
+    client.post("/api/recording/stop")
+
+    r = client.get("/api/vision/captures", params={"run": run_name})
+    assert r.status_code == 200
+    records = r.json()
+    assert len(records) == 1
+    assert records[0]["layer"] == 1
+    assert records[0]["stage"] == "post_jet"
+
+
+def _capture_one_run(app: FastAPI, client: TestClient, name: str) -> tuple[str, dict[str, Any]]:
+    """Shared e2e-capture helper for the file-serving tests below: starts a run, fires one
+    capture, drains it, stops the run, and returns (run_name, manifest_record)."""
+    r = client.post("/api/recording/start", json={"name": name})
+    assert r.status_code == 200
+    run_name = r.json()["run"]
+
+    app.state.events.append(
+        "capture:post_jet", {"layer": 1, "axis_positions_mm": {"build": 0.0}}
+    )
+    app.state.vision.drain(timeout=2.0)
+    client.post("/api/recording/stop")
+
+    r = client.get("/api/vision/captures", params={"run": run_name})
+    assert r.status_code == 200
+    records = r.json()
+    assert len(records) == 1
+    record: dict[str, Any] = records[0]
+    return run_name, record
+
+
+def test_vision_captures_enriches_records_with_url_and_sidecar_url(
+    app_and_client: tuple[FastAPI, TestClient],
+) -> None:
+    """The captures API must hand back ready-to-use URLs (not just a bare run-relative
+    `registered` path) so the Cameras UI can render an <img> without reconstructing a route
+    the backend doesn't actually serve."""
+    app, client = app_and_client
+    _run_name, record = _capture_one_run(app, client, "vision-url-e2e")
+
+    assert record["registered"] == "vision/layer_0001/post_jet.png"
+    assert isinstance(record.get("url"), str) and record["url"]
+    assert isinstance(record.get("sidecar_url"), str) and record["sidecar_url"]
+    assert "/api/vision/runs/" in record["url"]
+    assert "path=" in record["url"]
+
+
+def test_vision_run_file_serves_registered_image(
+    app_and_client: tuple[FastAPI, TestClient],
+) -> None:
+    app, client = app_and_client
+    _run_name, record = _capture_one_run(app, client, "vision-file-img-e2e")
+
+    r = client.get(record["url"])
+    assert r.status_code == 200
+    assert r.content[:8] == b"\x89PNG\r\n\x1a\n"  # PNG magic bytes
+    assert r.headers["content-type"] == "image/png"
+
+
+def test_vision_run_file_serves_sidecar_json(
+    app_and_client: tuple[FastAPI, TestClient],
+) -> None:
+    app, client = app_and_client
+    _run_name, record = _capture_one_run(app, client, "vision-file-json-e2e")
+
+    r = client.get(record["sidecar_url"])
+    assert r.status_code == 200
+    assert r.headers["content-type"].startswith("application/json")
+    body = r.json()
+    assert body["layer"] == 1
+    assert body["stage"] == "post_jet"
+
+
+def test_vision_run_file_rejects_path_traversal_outside_run(
+    app_and_client: tuple[FastAPI, TestClient],
+) -> None:
+    """A ../.. escape must never leak an arbitrary filesystem file (400/403, not a file)."""
+    app, client = app_and_client
+    run_name, _record = _capture_one_run(app, client, "vision-file-traversal-e2e")
+
+    r = client.get(f"/api/vision/runs/{run_name}/file", params={"path": "../../../etc/passwd"})
+    assert r.status_code in (400, 403)
+
+
+def test_vision_run_file_rejects_path_outside_vision_subtree(
+    app_and_client: tuple[FastAPI, TestClient],
+) -> None:
+    """A path that stays inside the run dir but escapes the run's vision/ subtree (e.g. the
+    run's own metadata.json, a sibling of vision/) must still be rejected — containment is
+    scoped to vision/, not merely to the run directory."""
+    app, client = app_and_client
+    run_name, _record = _capture_one_run(app, client, "vision-file-scope-e2e")
+
+    r = client.get(f"/api/vision/runs/{run_name}/file", params={"path": "metadata.json"})
+    assert r.status_code in (400, 403)
+
+
+def test_vision_run_file_rejects_absolute_path(
+    app_and_client: tuple[FastAPI, TestClient],
+) -> None:
+    app, client = app_and_client
+    run_name, _record = _capture_one_run(app, client, "vision-file-absolute-e2e")
+
+    r = client.get(f"/api/vision/runs/{run_name}/file", params={"path": "/etc/passwd"})
+    assert r.status_code in (400, 403)
+
+
+def test_vision_run_file_404_when_missing(
+    app_and_client: tuple[FastAPI, TestClient],
+) -> None:
+    app, client = app_and_client
+    run_name, _record = _capture_one_run(app, client, "vision-file-missing-e2e")
+
+    r = client.get(
+        f"/api/vision/runs/{run_name}/file",
+        params={"path": "vision/layer_0001/no_such_stage.png"},
+    )
+    assert r.status_code == 404
+
+
+# ---- intrinsics/distortion calibration (Phase 6b, /api/vision/calibrate) --------------------
+#
+# Hardware-free: all points are SYNTHESIZED from a known pinhole model (K, zero distortion)
+# via cv2.projectPoints -- no camera. With zero distortion the corrected path must reduce to
+# the homography-only path (dist=0 equivalence), which anchors the geometry contract.
+_K_TRUE = np.array([[800.0, 0.0, 320.0], [0.0, 800.0, 240.0], [0.0, 0.0, 1.0]])
+_IMAGE_SIZE = (640, 480)
+_ZERO_DIST = np.zeros(5)
+# One fixed camera pose looking at the bed plane (Z=0); the bed correspondence points are its
+# exact projection, so world(x,y) -> image is an exact planar homography.
+_BED_RVEC = np.array([0.02, -0.03, 0.01])
+_BED_TVEC = np.array([-50.0, -40.0, 500.0])
+_BED_WORLD = np.array([[0.0, 0.0], [100.0, 0.0], [100.0, 80.0], [0.0, 80.0], [50.0, 40.0]])
+_BED_EXTENT = [0.0, 0.0, 100.0, 80.0]
+_MM_PER_PX = 0.5
+
+
+def _project_bed(world_xy: np.ndarray) -> list[list[float]]:
+    """Project bed-plane world points (mm, Z=0) through the fixed bed pose + known K."""
+    import cv2
+
+    obj = np.stack(
+        [world_xy[:, 0], world_xy[:, 1], np.zeros(len(world_xy))], axis=1
+    ).astype(np.float64)
+    img, _ = cv2.projectPoints(obj, _BED_RVEC, _BED_TVEC, _K_TRUE, _ZERO_DIST)
+    result: list[list[float]] = img.reshape(-1, 2).tolist()
+    return result
+
+
+def _intrinsics_block() -> dict[str, Any]:
+    """A multi-view planar-target intrinsics block synthesized from the known K (zero dist)."""
+    import cv2
+
+    grid_x, grid_y = np.meshgrid(np.arange(7, dtype=float), np.arange(5, dtype=float))
+    target = np.stack([grid_x.ravel(), grid_y.ravel(), np.zeros(grid_x.size)], axis=1) * 20.0
+    poses = [
+        (np.array([0.1, -0.2, 0.05]), np.array([-60.0, -40.0, 400.0])),
+        (np.array([-0.15, 0.1, 0.1]), np.array([-50.0, -30.0, 450.0])),
+        (np.array([0.05, 0.15, -0.1]), np.array([-70.0, -50.0, 420.0])),
+        (np.array([0.2, 0.0, 0.0]), np.array([-40.0, -35.0, 380.0])),
+    ]
+    views: list[dict[str, Any]] = []
+    for rvec, tvec in poses:
+        proj, _ = cv2.projectPoints(target, rvec, tvec, _K_TRUE, _ZERO_DIST)
+        views.append(
+            {"object_points": target.tolist(), "image_points": proj.reshape(-1, 2).tolist()}
+        )
+    return {"image_size": list(_IMAGE_SIZE), "views": views}
+
+
+def _common_bed_body() -> dict[str, Any]:
+    """The homography-only request payload (bed correspondence + raster params)."""
+    return {
+        "image_points": _project_bed(_BED_WORLD),
+        "world_points_mm": _BED_WORLD.tolist(),
+        "mm_per_px": _MM_PER_PX,
+        "bed_extent_mm": _BED_EXTENT,
+    }
+
+
+def test_vision_calibrate_intrinsics_path_corrected_and_reaches_runtime(
+    app_and_client: tuple[FastAPI, TestClient], tmp_path: Path
+) -> None:
+    """Intrinsics provided -> distortion-corrected calibration, persisted AND live at runtime."""
+    app, client = app_and_client
+    body = {**_common_bed_body(), "intrinsics": _intrinsics_block()}
+
+    r = client.post("/api/vision/calibrate", json=body)
+    assert r.status_code == 200
+    out = r.json()
+    assert out["corrected"] is True
+    assert out["intrinsics_rms"] is not None
+    assert out["intrinsics_rms"] < 1.0
+    assert out["reprojection_error"] < 1e-3
+
+    # Persisted with a non-null camera_matrix.
+    loaded = load_calibration(tmp_path / ".vision_calibration.json")
+    assert loaded is not None
+    assert loaded.camera_matrix is not None
+    assert loaded.dist_coeffs is not None
+    assert loaded.image_size == _IMAGE_SIZE
+
+    # Proof it reached the runtime capture worker -> the corrected register path is now live.
+    assert app.state.vision.calibration is not None
+    assert app.state.vision.calibration.camera_matrix is not None
+
+
+def test_vision_calibrate_dist0_equivalence_matches_homography_only(
+    app_and_client: tuple[FastAPI, TestClient],
+) -> None:
+    """With zero distortion the corrected result must equal the homography-only result:
+    tiny reprojection error, identical bed geometry, and sub-pixel-identical registration."""
+    app, client = app_and_client
+    common = _common_bed_body()
+
+    corr_body = {**common, "intrinsics": _intrinsics_block()}
+    r_corr = client.post("/api/vision/calibrate", json=corr_body)
+    assert r_corr.status_code == 200
+    assert r_corr.json()["corrected"] is True
+    assert r_corr.json()["reprojection_error"] < 1e-3
+    cal_corrected = app.state.vision.calibration
+    h_corrected = cal_corrected.H.copy()
+
+    r_plain = client.post("/api/vision/calibrate", json=common)
+    assert r_plain.status_code == 200
+    assert r_plain.json()["corrected"] is False
+    assert r_plain.json()["reprojection_error"] < 1e-3
+    cal_plain = app.state.vision.calibration
+    h_plain = cal_plain.H.copy()
+
+    bed_img = np.asarray(common["image_points"], dtype=float)
+    # Both homographies map the bed points to the same world coords (sub-mm), and to truth.
+    world_corr = apply_homography(h_corrected, bed_img)
+    world_plain = apply_homography(h_plain, bed_img)
+    assert np.allclose(world_corr, world_plain, atol=1e-3)
+    assert np.allclose(world_corr, _BED_WORLD, atol=1e-3)
+
+    # End-to-end: the two calibrations register the same frame to the same raster (dist=0
+    # undistort is an identity map, so corrected reduces to homography-only).
+    rng = np.random.default_rng(7)
+    img = rng.integers(0, 255, (_IMAGE_SIZE[1], _IMAGE_SIZE[0], 3), dtype=np.uint8).astype(np.uint8)
+    reg_corrected, _ = register_frame(img, cal_corrected)
+    reg_plain, _ = register_frame(img, cal_plain)
+    assert reg_corrected.shape == reg_plain.shape
+    assert np.allclose(reg_corrected.astype(float), reg_plain.astype(float), atol=1.0)
+
+
+def test_vision_calibrate_without_intrinsics_is_backward_compatible(
+    app_and_client: tuple[FastAPI, TestClient], tmp_path: Path
+) -> None:
+    """No intrinsics -> homography-only, corrected=False, null camera_matrix on disk + runtime."""
+    app, client = app_and_client
+
+    r = client.post("/api/vision/calibrate", json=_common_bed_body())
+    assert r.status_code == 200
+    out = r.json()
+    assert out["corrected"] is False
+    assert out["intrinsics_rms"] is None
+    assert out["validation"] is None
+
+    loaded = load_calibration(tmp_path / ".vision_calibration.json")
+    assert loaded is not None
+    assert loaded.camera_matrix is None
+    assert loaded.dist_coeffs is None
+    assert loaded.image_size is None
+
+    assert app.state.vision.calibration is not None
+    assert app.state.vision.calibration.camera_matrix is None
+
+
+def test_vision_calibrate_validation_block_reports_small_rms(
+    app_and_client: tuple[FastAPI, TestClient],
+) -> None:
+    """A validation block (independent points) -> response validation.rms_mm present + small."""
+    app, client = app_and_client
+    val_world = np.array([[25.0, 25.0], [70.0, 55.0], [40.0, 60.0]])
+    body = {
+        **_common_bed_body(),
+        "intrinsics": _intrinsics_block(),
+        "validation": {
+            "image_points": _project_bed(val_world),
+            "world_points_mm": val_world.tolist(),
+        },
+    }
+
+    r = client.post("/api/vision/calibrate", json=body)
+    assert r.status_code == 200
+    out = r.json()
+    assert out["validation"] is not None
+    assert "rms_mm" in out["validation"]
+    assert out["validation"]["rms_mm"] < 0.1
+
+
+# ---- calibration board generator (A8, GET /api/vision/board) --------------------------------
+def test_board_endpoint_svg_preset_returns_svg_with_download_name(client: TestClient) -> None:
+    r = client.get("/api/vision/board", params={"format": "svg", "preset": "medium_5x7"})
+    assert r.status_code == 200
+    assert r.headers["content-type"].startswith("image/svg+xml")
+    assert "attachment" in r.headers["content-disposition"]
+    assert ".svg" in r.headers["content-disposition"]
+    assert r.text.lstrip().startswith("<?xml") or r.text.lstrip().startswith("<svg")
+    assert "<svg" in r.text
+
+
+def test_board_endpoint_dxf_preset_returns_dxf_with_download_name(client: TestClient) -> None:
+    r = client.get("/api/vision/board", params={"format": "dxf", "preset": "small_cylinder"})
+    assert r.status_code == 200
+    assert r.headers["content-type"] in ("application/dxf", "image/vnd.dxf")
+    assert "attachment" in r.headers["content-disposition"]
+    assert ".dxf" in r.headers["content-disposition"]
+    # DXF round-trips through ezdxf.
+    import io
+
+    import ezdxf
+
+    doc = ezdxf.read(io.StringIO(r.content.decode("utf-8")))
+    assert len(doc.modelspace().query("LWPOLYLINE")) > 0
+
+
+def test_board_endpoint_bad_preset_returns_400(client: TestClient) -> None:
+    r = client.get("/api/vision/board", params={"format": "svg", "preset": "does_not_exist"})
+    assert r.status_code == 400
+
+
+def test_board_endpoint_bad_format_returns_400(client: TestClient) -> None:
+    r = client.get("/api/vision/board", params={"format": "pdf", "preset": "medium_5x7"})
+    assert r.status_code == 400
+
+
+def test_board_endpoint_explicit_params_svg_has_exact_mm(client: TestClient) -> None:
+    r = client.get(
+        "/api/vision/board",
+        params={
+            "format": "svg",
+            "squares_x": 5,
+            "squares_y": 7,
+            "square_mm": 20.0,
+            "marker_mm": 15.0,
+            "dict": "DICT_4X4_50",
+        },
+    )
+    assert r.status_code == 200
+    # board 100x140 mm + quiet-zone margins; width/height carried in mm.
+    assert 'mm"' in r.text
+    assert 'viewBox="0 0' in r.text
+
+
+def test_board_endpoint_missing_params_and_no_preset_returns_400(client: TestClient) -> None:
+    r = client.get("/api/vision/board", params={"format": "svg"})
+    assert r.status_code == 400
+
+
+def test_board_endpoint_engrave_black_false_differs(client: TestClient) -> None:
+    base = {"format": "svg", "preset": "medium_5x7"}
+    r_true = client.get("/api/vision/board", params={**base, "engrave_black": "true"})
+    r_false = client.get("/api/vision/board", params={**base, "engrave_black": "false"})
+    assert r_true.status_code == 200 and r_false.status_code == 200
+    assert r_true.text != r_false.text
+
+
+# ---- I-1: GET /api/vision/board must validate params -> 400 (never 500 / CPU-burn) ----------
+def test_board_endpoint_dict_not_a_real_aruco_dictionary_name_returns_400(
+    client: TestClient,
+) -> None:
+    """``CharucoBoard`` is a real attribute of cv2.aruco, but not a DICT_* dictionary name --
+    the allowlist must be built from real dictionary names, not just ``hasattr``."""
+    r = client.get(
+        "/api/vision/board",
+        params={
+            "format": "svg",
+            "squares_x": 5,
+            "squares_y": 7,
+            "square_mm": 20.0,
+            "marker_mm": 15.0,
+            "dict": "CharucoBoard",
+        },
+    )
+    assert r.status_code == 400
+
+
+def test_board_endpoint_marker_mm_greater_equal_square_mm_returns_400(
+    client: TestClient,
+) -> None:
+    r = client.get(
+        "/api/vision/board",
+        params={
+            "format": "svg",
+            "squares_x": 5,
+            "squares_y": 7,
+            "square_mm": 15.0,
+            "marker_mm": 15.0,
+            "dict": "DICT_4X4_50",
+        },
+    )
+    assert r.status_code == 400
+
+
+def test_board_endpoint_squares_x_zero_returns_400(client: TestClient) -> None:
+    r = client.get(
+        "/api/vision/board",
+        params={
+            "format": "svg",
+            "squares_x": 0,
+            "squares_y": 7,
+            "square_mm": 20.0,
+            "marker_mm": 15.0,
+            "dict": "DICT_4X4_50",
+        },
+    )
+    assert r.status_code == 400
+
+
+def test_board_endpoint_squares_x_negative_returns_400(client: TestClient) -> None:
+    r = client.get(
+        "/api/vision/board",
+        params={
+            "format": "svg",
+            "squares_x": -3,
+            "squares_y": 7,
+            "square_mm": 20.0,
+            "marker_mm": 15.0,
+            "dict": "DICT_4X4_50",
+        },
+    )
+    assert r.status_code == 400
+
+
+def test_board_endpoint_huge_squares_rejected_fast(client: TestClient) -> None:
+    """squares_x=squares_y=300 must be rejected by validation BEFORE any cv2 board-generation
+    compute -- so this request must return 400 quickly, not burn CPU building a 300x300 board."""
+    start = time.monotonic()
+    r = client.get(
+        "/api/vision/board",
+        params={
+            "format": "svg",
+            "squares_x": 300,
+            "squares_y": 300,
+            "square_mm": 20.0,
+            "marker_mm": 15.0,
+            "dict": "DICT_4X4_50",
+        },
+    )
+    elapsed = time.monotonic() - start
+    assert r.status_code == 400
+    assert elapsed < 1.0, f"rejection took {elapsed:.2f}s -- validation did not short-circuit"
+
+
+def test_board_endpoint_valid_explicit_params_still_returns_200(client: TestClient) -> None:
+    r = client.get(
+        "/api/vision/board",
+        params={
+            "format": "svg",
+            "squares_x": 5,
+            "squares_y": 7,
+            "square_mm": 20.0,
+            "marker_mm": 15.0,
+            "dict": "DICT_4X4_50",
+        },
+    )
+    assert r.status_code == 200
+
+
+# ---- camera auto-connect + persistent role memory + quick-start (A7) ------------------------
+#
+# Both ELP cameras enumerate alike (same sensor/near-identical names), so a `device_enumerator`
+# is injected here -- never real hardware -- returning a fixed, stubbed device list per test.
+
+
+def _fake_devices() -> list[dict[str, Any]]:
+    return [
+        {"index": 0, "stable_id": "usb-A-overview", "name": "ELP overview"},
+        {"index": 1, "stable_id": "usb-B-science", "name": "ELP science"},
+    ]
+
+
+def _vision_app(tmp_path: Path, **overrides: Any) -> FastAPI:
+    kwargs: dict[str, Any] = {
+        "backend": "none",
+        "experiments_root": tmp_path,
+        "poll_interval_s": 0.05,
+        "print_min_wait_s": 0.1,
+        "print_step_timeout_s": 5.0,
+        "vision_source": SimulatedFrameSource(width=32, height=24),
+        "overview_source": SimulatedFrameSource(width=8, height=8),
+        "device_enumerator": _fake_devices,
+    }
+    kwargs.update(overrides)
+    return create_app(**kwargs)
+
+
+def test_vision_status_roles_resolved_true_and_both_active_with_full_role_map(
+    tmp_path: Path,
+) -> None:
+    from vention_printer_interface.vision.cameras import save_role_map
+
+    save_role_map(
+        tmp_path / ".vision_roles.json",
+        {"usb-A-overview": "overview", "usb-B-science": "science"},
+    )
+    app = _vision_app(tmp_path)
+    with TestClient(app) as c:
+        status = c.get("/api/vision/status").json()
+        assert status["roles_resolved"] is True
+        assert status["unresolved"] == []
+        assert set(status["cameras"]) == {"overview", "science"}
+
+
+def test_vision_status_roles_unresolved_when_map_missing_current_stable_ids(
+    tmp_path: Path,
+) -> None:
+    """An empty (new-machine) role map -> both roles unresolved, listed, and reported False --
+    even though the science/overview sources still auto-open via resolve_roles' index fallback
+    (auto-connect keeps working; only the *confirmed* status flips false)."""
+    app = _vision_app(tmp_path)
+    with TestClient(app) as c:
+        status = c.get("/api/vision/status").json()
+        assert status["roles_resolved"] is False
+        assert status["unresolved"] == ["overview", "science"]
+        assert set(status["cameras"]) == {"overview", "science"}
+
+
+def test_vision_devices_lists_stubbed_devices_with_resolved_roles(tmp_path: Path) -> None:
+    """The role field comes straight from `resolve_roles` (as the spec/plan direct), so an
+    unmapped device sitting at a role's configured default index still resolves via that
+    fallback -- same fallback GET /api/vision/status's `unresolved` would flag as unconfirmed."""
+    from vention_printer_interface.vision.cameras import save_role_map
+
+    save_role_map(tmp_path / ".vision_roles.json", {"usb-A-overview": "overview"})
+    app = _vision_app(tmp_path)
+    with TestClient(app) as c:
+        r = c.get("/api/vision/devices")
+        assert r.status_code == 200
+        devices = r.json()
+        assert len(devices) == 2
+        by_index = {d["index"]: d for d in devices}
+        assert by_index[0]["stable_id"] == "usb-A-overview"
+        assert by_index[0]["role"] == "overview"
+        assert by_index[1]["stable_id"] == "usb-B-science"
+        assert by_index[1]["role"] == "science"  # index-fallback resolved, not operator-confirmed
+
+
+def test_vision_roles_get_returns_persisted_map(tmp_path: Path) -> None:
+    from vention_printer_interface.vision.cameras import save_role_map
+
+    save_role_map(tmp_path / ".vision_roles.json", {"usb-A-overview": "overview"})
+    app = _vision_app(tmp_path)
+    with TestClient(app) as c:
+        r = c.get("/api/vision/roles")
+        assert r.status_code == 200
+        assert r.json() == {"usb-A-overview": "overview"}
+
+
+def test_vision_roles_get_empty_dict_when_no_map_saved_yet(tmp_path: Path) -> None:
+    app = _vision_app(tmp_path)
+    with TestClient(app) as c:
+        assert c.get("/api/vision/roles").json() == {}
+
+
+def test_vision_roles_put_persists_reopens_and_flips_roles_resolved(tmp_path: Path) -> None:
+    app = _vision_app(tmp_path)
+    with TestClient(app) as c:
+        assert c.get("/api/vision/status").json()["roles_resolved"] is False
+
+        r = c.put(
+            "/api/vision/roles",
+            json={"mapping": {"usb-A-overview": "overview", "usb-B-science": "science"}},
+        )
+        assert r.status_code == 200
+        out = r.json()
+        assert out["roles_resolved"] is True
+        assert out["unresolved"] == []
+
+        status_after = c.get("/api/vision/status").json()
+        assert status_after["roles_resolved"] is True
+        # (re)opened, guarded: both roles still report active after the PUT-triggered reopen.
+        assert set(status_after["cameras"]) == {"overview", "science"}
+
+
+def test_vision_roles_put_survives_a_recreated_app_at_the_same_root(tmp_path: Path) -> None:
+    app = _vision_app(tmp_path)
+    with TestClient(app) as c:
+        r = c.put(
+            "/api/vision/roles",
+            json={"mapping": {"usb-A-overview": "overview", "usb-B-science": "science"}},
+        )
+        assert r.status_code == 200
+
+    app2 = _vision_app(tmp_path)
+    with TestClient(app2) as c2:
+        status2 = c2.get("/api/vision/status").json()
+        assert status2["roles_resolved"] is True
+        assert set(status2["cameras"]) == {"overview", "science"}
+
+
+def test_vision_roles_put_with_unknown_device_never_crashes(tmp_path: Path) -> None:
+    """A role pointed at a stable_id that isn't (yet) plugged in must be guarded -- persisted,
+    reported unresolved for that role, but never a 500 and never crashes the reopen."""
+    app = _vision_app(tmp_path)
+    with TestClient(app) as c:
+        r = c.put(
+            "/api/vision/roles",
+            json={"mapping": {"usb-A-overview": "overview", "usb-not-plugged-in": "science"}},
+        )
+        assert r.status_code == 200
+        out = r.json()
+        assert out["roles_resolved"] is False
+        assert out["unresolved"] == ["science"]
+
+
+# ---- M-2: PUT /api/vision/roles must validate role values ------------------------------------
+def test_vision_roles_put_rejects_bad_role_value_and_persists_nothing(tmp_path: Path) -> None:
+    app = _vision_app(tmp_path)
+    with TestClient(app) as c:
+        r = c.put(
+            "/api/vision/roles",
+            json={"mapping": {"usb-A-overview": "Science"}},  # bad case
+        )
+        assert r.status_code in (400, 422)
+
+        # nothing persisted: a fresh app at the same root still sees an empty map.
+        assert c.get("/api/vision/roles").json() == {}
+
+    app2 = _vision_app(tmp_path)
+    with TestClient(app2) as c2:
+        assert c2.get("/api/vision/roles").json() == {}
+
+
+def test_vision_roles_put_still_persists_a_valid_mapping(tmp_path: Path) -> None:
+    app = _vision_app(tmp_path)
+    with TestClient(app) as c:
+        r = c.put(
+            "/api/vision/roles",
+            json={"mapping": {"usb-A-overview": "overview", "usb-B-science": "science"}},
+        )
+        assert r.status_code == 200
+        assert c.get("/api/vision/roles").json() == {
+            "usb-A-overview": "overview",
+            "usb-B-science": "science",
+        }

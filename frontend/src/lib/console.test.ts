@@ -1,6 +1,10 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { DEFAULT_CONSOLE, clampSize, loadConsole, moduleOrder, moveModule, saveConsole } from "./console.ts";
+import { DEFAULT_CONSOLE, VIEWS, clampSize, loadConsole, moduleOrder, moveModule, saveConsole } from "./console.ts";
+
+test("VIEWS registers the cameras view", () => {
+  assert.ok(VIEWS.includes("cameras"), "VIEWS must include \"cameras\" for the Cameras tab");
+});
 
 class Mem implements Storage {
   m = new Map<string, string>();

@@ -39,6 +39,38 @@ export interface PrintSettingsPayload { plan: Record<string, unknown>; validatio
 export interface AxisMotion { max_speed: number | null; max_accel: number | null; bounds: { max_speed: [number, number]; max_accel: [number, number] }; limit_speed: number; limit_accel: number }
 export interface PrimingPayload { settings: Record<string, number>; validation: string[]; n_steps: number; n_thick_precoats: number; limits: Record<string, unknown> }
 export interface PrimedPayload { primed: { part_mm: number; feed_mm: number; captured_at: number } | null }
+export interface VisionStatus { cameras: string[]; calibration: string | null; queue: { drops: number }; active: boolean; roles_resolved: boolean; unresolved: string[] }
+export interface VisionCameraSpec { role: string; index: number; path: string | null; backend: number | null; width: number | null; height: number | null }
+export interface VisionCameras { overview: VisionCameraSpec; science: VisionCameraSpec }
+// GET /api/vision/devices (A7) — see backend vention_printer_interface/api/app.py's
+// vision_devices: `role` is resolved via resolve_roles against the persisted role map (so an
+// unmapped device sitting at a role's default index can still show that role — resolved, but
+// not operator-confirmed, is exactly what `roles_resolved`/`unresolved` distinguish for).
+export interface VisionDevice { index: number; stable_id: string | null; name: string | null; role: string | null; preview_url: string | null }
+// GET/PUT /api/vision/roles body/response shape: a stable_id -> role ("overview"/"science") map.
+export type VisionRoleMap = Record<string, string>;
+export interface VisionRolesPutResult { mapping: VisionRoleMap; roles_resolved: boolean; unresolved: string[] }
+// Raw manifest record shape from GET /api/vision/captures — see backend
+// vention_printer_interface/vision/capture.py's append_manifest call (run_id..host_timestamp_ns)
+// plus the url/sidecar_url fields vention_printer_interface/api/app.py's vision_captures adds,
+// pointing at GET /api/vision/runs/{run}/file.
+export interface VisionCaptureRecord {
+  run_id: string; layer: number; stage: string; registered: string; host_timestamp_ns: number;
+  url?: string; sidecar_url?: string;
+}
+export interface VisionCalibrateBody { image_points: [number, number][]; world_points_mm: [number, number][]; mm_per_px: number; bed_extent_mm: [number, number, number, number] }
+export interface VisionCalibrateResult { reprojection_error: number; calibration_version: string }
+// The capture sidecar JSON served at a record's sidecar_url — see backend
+// vention_printer_interface/vision/store.py's _SIDECAR_TEMPLATE. Every leaf is optional/nullable:
+// a field the backend never populated for a given capture is absent or null, never invented.
+export interface VisionCaptureSidecar {
+  layer?: number | null;
+  stage?: string | null;
+  axis_positions_mm?: Record<string, number> | null;
+  capture?: { requested?: unknown; actual?: unknown } | null;
+  controls?: { exposure?: number | null; gain?: number | null } | null;
+  calibration?: { version?: string | null } | null;
+}
 
 export const api = {
   health: () => req<Health>("GET", "/api/health"),
@@ -87,4 +119,14 @@ export const api = {
   events: () => req<{ events: StatusPayload["events"] }>("GET", "/api/events"),
   autoLog: () => req<{ enabled: boolean }>("GET", "/api/auto-log"),
   setAutoLog: (enabled: boolean) => req<{ enabled: boolean }>("PUT", "/api/auto-log", { enabled }),
+  visionStatus: () => req<VisionStatus>("GET", "/api/vision/status"),
+  visionCameras: () => req<VisionCameras>("GET", "/api/vision/cameras"),
+  visionDevices: () => req<VisionDevice[]>("GET", "/api/vision/devices"),
+  visionGetRoles: () => req<VisionRoleMap>("GET", "/api/vision/roles"),
+  visionSetRoles: (mapping: VisionRoleMap) => req<VisionRolesPutResult>("PUT", "/api/vision/roles", { mapping }),
+  visionCaptures: (run: string) => req<VisionCaptureRecord[]>("GET", `/api/vision/captures?run=${encodeURIComponent(run)}`),
+  visionCalibrate: (body: VisionCalibrateBody) => req<VisionCalibrateResult>("POST", "/api/vision/calibrate", body),
+  // `url` is a backend-provided path (a record's sidecar_url from visionCaptures), already
+  // carrying its own query string — passed straight through to req(), same as every other path.
+  visionCaptureSidecar: (url: string) => req<VisionCaptureSidecar>("GET", url),
 };

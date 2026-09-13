@@ -9,6 +9,7 @@ import { MachineImage } from "../MachineImage.tsx";
 import { RoutinePanel } from "../RoutinePanel.tsx";
 import { NumberField } from "../NumberField.tsx";
 import { ModuleGrid, type Module } from "../Modules.tsx";
+import { OverviewCameraPanel } from "../OverviewCameraPanel.tsx";
 import type { Call } from "./types.ts";
 
 const SHORT: Record<AxisNo, string> = { 1: "build", 2: "feed", 3: "printhead", 4: "recoater" };
@@ -38,7 +39,7 @@ export function phrase(step: ReturnType<typeof compilePrint>[number] | null, pla
   }
 }
 
-export function PrintView({ status, gates, call, order, sizes, onOrder, onResize, onJob }: { status: StatusPayload | null; gates: Gates; call: Call; order?: string[]; sizes?: Record<string, import("../../lib/console.ts").ModuleSize>; onOrder: (ids: string[]) => void; onResize: (id: string, size: import("../../lib/console.ts").ModuleSize) => void; onJob: () => void }) {
+export function PrintView({ status, gates, call, base, order, sizes, onOrder, onResize, onJob }: { status: StatusPayload | null; gates: Gates; call: Call; base: string; order?: string[]; sizes?: Record<string, import("../../lib/console.ts").ModuleSize>; onOrder: (ids: string[]) => void; onResize: (id: string, size: import("../../lib/console.ts").ModuleSize) => void; onJob: () => void }) {
   const c = status?.controller;
   const r = status?.print;
   const t = c?.telemetry ?? null;
@@ -213,5 +214,5 @@ export function PrintView({ status, gates, call, order, sizes, onOrder, onResize
       <div className="chips" style={{ marginTop: 0 }}>{problems.map(([txt, cls]) => <span key={txt} className={`chip ${cls}`}>{txt}</span>)}{mismatch && <span className="chip warn">part height differs from the print_settings ({fmtMm(r?.part_height_mm, 1)})</span>}</div>
     ) },
   ];
-  return <div className="view modules-view"><ModuleGrid modules={modules} order={order} sizes={sizes} onOrder={onOrder} onResize={onResize} /></div>;
+  return <div className="view modules-view"><OverviewCameraPanel base={base} view="print" /><ModuleGrid modules={modules} order={order} sizes={sizes} onOrder={onOrder} onResize={onResize} /></div>;
 }

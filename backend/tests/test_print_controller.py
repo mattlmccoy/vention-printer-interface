@@ -44,6 +44,11 @@ def fast_plan(n_print: int = 1, heater: bool = True) -> PrintSettings:
         settle_s=0.05,
         feed_fast_speed=20,
         feed_fast_accel=100,
+        # These mechanics tests pin step counts/indices and drive the realtime simulator; capture
+        # stages add a long printhead park move (to printhead_start_mm) per printing layer that only
+        # slows the sim without exercising anything here. Disabled to match test_print_settings.py's
+        # pinned fixtures; capture-mark delivery has its own test below.
+        capture_stages=False,
     )
 
 
@@ -322,5 +327,33 @@ def test_part_height_measured_from_piston_zero() -> None:
         # operator's hand placement (20 mm) and of the finish's part->part_max eject.
         assert measured_at_layer and measured_at_layer[-1] == pytest.approx(1.0, abs=0.05)
         assert rc.snapshot()["part_height_mm"] == 1.0  # bookkept build height (compiler)
+    finally:
+        c.stop()
+
+
+def test_capture_marks_pass_through_to_events() -> None:
+    """Defect A: a ``capture:*`` mark must reach the EventLog with its own label, NOT remapped
+    to ``layer_completed``. This is the controller -> on_event -> EventLog path that VisionService
+    subscribes to; the existing vision e2e test appends ``capture:*`` directly and so never
+    exercised the controller's mark remap. A macro of hand-built marks isolates that remap."""
+    from vention_printer_interface.control.print_settings import Step
+
+    rc, c, _ = make()
+    events: list[tuple[str, dict[str, Any]]] = []
+    rc.on_event = lambda label, data: events.append((label, data))
+    try:
+        c.arm()
+        steps = (
+            Step(0, "printing", 1, "mark", None, None, "capture:pre_jet", 1.0),
+            Step(1, "printing", 1, "mark", None, None, "layer_end", 1.0),
+        )
+        rc.start_macro("test-capture", steps)
+        assert wait(lambda: rc.snapshot()["state"] == "done")
+        labels = [e[0] for e in events]
+        assert "capture:pre_jet" in labels  # not remapped to layer_completed
+        cap = next(d for lbl, d in events if lbl == "capture:pre_jet")
+        assert cap["layer"] == 1 and cap["phase"] == "printing"
+        # the ordinary layer_end mark still maps to layer_completed (unchanged behavior)
+        assert "layer_completed" in labels
     finally:
         c.stop()
