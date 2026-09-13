@@ -12,7 +12,7 @@ import logging
 import platform
 import socket
 import time
-from collections.abc import AsyncIterator, Callable, Iterator
+from collections.abc import AsyncIterator, Callable
 from contextlib import asynccontextmanager
 from datetime import UTC, datetime
 from pathlib import Path
@@ -55,7 +55,7 @@ from vention_printer_interface.recording.recorder import Recorder
 from vention_printer_interface.vision.cameras import CameraConfig
 from vention_printer_interface.vision.capture import VisionService
 from vention_printer_interface.vision.frame_source import FrameSource, UvcFrameSource
-from vention_printer_interface.vision.overview import encode_jpeg, mjpeg_chunk
+from vention_printer_interface.vision.overview import OverviewStreamer
 from vention_printer_interface.vision.registration import (
     Calibration,
     compute_homography,
@@ -284,17 +284,24 @@ def create_app(
         app.state.vision_source = source
 
         # Overview: a separate OVERVIEW camera for the live-view stream, distinct from the
-        # science capture source above. Opened once here and shared across stream clients —
-        # never opened per-request. Guard hardware: an absent/broken overview camera must
-        # never block or crash app startup; the stream then falls back to the science source.
+        # science capture source above. Opened once here and shared across stream clients via
+        # one OverviewStreamer grabber thread — never opened/grabbed per-request, and never
+        # falls back to the science source (that capture is owned by the vision worker; a
+        # second reader racing its cv2.VideoCapture.read() is the I1 hazard). Guard hardware:
+        # an absent/broken overview camera must never block or crash app startup — the stream
+        # route then answers 503 instead of silently reusing the science camera.
         overview = camera_config.overview
         ov_source = overview_source or UvcFrameSource(
             overview.index, overview.width, overview.height, overview.effective_backend()
         )
         app.state.overview_source = None
+        app.state.overview_streamer = None
         try:
             ov_source.open()
             app.state.overview_source = ov_source
+            streamer = OverviewStreamer(ov_source)
+            streamer.start()
+            app.state.overview_streamer = streamer
         except Exception as exc:  # noqa: BLE001 - a missing/broken overview camera must not block
             log.warning("overview camera open failed (%s); serving without overview", exc)
 
@@ -367,6 +374,8 @@ def create_app(
         finally:
             if app.state.vision is not None:
                 app.state.vision.stop()
+            if app.state.overview_streamer is not None:
+                app.state.overview_streamer.stop()
             if app.state.overview_source is not None:
                 app.state.overview_source.close()
             recorder.stop()
@@ -394,11 +403,11 @@ def create_app(
     def vision_service() -> VisionService | None:
         return app.state.vision  # type: ignore[no-any-return]
 
-    def vision_src() -> FrameSource:
-        return app.state.vision_source  # type: ignore[no-any-return]
-
     def overview_src() -> FrameSource | None:
         return app.state.overview_source  # type: ignore[no-any-return]
+
+    def overview_streamer() -> OverviewStreamer | None:
+        return app.state.overview_streamer  # type: ignore[no-any-return]
 
     def ev(label: str, data: dict[str, Any] | None = None) -> None:
         app.state.events.append(label, data)
@@ -1011,18 +1020,14 @@ def create_app(
 
     @app.get("/api/vision/overview/stream")
     def vision_overview_stream() -> StreamingResponse:
-        # Prefer the dedicated OVERVIEW camera; fall back to the science source only when no
-        # overview source is active, so single-camera dev setups still get a live view.
-        source = overview_src() or vision_src()
-        if source is None:
-            raise HTTPException(503, "no camera available for overview stream")
-
-        def gen() -> Iterator[bytes]:
-            while True:
-                frame = source.grab()
-                yield mjpeg_chunk(encode_jpeg(frame.image))
-
-        return StreamingResponse(gen(), media_type="multipart/x-mixed-replace; boundary=frame")
+        # The dedicated OVERVIEW camera only — never the science source, which the vision
+        # worker owns and is not safe to share (I1). Absent/broken overview camera -> 503.
+        streamer = overview_streamer()
+        if streamer is None:
+            raise HTTPException(503, "no dedicated overview camera available")
+        return StreamingResponse(
+            streamer.frames(), media_type="multipart/x-mixed-replace; boundary=frame"
+        )
 
     # ---- websocket --------------------------------------------------------------------------
     @app.websocket("/ws/telemetry")

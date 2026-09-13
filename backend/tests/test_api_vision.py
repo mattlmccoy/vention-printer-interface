@@ -6,6 +6,7 @@ Mirrors ``test_api_priming.py``'s fixture style. A ``SimulatedFrameSource`` is i
 
 from __future__ import annotations
 
+import time
 from collections.abc import Iterator
 from pathlib import Path
 from typing import Any
@@ -32,18 +33,19 @@ class _FailingSource(FrameSource):
         raise RuntimeError("no camera attached")
 
 
-class _OneFrameThenStopSource(FrameSource):
-    """Overview-stream test only: grab() succeeds once, then raises.
+class _CountingGrabSource(FrameSource):
+    """Records how many times grab() was called; never raises.
 
-    The real endpoint loops forever by design (multipart/x-mixed-replace never ends on its
-    own), and Starlette's in-process TestClient fully drains a streaming response before
-    returning control to the test (it does not stream progressively like a real socket
-    would) — so an unbounded source would hang the test. Raising on the second grab() bounds
-    the generator to exactly one chunk after headers, deterministically ending the response.
+    Used with the OverviewStreamer's background grabber thread, which runs continuously
+    (unlike a per-request generator, it does not stop on its own) -- so tests that inject
+    this source poll `calls` with a bounded deadline instead of driving the stream endpoint
+    to exhaustion via TestClient (Starlette's in-process TestClient fully drains a streaming
+    response before returning control to the test, so a never-ending generator would hang it;
+    see the stream-header tests below, which stop the streamer before issuing the request).
     """
 
     def __init__(self) -> None:
-        self._used = False
+        self.calls = 0
 
     def open(self) -> None:
         pass
@@ -52,10 +54,8 @@ class _OneFrameThenStopSource(FrameSource):
         pass
 
     def grab(self) -> Frame:
-        if self._used:
-            raise RuntimeError("stop after one frame (test boundary)")
-        self._used = True
-        return Frame(image=np.zeros((4, 4, 3), dtype=np.uint8), timestamp_ns=1)
+        self.calls += 1
+        return Frame(image=np.zeros((4, 4, 3), dtype=np.uint8), timestamp_ns=self.calls)
 
 
 @pytest.fixture
@@ -145,34 +145,17 @@ def test_vision_calibrate_computes_saves_and_hot_swaps(
     assert status["calibration"] == out["calibration_version"]  # hot-swapped onto app.state.vision
 
 
-def test_vision_overview_stream_headers(tmp_path: Path) -> None:
-    # Uses its own app (not the shared `client` fixture) so the deliberately-bounded source
-    # here never touches the other tests' working SimulatedFrameSource. raise_server_exceptions
-    # is disabled because the source's designed-in stop (see _OneFrameThenStopSource) surfaces
-    # as an in-stream exception after the (already-sent) 200 headers; the test only cares that
-    # those headers were correct, not that the never-ending stream ran to some "completion".
-    app = create_app(
-        backend="none",
-        experiments_root=tmp_path,
-        poll_interval_s=0.05,
-        print_min_wait_s=0.1,
-        print_step_timeout_s=5.0,
-        vision_source=_OneFrameThenStopSource(),
-    )
-    with TestClient(app, raise_server_exceptions=False) as c:
-        r = c.get("/api/vision/overview/stream")
-        assert r.status_code == 200
-        assert r.headers["content-type"].startswith("multipart/x-mixed-replace")
+def test_vision_overview_stream_headers_when_overview_source_present(tmp_path: Path) -> None:
+    """200 + multipart/x-mixed-replace headers when a dedicated overview source is active.
 
-
-def test_vision_overview_stream_uses_dedicated_overview_source(tmp_path: Path) -> None:
-    """The overview live view must use its own OVERVIEW camera, not the science camera.
-
-    Injects a distinct overview_source (bounded, per the established one-frame-then-stop
-    pattern) alongside the science vision_source, and checks the stream reads from the
-    overview source (not the science one) while status.cameras reports overview as active.
+    The OverviewStreamer's background grabber thread runs continuously by design (I1/M6),
+    so the stream's body generator never ends on its own; Starlette's in-process TestClient
+    fully drains a streaming response before returning control to the test, so this stops
+    the streamer (app.state.overview_streamer) *before* issuing the request -- frames()
+    then returns immediately (its stop-check is the first thing the loop does), which still
+    exercises the real 200 + header path since StreamingResponse sends those before it reads
+    anything from the body iterator.
     """
-    overview_src = _OneFrameThenStopSource()
     app = create_app(
         backend="none",
         experiments_root=tmp_path,
@@ -180,14 +163,58 @@ def test_vision_overview_stream_uses_dedicated_overview_source(tmp_path: Path) -
         print_min_wait_s=0.1,
         print_step_timeout_s=5.0,
         vision_source=SimulatedFrameSource(width=32, height=24),
-        overview_source=overview_src,
+        overview_source=SimulatedFrameSource(width=8, height=8),
     )
-    with TestClient(app, raise_server_exceptions=False) as c:
+    with TestClient(app) as c:
+        app.state.overview_streamer.stop()
         r = c.get("/api/vision/overview/stream")
         assert r.status_code == 200
         assert r.headers["content-type"].startswith("multipart/x-mixed-replace")
-        # The dedicated overview source's single frame must actually have been consumed.
-        assert overview_src._used is True
+
+
+def test_vision_overview_stream_returns_503_when_no_overview_source(tmp_path: Path) -> None:
+    """No dedicated overview camera -> 503, and the science capture source is never touched
+    (I1: the old science-source fallback grabbed from the worker's own capture source, which
+    is not safe to share; it must be gone, not merely unreachable in the happy path)."""
+    science_src = _CountingGrabSource()
+    app = create_app(
+        backend="none",
+        experiments_root=tmp_path,
+        poll_interval_s=0.05,
+        print_min_wait_s=0.1,
+        print_step_timeout_s=5.0,
+        vision_source=science_src,
+        overview_source=_FailingSource(),
+    )
+    with TestClient(app) as c:
+        r = c.get("/api/vision/overview/stream")
+        assert r.status_code == 503
+        assert science_src.calls == 0
+
+
+def test_vision_overview_stream_uses_dedicated_overview_source(tmp_path: Path) -> None:
+    """The overview live view must use its own OVERVIEW camera, not the science camera.
+
+    Injects a distinct, always-succeeding overview_source alongside the science
+    vision_source and waits (bounded) for the background grabber thread to actually call
+    grab() on it, confirming the wiring reads from the dedicated overview source.
+    """
+    overview_src = _CountingGrabSource()
+    science_src = _CountingGrabSource()
+    app = create_app(
+        backend="none",
+        experiments_root=tmp_path,
+        poll_interval_s=0.05,
+        print_min_wait_s=0.1,
+        print_step_timeout_s=5.0,
+        vision_source=science_src,
+        overview_source=overview_src,
+    )
+    with TestClient(app) as c:
+        deadline = time.monotonic() + 2.0
+        while time.monotonic() < deadline and overview_src.calls == 0:
+            time.sleep(0.01)
+        assert overview_src.calls >= 1
 
         status = c.get("/api/vision/status").json()
         assert "overview" in status["cameras"]

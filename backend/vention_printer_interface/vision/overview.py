@@ -87,10 +87,10 @@ class OverviewStreamer:
         last_seen: bytes | None = None
         while not self._stop.is_set():
             with self._cond:
-                self._cond.wait_for(
-                    lambda: self._stop.is_set() or self._latest_chunk is not last_seen,
-                    timeout=1.0,
-                )
+                while not self._stop.is_set() and (
+                    self._latest_chunk is None or self._latest_chunk is last_seen
+                ):
+                    self._cond.wait(timeout=1.0)
                 chunk = self._latest_chunk
             if chunk is None or chunk is last_seen:
                 continue
