@@ -235,3 +235,106 @@ def test_validate_dimensions_zero_error_for_identical_points():
 
     assert result["rms_mm"] == 0.0
     assert result["max_mm"] == 0.0
+
+
+def test_register_frame_corrected_path_matches_homography_only_when_no_distortion():
+    """With camera_matrix=eye/dist=zeros, undistort is an identity map, so the
+    corrected (undistort + warp) path must equal the homography-only path.
+    """
+    rng = np.random.default_rng(1)
+    img = rng.integers(0, 255, (64, 96, 3), dtype=np.uint8).astype(np.uint8)
+    h_matrix = np.eye(3)
+
+    calib_homography_only = Calibration(
+        H=h_matrix,
+        mm_per_px=1.0,
+        bed_extent_mm=(0.0, 0.0, 96.0, 64.0),
+        version="v1",
+        reprojection_error=0.0,
+    )
+    calib_corrected = Calibration(
+        H=h_matrix,
+        mm_per_px=1.0,
+        bed_extent_mm=(0.0, 0.0, 96.0, 64.0),
+        version="v2",
+        reprojection_error=0.0,
+        camera_matrix=np.eye(3),
+        dist_coeffs=np.zeros(5),
+        image_size=(96, 64),
+    )
+
+    registered_plain, space_plain = register_frame(img, calib_homography_only)
+    registered_corrected, space_corrected = register_frame(img, calib_corrected)
+
+    assert registered_plain.shape == registered_corrected.shape
+    assert registered_plain.dtype == registered_corrected.dtype == np.uint8
+    assert np.allclose(
+        registered_plain.astype(float), registered_corrected.astype(float), atol=1.0
+    )
+    assert space_plain == space_corrected
+
+
+def test_register_frame_passes_through_uncalibrated_distortion_field():
+    """Calibration without intrinsics (back-compat) must take the homography-only path."""
+    img = np.zeros((64, 96, 3), np.uint8)
+    calib = Calibration(
+        H=np.eye(3),
+        mm_per_px=1.0,
+        bed_extent_mm=(0.0, 0.0, 96.0, 64.0),
+        version="v1",
+        reprojection_error=0.0,
+    )
+    registered, _space = register_frame(img, calib)
+    assert calib.camera_matrix is None
+    assert registered.shape == (64, 96, 3)
+
+
+def test_register_frame_applies_undistortion_when_distortion_present():
+    """Distortion must actually be applied, not silently ignored, when calibration carries it."""
+    rng = np.random.default_rng(3)
+    img = rng.integers(0, 255, (64, 96, 3), dtype=np.uint8).astype(np.uint8)
+    k_matrix = np.array([[80.0, 0.0, 48.0], [0.0, 80.0, 32.0], [0.0, 0.0, 1.0]])
+    dist = np.array([0.15, -0.05, 0.0, 0.0, 0.0])  # meaningful barrel distortion
+    h_matrix = np.eye(3)
+    bed_extent = (0.0, 0.0, 96.0, 64.0)
+    calib = Calibration(
+        H=h_matrix,
+        mm_per_px=1.0,
+        bed_extent_mm=bed_extent,
+        version="v3",
+        reprojection_error=0.0,
+        camera_matrix=k_matrix,
+        dist_coeffs=dist,
+        image_size=(96, 64),
+    )
+
+    registered, _space = register_frame(img, calib)
+    expected = warp_to_bed(undistort_image(img, k_matrix, dist), h_matrix, 1.0, bed_extent)
+    homography_only = warp_to_bed(img, h_matrix, 1.0, bed_extent)
+
+    assert np.allclose(registered.astype(float), expected.astype(float), atol=1e-6)
+    # must differ meaningfully from the naive homography-only path -- proves
+    # distortion correction is actually exercised, not silently skipped
+    assert np.abs(registered.astype(float) - homography_only.astype(float)).mean() > 1.0
+
+
+def test_build_bed_remap_agrees_with_two_step_undistort_then_warp():
+    import cv2
+
+    rng = np.random.default_rng(2)
+    img = rng.integers(0, 255, (64, 96, 3), dtype=np.uint8).astype(np.uint8)
+    k_matrix = np.array([[80.0, 0.0, 48.0], [0.0, 80.0, 32.0], [0.0, 0.0, 1.0]])
+    dist = np.zeros(5)
+    h_matrix = np.eye(3)
+    mm_per_px = 1.0
+    bed_extent = (0.0, 0.0, 96.0, 64.0)
+
+    undistorted = undistort_image(img, k_matrix, dist)
+    two_step = warp_to_bed(undistorted, h_matrix, mm_per_px, bed_extent)
+
+    map1, map2 = build_bed_remap(k_matrix, dist, h_matrix, mm_per_px, bed_extent)
+    fused = cv2.remap(img, map1, map2, interpolation=cv2.INTER_LINEAR)
+
+    assert fused.shape == two_step.shape
+    diff = np.abs(fused.astype(float) - two_step.astype(float))
+    assert diff.mean() < 5.0

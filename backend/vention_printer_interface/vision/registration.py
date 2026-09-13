@@ -260,14 +260,22 @@ def register_frame(
 ) -> tuple[np.ndarray, dict[str, Any] | None]:
     """Register a raw frame into bed-plane coordinates, or pass it through uncalibrated.
 
-    Homography-only for now (stable call signature for the capture worker): a later
-    chunk upgrades the internals to fused undistort+homography once camera intrinsics
-    are available on `Calibration`, without changing this function's signature.
+    Stable call signature for the capture worker. When `calibration.camera_matrix`
+    is present, takes the corrected path (undistort, then homography-only warp;
+    `H` is defined on undistorted-image coordinates). Otherwise falls back to the
+    homography-only path (back-compat with Phase-2 calibration files).
     """
     if calibration is None:
         return image, None
+    if calibration.camera_matrix is not None:
+        dist_coeffs = (
+            calibration.dist_coeffs if calibration.dist_coeffs is not None else np.zeros(5)
+        )
+        source = undistort_image(image, calibration.camera_matrix, dist_coeffs)
+    else:
+        source = image
     registered = warp_to_bed(
-        image, calibration.H, calibration.mm_per_px, calibration.bed_extent_mm
+        source, calibration.H, calibration.mm_per_px, calibration.bed_extent_mm
     )
     registered_space = {
         "mm_per_px": calibration.mm_per_px,
