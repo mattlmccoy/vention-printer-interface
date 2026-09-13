@@ -8,6 +8,7 @@ from __future__ import annotations
 
 from collections.abc import Iterator
 from pathlib import Path
+from typing import Any
 
 import numpy as np
 import pytest
@@ -234,3 +235,113 @@ def test_vision_captures_endpoint_lists_capture_after_e2e_flow(
     assert len(records) == 1
     assert records[0]["layer"] == 1
     assert records[0]["stage"] == "post_jet"
+
+
+def _capture_one_run(app: FastAPI, client: TestClient, name: str) -> tuple[str, dict[str, Any]]:
+    """Shared e2e-capture helper for the file-serving tests below: starts a run, fires one
+    capture, drains it, stops the run, and returns (run_name, manifest_record)."""
+    r = client.post("/api/recording/start", json={"name": name})
+    assert r.status_code == 200
+    run_name = r.json()["run"]
+
+    app.state.events.append(
+        "capture:post_jet", {"layer": 1, "axis_positions_mm": {"build": 0.0}}
+    )
+    app.state.vision.drain(timeout=2.0)
+    client.post("/api/recording/stop")
+
+    r = client.get("/api/vision/captures", params={"run": run_name})
+    assert r.status_code == 200
+    records = r.json()
+    assert len(records) == 1
+    record: dict[str, Any] = records[0]
+    return run_name, record
+
+
+def test_vision_captures_enriches_records_with_url_and_sidecar_url(
+    app_and_client: tuple[FastAPI, TestClient],
+) -> None:
+    """The captures API must hand back ready-to-use URLs (not just a bare run-relative
+    `registered` path) so the Cameras UI can render an <img> without reconstructing a route
+    the backend doesn't actually serve."""
+    app, client = app_and_client
+    _run_name, record = _capture_one_run(app, client, "vision-url-e2e")
+
+    assert record["registered"] == "vision/layer_0001/post_jet.png"
+    assert isinstance(record.get("url"), str) and record["url"]
+    assert isinstance(record.get("sidecar_url"), str) and record["sidecar_url"]
+    assert "/api/vision/runs/" in record["url"]
+    assert "path=" in record["url"]
+
+
+def test_vision_run_file_serves_registered_image(
+    app_and_client: tuple[FastAPI, TestClient],
+) -> None:
+    app, client = app_and_client
+    _run_name, record = _capture_one_run(app, client, "vision-file-img-e2e")
+
+    r = client.get(record["url"])
+    assert r.status_code == 200
+    assert r.content[:8] == b"\x89PNG\r\n\x1a\n"  # PNG magic bytes
+    assert r.headers["content-type"] == "image/png"
+
+
+def test_vision_run_file_serves_sidecar_json(
+    app_and_client: tuple[FastAPI, TestClient],
+) -> None:
+    app, client = app_and_client
+    _run_name, record = _capture_one_run(app, client, "vision-file-json-e2e")
+
+    r = client.get(record["sidecar_url"])
+    assert r.status_code == 200
+    assert r.headers["content-type"].startswith("application/json")
+    body = r.json()
+    assert body["layer"] == 1
+    assert body["stage"] == "post_jet"
+
+
+def test_vision_run_file_rejects_path_traversal_outside_run(
+    app_and_client: tuple[FastAPI, TestClient],
+) -> None:
+    """A ../.. escape must never leak an arbitrary filesystem file (400/403, not a file)."""
+    app, client = app_and_client
+    run_name, _record = _capture_one_run(app, client, "vision-file-traversal-e2e")
+
+    r = client.get(f"/api/vision/runs/{run_name}/file", params={"path": "../../../etc/passwd"})
+    assert r.status_code in (400, 403)
+
+
+def test_vision_run_file_rejects_path_outside_vision_subtree(
+    app_and_client: tuple[FastAPI, TestClient],
+) -> None:
+    """A path that stays inside the run dir but escapes the run's vision/ subtree (e.g. the
+    run's own metadata.json, a sibling of vision/) must still be rejected — containment is
+    scoped to vision/, not merely to the run directory."""
+    app, client = app_and_client
+    run_name, _record = _capture_one_run(app, client, "vision-file-scope-e2e")
+
+    r = client.get(f"/api/vision/runs/{run_name}/file", params={"path": "metadata.json"})
+    assert r.status_code in (400, 403)
+
+
+def test_vision_run_file_rejects_absolute_path(
+    app_and_client: tuple[FastAPI, TestClient],
+) -> None:
+    app, client = app_and_client
+    run_name, _record = _capture_one_run(app, client, "vision-file-absolute-e2e")
+
+    r = client.get(f"/api/vision/runs/{run_name}/file", params={"path": "/etc/passwd"})
+    assert r.status_code in (400, 403)
+
+
+def test_vision_run_file_404_when_missing(
+    app_and_client: tuple[FastAPI, TestClient],
+) -> None:
+    app, client = app_and_client
+    run_name, _record = _capture_one_run(app, client, "vision-file-missing-e2e")
+
+    r = client.get(
+        f"/api/vision/runs/{run_name}/file",
+        params={"path": "vision/layer_0001/no_such_stage.png"},
+    )
+    assert r.status_code == 404

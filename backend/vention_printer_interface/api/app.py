@@ -17,6 +17,7 @@ from contextlib import asynccontextmanager
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
+from urllib.parse import quote
 
 import numpy as np
 from fastapi import FastAPI, HTTPException, Request, WebSocket, WebSocketDisconnect
@@ -73,8 +74,22 @@ SAFE_METHODS = frozenset({"GET", "HEAD", "OPTIONS"})
 RUN_FILES = frozenset(
     {"telemetry.csv", "events.json", "metadata.json", "manifest.json", "layers.csv"}
 )
+VISION_FILE_MEDIA_TYPES = {".png": "image/png", ".json": "application/json"}
 _DEFAULT_FRONTEND_DIST = Path(__file__).resolve().parents[3] / "frontend" / "dist"
 DEFAULT_HEATER_IO: tuple[int, int] = (1, 0)  # UNVERIFIED: identify during commissioning
+
+
+def _vision_file_url(run: str, rel_path: str) -> str:
+    """URL for GET /api/vision/runs/{run}/file?path=<rel_path> (see that route below).
+    `rel_path` is a run-relative POSIX path such as "vision/layer_0001/post_jet.png"."""
+    return f"/api/vision/runs/{quote(run, safe='')}/file?path={quote(rel_path, safe='')}"
+
+
+def _sidecar_rel_path(registered_rel_path: str) -> str:
+    """The sidecar JSON's run-relative path for a registered image's run-relative path
+    (vision/store.py writes both `<stage>.png` and `<stage>.json` in the same directory)."""
+    stem, _, _ext = registered_rel_path.rpartition(".")
+    return f"{stem or registered_rel_path}.json"
 
 
 def install_cross_origin_policy(app: FastAPI, *, site_origin: str | None) -> None:
@@ -959,7 +974,40 @@ def create_app(
         target = (root / run).resolve()
         if target.parent != root.resolve():
             raise HTTPException(400, "bad run")
-        return read_manifest(target)
+        records = read_manifest(target)
+        for record in records:
+            registered = record.get("registered")
+            if isinstance(registered, str) and registered:
+                record["url"] = _vision_file_url(run, registered)
+                record["sidecar_url"] = _vision_file_url(run, _sidecar_rel_path(registered))
+        return records
+
+    @app.get("/api/vision/runs/{run}/file")
+    def vision_run_file(run: str, path: str) -> FileResponse:
+        """Serve one file from a run's vision/ subtree (registered capture image or sidecar
+        JSON). Security-critical: `path` is attacker-controlled query input, so the resolved
+        real path is checked to still be inside this run's vision/ directory before anything
+        is read from disk — this rejects `..` escapes, absolute-path overrides, and symlink
+        escapes alike (Path.resolve() follows symlinks to their real target)."""
+        run_root = (root / run).resolve()
+        if run_root.parent != root.resolve():
+            raise HTTPException(400, "bad run")
+        vision_root = run_root / "vision"
+        try:
+            vision_root_resolved = vision_root.resolve()
+        except OSError as exc:
+            raise HTTPException(404, "not found") from exc
+        try:
+            resolved = (run_root / path).resolve()
+        except OSError as exc:
+            raise HTTPException(404, "not found") from exc
+        if not resolved.is_relative_to(vision_root_resolved):
+            raise HTTPException(403, "path escapes the run's vision directory")
+        if resolved.suffix.lower() not in VISION_FILE_MEDIA_TYPES:
+            raise HTTPException(403, "unsupported file type")
+        if not resolved.is_file():
+            raise HTTPException(404, "not found")
+        return FileResponse(resolved, media_type=VISION_FILE_MEDIA_TYPES[resolved.suffix.lower()])
 
     @app.get("/api/vision/overview/stream")
     def vision_overview_stream() -> StreamingResponse:
