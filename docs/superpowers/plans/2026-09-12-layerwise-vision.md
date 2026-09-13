@@ -10,6 +10,8 @@
 
 **Spec:** `docs/superpowers/specs/2026-09-12-layerwise-vision-design.md`
 
+> **⚠ 2026-09-13 Addendum at the end of this file supersedes the camera model and the registration approach used in the tasks below.** Finalized cameras are two ELP AR2020 modules; registration is now intrinsics + distortion + homography (not homography-only); capture must be fresh; metadata is expanded. Read the Addendum before implementing Tasks 3, 4–6 (extend), 7, 9, 11b, and Phase 8.
+
 **Reconciliation vs spec:** the spec sketched storage as `runs/<run_id>/…`; this plan nests captures under the **recorder's active run dir** (`<run_dir>/vision/layer_NNNN/<stage>.png`) so a run's telemetry/events/vision live together. When no run is active, captures write to `<experiments_root>/vision_adhoc/<ts>/…`.
 
 **Cross-platform requirement (macOS, Windows, Linux):** the operator is cross-platform (`install.sh` + `install.ps1`), and the vision module must not break that. Rules every task follows:
@@ -746,3 +748,38 @@ Not unit-testable; verify live at the machine and record results in the run note
 ## Final review
 
 After all tasks: run full suites (`cd backend && uv run pytest -q && uv run ruff check . && uv run mypy vention_printer_interface/vision/`; `cd frontend && npm test && npm run build`), dispatch a final code review, then use **superpowers:finishing-a-development-branch** to merge `feat/layerwise-vision`.
+
+---
+
+## Addendum — 2026-09-13: finalized cameras, corrected registration, capture freshness
+
+This addendum supersedes the camera model and registration approach in the tasks above. Phases 1–2 (basic `frame_source.py`, homography-only `registration.py`) are already committed and are **extended**, not rewritten. All TDD/cross-platform/quality-gate rules from the top of this plan still apply. Do these in place of / in addition to the noted tasks.
+
+### A1 — Extend `UvcFrameSource` (supersedes/extends Task 3)
+Add resolution + **pixel-format (FOURCC)** negotiation and **actual-mode readback**:
+- `configure(width, height, pixel_format="YUY2"|"MJPG", fps=None, exposure=…, gain=…, white_balance=…)`. In `open()`, set `CAP_PROP_FOURCC` (via `cv2.VideoWriter_fourcc(*fourcc)`), width/height/fps, then **read them back** (`get(CAP_PROP_FRAME_WIDTH/HEIGHT/FPS/FOURCC)`) and store both **requested and actual** in `Frame.settings` (`{"requested": {...}, "actual": {...}}`).
+- Read back controls where available: `CAP_PROP_EXPOSURE/GAIN/WB_TEMPERATURE/AUTO_EXPOSURE/AUTO_WB` → store, `null` when the driver won't report.
+- **Fresh grab:** set `CAP_PROP_BUFFERSIZE=1` in `open()` and add `grab_fresh(discard=2)` that reads-and-discards N frames then returns the next — used for stage captures. TDD the FOURCC-decode and requested-vs-actual mapping with a **fake capture object** (inject a stub exposing `get/set/read`); no real hardware. Keep `SimulatedFrameSource` returning `{"requested":..., "actual":...}` shaped settings so downstream tests are realistic.
+
+### A2 — Extend registration to the corrected pipeline (extends Tasks 4–6)
+Extend `Calibration` (keep existing `H`, `mm_per_px`, `bed_extent_mm`, `version`, `reprojection_error`; **add** `camera_matrix: np.ndarray (3×3)`, `dist_coeffs: np.ndarray`, `distortion_model: str = "opencv-5"`, `image_size: tuple[int,int]`, `validation: dict`). `load_calibration` must tolerate old files missing the intrinsic fields (→ `camera_matrix=None`, homography-only, log a warning) for back-compat with Phase-2 files.
+New pure functions + TDD (synthetic, hardware-free):
+- `calibrate_intrinsics(object_points, image_points, image_size) -> (K, dist, rms)` (wrap `cv2.calibrateCamera`). Test: feed points generated from a known `K`/zero-distortion and assert recovery + small rms.
+- `undistort_points(pts, K, dist)` / `undistort_image(img, K, dist)`.
+- `build_bed_remap(K, dist, H, mm_per_px, bed_extent_mm) -> (map1, map2)` — precompute a **single fused** undistort+perspective map (via `cv2.initUndistortRectifyMap`-style or manual grid → `undistortPoints` → homography → `cv2.remap`). Test output dimensions == grid from mm/px, and that with `dist=0` and `K=eye`-scaled it agrees with `warp_to_bed` (the fused path must match the two-step path to sub-pixel).
+- `validate_dimensions(known_points_mm, measured_points_mm) -> {"rms_mm":…, "max_mm":…, "points":[…]}`.
+The worker uses `build_bed_remap` once (cache), then `cv2.remap` per frame. `warp_to_bed` (Task 5) stays for the homography-only/back-compat path.
+
+### A3 — `cameras.py` for the two ELP modules + role identity (supersedes Task 11b)
+Two `CameraSpec`s carrying `role`, `model`, `asin`, `stable_id` (USB path/serial where available), `index`, `width`, `height`, `pixel_format`, `fps`, `backend` (from `default_backend()`):
+- Overview: `ELP-U3CAM20MP01-KV100` / `B0GMFM4CJV`, 1920×1080@30 MJPG.
+- Science: `ELP-U3CAM20MP01-IB(5-50B)` / `B0GMFN5RTD`, 5120×3840, prefer YUY2@7.5 else MJPG@27.5.
+Keep `default_backend()` + its per-OS test. **Because both share the AR2020 sensor and enumerate alike, do not trust index/name:** add `identify(preview_provider)` support and an API preview so the operator confirms roles; persist the chosen `stable_id`→role mapping. Unit-test the mapping/selection logic with stubbed device lists (hardware-free).
+
+### A4 — Fresh capture + expanded metadata (extends Tasks 7 & 9)
+- `VisionService` worker calls `source.grab_fresh()` (not `grab()`) for stage captures, records `frame_timestamp_ns`, and — when the event carries a timestamp — must not accept a frame older than the event (else re-grab/log).
+- Registered image = `cv2.remap` via the fused `build_bed_remap` when intrinsics exist, else `warp_to_bed`. `"raw"` sidecar image is the **original unwarped decoded frame** (not Bayer RAW).
+- `store.write_capture` sidecar/`meta` gains the fields in the spec's Data-model JSON: `camera{role,model,asin,device_id,device_index}`, `capture{requested,actual}`, `controls{exposure,gain,white_balance,auto_*}` (`null` when unknown), `lens_notes`, `calibration{version,image_size,camera_matrix,distortion_model,distortion_coeffs,bed_homography,validation}`, `frame_timestamp_ns`. Extend `test_vision_store.py`/`test_vision_capture.py` accordingly.
+
+### A5 — Phase 8 hardware acceptance (replaces Phase 8 list)
+Use the spec's **Hardware acceptance checks** section verbatim: identity + supported modes on host; simultaneous overview stream + full-res science capture; exposure/gain/WB locking through the backend; focus/sharpness across the **tilted** bed at ~2 ft / 30–45°; iris operation + setting retention; cross-bed dimensional validation vs independent known dimensions; capture-freshness (no stale frame mislabeled); repeatable diffuse lighting. Record all results.
