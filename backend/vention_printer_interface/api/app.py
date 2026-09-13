@@ -20,7 +20,7 @@ from typing import Any
 from urllib.parse import quote
 
 import numpy as np
-from fastapi import FastAPI, HTTPException, Request, WebSocket, WebSocketDisconnect
+from fastapi import FastAPI, HTTPException, Query, Request, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, JSONResponse, Response, StreamingResponse
 from fastapi.staticfiles import StaticFiles
@@ -52,11 +52,17 @@ from vention_printer_interface.device.printer import PrinterDevice
 from vention_printer_interface.jobs.store import JobInfo, JobStore, layer_png, load_job
 from vention_printer_interface.protocol import routes as r
 from vention_printer_interface.recording.recorder import Recorder
+from vention_printer_interface.vision.board_gen import (
+    generate_charuco_dxf,
+    generate_charuco_svg,
+    resolve_preset,
+)
 from vention_printer_interface.vision.cameras import CameraConfig
 from vention_printer_interface.vision.capture import VisionService
 from vention_printer_interface.vision.frame_source import FrameSource, UvcFrameSource
 from vention_printer_interface.vision.overview import OverviewStreamer
 from vention_printer_interface.vision.registration import (
+    BoardSpec,
     Calibration,
     apply_homography,
     calibrate_intrinsics,
@@ -978,6 +984,87 @@ def create_app(
             "overview": dataclasses.asdict(camera_config.overview),
             "science": dataclasses.asdict(camera_config.science),
         }
+
+    @app.get("/api/vision/board")
+    def vision_board(
+        fmt: str = Query("svg", alias="format"),
+        kind: str = "charuco",
+        preset: str | None = None,
+        squares_x: int | None = None,
+        squares_y: int | None = None,
+        square_mm: float | None = None,
+        marker_mm: float | None = None,
+        dict_name: str = Query("DICT_4X4_50", alias="dict"),
+        engrave_black: bool = True,
+        label: bool = True,
+    ) -> Response:
+        """Generate a TRUE-VECTOR ChArUco calibration board (SVG or DXF) for laser engraving.
+
+        Either a named ``preset`` (with optional explicit field overrides) or an explicit
+        ``squares_x``/``squares_y``/``square_mm``/``marker_mm`` set must be supplied. Returns
+        the file with the right content-type + an attachment download name; 400 on bad params.
+        """
+        if kind != "charuco":
+            raise HTTPException(400, "only kind=charuco is supported")
+        if fmt not in ("svg", "dxf"):
+            raise HTTPException(400, "format must be 'svg' or 'dxf'")
+
+        try:
+            if preset is not None:
+                overrides: dict[str, Any] = {}
+                if squares_x is not None:
+                    overrides["squares_x"] = squares_x
+                if squares_y is not None:
+                    overrides["squares_y"] = squares_y
+                if square_mm is not None:
+                    overrides["square_length_mm"] = square_mm
+                if marker_mm is not None:
+                    overrides["marker_length_mm"] = marker_mm
+                if dict_name != "DICT_4X4_50":
+                    overrides["aruco_dict"] = dict_name
+                spec = resolve_preset(preset, **overrides)
+                filename_base = preset
+            else:
+                if squares_x is None or squares_y is None or square_mm is None or marker_mm is None:
+                    raise HTTPException(
+                        400,
+                        "provide a preset or all of squares_x, squares_y, square_mm, marker_mm",
+                    )
+                spec = BoardSpec(
+                    kind="charuco",
+                    squares_x=squares_x,
+                    squares_y=squares_y,
+                    square_length_mm=square_mm,
+                    marker_length_mm=marker_mm,
+                    aruco_dict=dict_name,
+                )
+                filename_base = f"charuco_{squares_x}x{squares_y}"
+        except KeyError as exc:
+            raise HTTPException(400, f"unknown preset: {preset!r}") from exc
+
+        polarity = "black" if engrave_black else "white"
+        try:
+            if fmt == "svg":
+                svg = generate_charuco_svg(spec, engrave_black=engrave_black, label=label)
+                return Response(
+                    content=svg,
+                    media_type="image/svg+xml",
+                    headers={
+                        "Content-Disposition": (
+                            f'attachment; filename="{filename_base}_{polarity}.svg"'
+                        )
+                    },
+                )
+            dxf = generate_charuco_dxf(spec, engrave_black=engrave_black, label=label)
+        except (ValueError, AttributeError) as exc:
+            raise HTTPException(400, f"invalid board spec: {exc}") from exc
+        return Response(
+            content=dxf,
+            media_type="application/dxf",
+            headers={
+                "Content-Disposition": f'attachment; filename="{filename_base}_{polarity}.dxf"'
+            },
+        )
 
     @app.post("/api/vision/calibrate")
     def vision_calibrate(body: VisionCalibrateBody) -> dict[str, Any]:

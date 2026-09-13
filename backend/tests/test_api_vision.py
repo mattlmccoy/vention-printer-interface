@@ -550,3 +550,70 @@ def test_vision_calibrate_validation_block_reports_small_rms(
     assert out["validation"] is not None
     assert "rms_mm" in out["validation"]
     assert out["validation"]["rms_mm"] < 0.1
+
+
+# ---- calibration board generator (A8, GET /api/vision/board) --------------------------------
+def test_board_endpoint_svg_preset_returns_svg_with_download_name(client: TestClient) -> None:
+    r = client.get("/api/vision/board", params={"format": "svg", "preset": "medium_5x7"})
+    assert r.status_code == 200
+    assert r.headers["content-type"].startswith("image/svg+xml")
+    assert "attachment" in r.headers["content-disposition"]
+    assert ".svg" in r.headers["content-disposition"]
+    assert r.text.lstrip().startswith("<?xml") or r.text.lstrip().startswith("<svg")
+    assert "<svg" in r.text
+
+
+def test_board_endpoint_dxf_preset_returns_dxf_with_download_name(client: TestClient) -> None:
+    r = client.get("/api/vision/board", params={"format": "dxf", "preset": "small_cylinder"})
+    assert r.status_code == 200
+    assert r.headers["content-type"] in ("application/dxf", "image/vnd.dxf")
+    assert "attachment" in r.headers["content-disposition"]
+    assert ".dxf" in r.headers["content-disposition"]
+    # DXF round-trips through ezdxf.
+    import io
+
+    import ezdxf
+
+    doc = ezdxf.read(io.StringIO(r.content.decode("utf-8")))
+    assert len(doc.modelspace().query("LWPOLYLINE")) > 0
+
+
+def test_board_endpoint_bad_preset_returns_400(client: TestClient) -> None:
+    r = client.get("/api/vision/board", params={"format": "svg", "preset": "does_not_exist"})
+    assert r.status_code == 400
+
+
+def test_board_endpoint_bad_format_returns_400(client: TestClient) -> None:
+    r = client.get("/api/vision/board", params={"format": "pdf", "preset": "medium_5x7"})
+    assert r.status_code == 400
+
+
+def test_board_endpoint_explicit_params_svg_has_exact_mm(client: TestClient) -> None:
+    r = client.get(
+        "/api/vision/board",
+        params={
+            "format": "svg",
+            "squares_x": 5,
+            "squares_y": 7,
+            "square_mm": 20.0,
+            "marker_mm": 15.0,
+            "dict": "DICT_4X4_50",
+        },
+    )
+    assert r.status_code == 200
+    # board 100x140 mm + quiet-zone margins; width/height carried in mm.
+    assert 'mm"' in r.text
+    assert 'viewBox="0 0' in r.text
+
+
+def test_board_endpoint_missing_params_and_no_preset_returns_400(client: TestClient) -> None:
+    r = client.get("/api/vision/board", params={"format": "svg"})
+    assert r.status_code == 400
+
+
+def test_board_endpoint_engrave_black_false_differs(client: TestClient) -> None:
+    base = {"format": "svg", "preset": "medium_5x7"}
+    r_true = client.get("/api/vision/board", params={**base, "engrave_black": "true"})
+    r_false = client.get("/api/vision/board", params={**base, "engrave_black": "false"})
+    assert r_true.status_code == 200 and r_false.status_code == 200
+    assert r_true.text != r_false.text
