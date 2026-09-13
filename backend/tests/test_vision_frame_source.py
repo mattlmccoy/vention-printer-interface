@@ -31,3 +31,13 @@ def test_uvc_source_constructs_without_opening_hardware():
     src = UvcFrameSource(device_index=2)
     assert src.device_index == 2
     assert hasattr(src, "open") and hasattr(src, "grab") and hasattr(src, "close")
+
+
+def test_grab_fresh_default_returns_a_frame():
+    """The base FrameSource.grab_fresh() default just delegates to grab()."""
+    src = SimulatedFrameSource(width=16, height=12)
+    src.open()
+    f = src.grab_fresh()
+    assert isinstance(f, Frame)
+    assert f.image.shape == (12, 16, 3)
+    src.close()

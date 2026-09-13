@@ -26,6 +26,15 @@ class FrameSource(ABC):
     def configure(self, **settings: Any) -> None:  # optional; default no-op
         self._settings = {**getattr(self, "_settings", {}), **settings}
 
+    def grab_fresh(self, discard: int = 2) -> Frame:
+        """Grab a frame guaranteed not to be a stale, buffered one.
+
+        Default just delegates to `grab()` — sufficient for sources with no internal
+        buffering (e.g. `SimulatedFrameSource`). A UVC-backed source overrides this to
+        flush its driver buffer first (see the addendum's A1 buffer-flush work).
+        """
+        return self.grab()
+
 
 class SimulatedFrameSource(FrameSource):
     """Deterministic synthetic frames for tests (a gradient + a bright square)."""
