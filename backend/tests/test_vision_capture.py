@@ -414,3 +414,54 @@ def test_queue_full_drops_oldest_request_and_increments_drops(tmp_path):
     assert not (tmp_path / "vision" / "layer_0002").exists()  # dropped, never written
     assert (tmp_path / "vision" / "layer_0003").exists()
     assert (tmp_path / "vision" / "layer_0004").exists()
+
+
+# ---- sidecar `stale` field: staleness recorded, never silently hidden --------------------
+
+
+def test_capture_sidecar_marks_stale_true_when_frame_still_predates_event(tmp_path):
+    class AlwaysStale(FrameSource):
+        def open(self):
+            pass
+
+        def close(self):
+            pass
+
+        def grab(self):
+            raise AssertionError("worker must call grab_fresh(), not grab()")
+
+        def grab_fresh(self, discard: int = 2) -> Frame:
+            return Frame(image=np.zeros((4, 4, 3), np.uint8), timestamp_ns=100)
+
+    svc = _svc(tmp_path, source=AlwaysStale())
+    svc.start()
+    svc.on_event("capture:pre_jet", {"layer": 1, "host_timestamp_ns": 1_000_000_000})
+    svc.drain(timeout=2.0)
+    svc.stop()
+
+    sidecar = json.loads((tmp_path / "vision" / "layer_0001" / "pre_jet.json").read_text())
+    assert sidecar["stale"] is True
+
+
+def test_capture_sidecar_marks_stale_false_when_frame_is_fresh(tmp_path):
+    class Fresh(FrameSource):
+        def open(self):
+            pass
+
+        def close(self):
+            pass
+
+        def grab(self):
+            raise AssertionError("worker must call grab_fresh(), not grab()")
+
+        def grab_fresh(self, discard: int = 2) -> Frame:
+            return Frame(image=np.zeros((4, 4, 3), np.uint8), timestamp_ns=5_000_000_000)
+
+    svc = _svc(tmp_path, source=Fresh())
+    svc.start()
+    svc.on_event("capture:pre_jet", {"layer": 1, "host_timestamp_ns": 1_000_000_000})
+    svc.drain(timeout=2.0)
+    svc.stop()
+
+    sidecar = json.loads((tmp_path / "vision" / "layer_0001" / "pre_jet.json").read_text())
+    assert sidecar["stale"] is False

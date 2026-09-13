@@ -4,6 +4,8 @@ import type { Gates } from "../../lib/format.ts";
 import type { StatusPayload } from "../../lib/telemetry.ts";
 import { formatCaptureMetaValue, overviewStreamUrl, parseCaptures, type Capture } from "../../lib/vision.ts";
 import { CalibrationBoardPanel } from "../CalibrationBoardPanel.tsx";
+import { CalibrationWizard } from "../CalibrationWizard.tsx";
+import { ValidationPanel } from "../ValidationPanel.tsx";
 import { ModuleGrid, type Module } from "../Modules.tsx";
 import type { Call } from "./types.ts";
 
@@ -213,9 +215,11 @@ export function CamerasView({ status, gates, call, base, order, sizes, onOrder, 
         </div>
       )
     ) },
-    { id: "calibration", title: "calibration", size: "m", node: <CalibrationForm call={call} disabled={!gates.reachable} /> },
+    { id: "calibration-wizard", title: "calibration", size: "m", node: <CalibrationWizard call={call} printing={gates.printActive} /> },
+    { id: "validation", title: "validation", size: "m", node: <ValidationPanel call={call} printing={gates.printActive} /> },
     { id: "board", title: "calibration boards (SVG/DXF)", size: "m", node: <CalibrationBoardPanel base={base} /> },
     { id: "browser", title: "capture browser", size: "l", node: <CaptureBrowser base={base} /> },
+    { id: "calibration-manual", title: "manual calibration (raw points)", size: "m", node: <CalibrationForm call={call} disabled={!gates.reachable} /> },
   ];
   return (
     <div className="view modules-view">

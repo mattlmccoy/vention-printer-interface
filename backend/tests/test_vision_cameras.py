@@ -1,9 +1,13 @@
 from pathlib import Path
+from typing import Any
 from unittest.mock import patch
+
+import numpy as np
 
 from vention_printer_interface.vision.cameras import (
     CameraConfig,
     CameraSpec,
+    camera_access_state,
     default_backend,
     enumerate_devices,
     load_role_map,
@@ -216,3 +220,73 @@ def test_enumerate_devices_returns_a_list_and_never_raises():
     # completes and returns a list (possibly empty) rather than raising.
     result = enumerate_devices(max_index=1)
     assert isinstance(result, list)
+
+
+# ---- camera_access_state (camera-permission signal) -------------------------------------------
+# Pure aggregation over enumerated devices' `has_frame` flags -- no hardware needed. Mirrors the
+# macOS "camera permission not granted" signature: VideoCapture.isOpened() succeeds (the device
+# enumerates) but every read() fails, so a device is present yet never yields a frame.
+def test_camera_access_state_ok_when_at_least_one_device_has_a_frame():
+    devices = [
+        {"index": 0, "stable_id": "usb-A", "has_frame": False},
+        {"index": 1, "stable_id": "usb-B", "has_frame": True},
+    ]
+    assert camera_access_state(devices) == "ok"
+
+
+def test_camera_access_state_denied_when_devices_present_but_none_yield_a_frame():
+    devices = [
+        {"index": 0, "stable_id": "usb-A", "has_frame": False},
+        {"index": 1, "stable_id": "usb-B", "has_frame": False},
+    ]
+    assert camera_access_state(devices) == "denied"
+
+
+def test_camera_access_state_no_devices_when_enumeration_is_empty():
+    assert camera_access_state([]) == "no_devices"
+
+
+def test_camera_access_state_treats_missing_has_frame_key_as_no_frame():
+    """An enumerator that hasn't been upgraded to report `has_frame` must not silently read as
+    healthy -- a missing key is treated the same as `False` (data-contract-verification: unknown
+    must never render as verified-good)."""
+    assert camera_access_state([{"index": 0, "stable_id": "usb-A"}]) == "denied"
+
+
+# ---- enumerate_devices has_frame probe (stubbed cv2.VideoCapture, no real hardware) -----------
+class _StubVideoCapture:
+    """Fake `cv2.VideoCapture` exposing exactly the surface `enumerate_devices` uses."""
+
+    def __init__(self, read_ok: bool) -> None:
+        self._read_ok = read_ok
+        self.released = False
+
+    def isOpened(self) -> bool:  # noqa: N802 - mirrors cv2.VideoCapture's method name
+        return True
+
+    def read(self) -> tuple[bool, Any]:
+        if self._read_ok:
+            return True, np.zeros((4, 4, 3), dtype=np.uint8)
+        return False, None
+
+    def release(self) -> None:
+        self.released = True
+
+
+def test_enumerate_devices_marks_has_frame_true_when_read_succeeds(monkeypatch):
+    import cv2
+
+    monkeypatch.setattr(cv2, "VideoCapture", lambda *a, **k: _StubVideoCapture(read_ok=True))
+    devices = enumerate_devices(max_index=1)
+    assert len(devices) == 1
+    assert devices[0]["has_frame"] is True
+
+
+def test_enumerate_devices_marks_has_frame_false_when_opened_but_read_fails(monkeypatch):
+    """The macOS "not authorized" signature: isOpened() succeeds but every read() fails."""
+    import cv2
+
+    monkeypatch.setattr(cv2, "VideoCapture", lambda *a, **k: _StubVideoCapture(read_ok=False))
+    devices = enumerate_devices(max_index=1)
+    assert len(devices) == 1
+    assert devices[0]["has_frame"] is False

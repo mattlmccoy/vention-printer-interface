@@ -16,7 +16,7 @@ from collections.abc import AsyncIterator, Callable
 from contextlib import asynccontextmanager
 from datetime import UTC, datetime
 from pathlib import Path
-from typing import Any
+from typing import Any, Literal
 from urllib.parse import quote
 
 import numpy as np
@@ -60,6 +60,7 @@ from vention_printer_interface.vision.board_gen import (
 from vention_printer_interface.vision.cameras import (
     CameraConfig,
     CameraSpec,
+    camera_access_state,
     enumerate_devices,
     load_role_map,
     resolve_roles,
@@ -70,13 +71,17 @@ from vention_printer_interface.vision.capture import VisionService
 from vention_printer_interface.vision.frame_source import FrameSource, UvcFrameSource
 from vention_printer_interface.vision.overview import OverviewStreamer
 from vention_printer_interface.vision.registration import (
+    BoardDetection,
     BoardSpec,
     Calibration,
     apply_homography,
     calibrate_intrinsics,
+    calibrate_intrinsics_boards,
     compute_homography,
+    detect_board,
     load_calibration,
     reprojection_error,
+    rigid_transform_2d,
     save_calibration,
     undistort_points,
     validate_dimensions,
@@ -234,7 +239,95 @@ class RoleMapBody(BaseModel):
     mapping: dict[str, str]
 
 
+class BoardSpecBody(BaseModel):
+    """A calibration/validation board geometry (mirrors ``vision.registration.BoardSpec``)."""
+
+    kind: Literal["charuco", "checkerboard"] = "charuco"
+    squares_x: int = 0
+    squares_y: int = 0
+    square_length_mm: float = 0.0
+    marker_length_mm: float = 0.0
+    aruco_dict: str = "DICT_4X4_50"
+    cols: int = 0
+    rows: int = 0
+    square_size_mm: float = 0.0
+
+
+class CalibSessionBody(BaseModel):
+    """POST /api/vision/calibrate/session body: the board to capture (default ChArUco)."""
+
+    spec: BoardSpecBody | None = None
+
+
+class CalibFinalizeBody(BaseModel):
+    """POST /api/vision/calibrate/finalize body: raster scale + bed-plane correspondence.
+
+    The bed homography is built EITHER from ``use_last_capture_as_bed`` (the last captured
+    ChArUco view's own board object points in mm become the world coordinates) OR from an
+    explicit ``bed_image_points`` <-> ``bed_world_points_mm`` correspondence.
+    """
+
+    mm_per_px: float
+    bed_extent_mm: tuple[float, float, float, float]
+    image_size: tuple[int, int] | None = None
+    use_last_capture_as_bed: bool = False
+    bed_image_points: list[tuple[float, float]] | None = None
+    bed_world_points_mm: list[tuple[float, float]] | None = None
+
+
+class VisionValidateBody(BaseModel):
+    """POST /api/vision/validate body: the checkerboard + its certified pitch (mm)."""
+
+    spec: BoardSpecBody
+    square_size_mm: float
+
+
 _VALID_ROLES = {"overview", "science"}
+_MIN_CALIB_VIEWS = 3
+_DEFAULT_CALIB_SPEC = BoardSpec(
+    kind="charuco",
+    squares_x=7,
+    squares_y=5,
+    square_length_mm=20.0,
+    marker_length_mm=15.0,
+    aruco_dict="DICT_4X4_50",
+)
+
+
+def _grid_scale_bias(
+    known_mm: np.ndarray, measured_mm: np.ndarray, pitch_mm: float
+) -> float:
+    """Ratio (measured mean pitch / certified pitch) over adjacent grid corner pairs.
+
+    Adjacency is taken from the KNOWN grid (pairs one pitch apart); the measured distance of
+    those same pairs is averaged. This is deliberately independent of the rigid alignment so a
+    scale error that a scaled fit would hide is still surfaced (protocol §5.1, Analysis B).
+    """
+    known = np.asarray(known_mm, float)
+    measured = np.asarray(measured_mm, float)
+    n = len(known)
+    iu, ju = np.triu_indices(n, k=1)
+    known_d = np.sqrt(((known[iu] - known[ju]) ** 2).sum(axis=1))
+    adjacent = np.abs(known_d - pitch_mm) < 0.25 * pitch_mm
+    if not np.any(adjacent):
+        return float("nan")
+    measured_d = np.sqrt(((measured[iu[adjacent]] - measured[ju[adjacent]]) ** 2).sum(axis=1))
+    return float(measured_d.mean() / pitch_mm)
+
+
+def _board_spec(body: BoardSpecBody) -> BoardSpec:
+    """Convert a request ``BoardSpecBody`` into a domain ``BoardSpec``."""
+    return BoardSpec(
+        kind=body.kind,
+        squares_x=body.squares_x,
+        squares_y=body.squares_y,
+        square_length_mm=body.square_length_mm,
+        marker_length_mm=body.marker_length_mm,
+        aruco_dict=body.aruco_dict,
+        cols=body.cols,
+        rows=body.rows,
+        square_size_mm=body.square_size_mm,
+    )
 
 
 def _tcp_open(ip: str, port: int, timeout_s: float = 0.5) -> bool:
@@ -445,6 +538,10 @@ def create_app(
         app.state.experiments_root = root
         app.state.reference_restored = False
         app.state.job = None
+        # Guided calibration-capture session (A6b): the active board + accumulated detections.
+        app.state.calib_session_spec = None
+        app.state.calib_session_views = []
+        app.state.calib_session_image_size = None
         app.state.backend = "none"
         app.state.default_heater_io = heater_io or DEFAULT_HEATER_IO
         app.state.axis_motion = _fresh_axis_motion()
@@ -489,6 +586,14 @@ def create_app(
 
     def overview_src() -> FrameSource | None:
         return app.state.overview_source  # type: ignore[no-any-return]
+
+    def science_source() -> FrameSource | None:
+        # The dedicated SCIENCE capture source (owned by the vision worker). Grabbing from it
+        # directly is only safe when no capture is in flight — the guided-calibration and
+        # validate flows are interactive, operator-driven, and run with no print active, so the
+        # worker is idle. Never call this while a print/capture stream is running.
+        source: FrameSource | None = getattr(app.state, "vision_source", None)
+        return source
 
     def overview_streamer() -> OverviewStreamer | None:
         return app.state.overview_streamer  # type: ignore[no-any-return]
@@ -1046,12 +1151,20 @@ def create_app(
         }
 
     @app.get("/api/vision/devices")
-    def vision_devices() -> list[dict[str, Any]]:
-        """Detected cameras (A7 auto-connect/quick-start): each enumerated device plus its
-        currently RESOLVED role (via `resolve_roles` against the persisted map — `None` when
-        not yet assigned) and, best-effort, a live preview URL when that role's dedicated
-        source is already open. Never touches the science source directly (I1: only the
-        overview live-view stream is safe to share across concurrent readers)."""
+    def vision_devices() -> dict[str, Any]:
+        """Detected cameras (A7 auto-connect/quick-start) plus an overall camera-permission
+        signal. Each device carries its currently RESOLVED role (via `resolve_roles` against the
+        persisted map — `None` when not yet assigned), a best-effort live preview URL when that
+        role's dedicated source is already open, and `has_frame` (whether `enumerate_devices`'s
+        probe actually got a frame off it — never touches the science source directly here; I1:
+        only the overview live-view stream is safe to share across concurrent readers).
+
+        `camera_access` aggregates `has_frame` across every enumerated device (see
+        `camera_access_state`): `"no_devices"` when nothing enumerated, `"denied"` when device(s)
+        enumerated but none yielded a frame (the macOS Privacy & Security "not authorized"
+        signature), `"ok"` otherwise -- this is what the quick-start UI shows in place of an
+        empty/silent device list when the OS is simply blocking camera access.
+        """
         try:
             enumerated = enumerator()
         except Exception as exc:  # noqa: BLE001 - enumeration must never fail the request
@@ -1074,9 +1187,10 @@ def create_app(
                     "name": device.get("name"),
                     "role": role,
                     "preview_url": preview_url,
+                    "has_frame": device.get("has_frame"),
                 }
             )
-        return devices
+        return {"devices": devices, "camera_access": camera_access_state(enumerated)}
 
     @app.get("/api/vision/roles")
     def vision_get_roles() -> dict[str, str]:
@@ -1285,6 +1399,193 @@ def create_app(
             "intrinsics_rms": intrinsics_rms,
             "validation": validation,
             "corrected": k_matrix is not None,
+        }
+
+    # ---- guided calibration-capture session (A6b) ------------------------------------------
+    def _calib_session_state() -> dict[str, Any]:
+        spec: BoardSpec | None = app.state.calib_session_spec
+        views: list[BoardDetection] = app.state.calib_session_views
+        return {
+            "n_views": len(views),
+            "spec": dataclasses.asdict(spec) if spec is not None else None,
+            "ready": len(views) >= _MIN_CALIB_VIEWS,
+        }
+
+    @app.post("/api/vision/calibrate/session")
+    def vision_calibrate_session_start(body: CalibSessionBody) -> dict[str, Any]:
+        """Start/reset a guided calibration-capture session. Clears accumulated views."""
+        spec = _board_spec(body.spec) if body.spec is not None else _DEFAULT_CALIB_SPEC
+        app.state.calib_session_spec = spec
+        app.state.calib_session_views = []
+        app.state.calib_session_image_size = None
+        return _calib_session_state()
+
+    @app.get("/api/vision/calibrate/session")
+    def vision_calibrate_session_get() -> dict[str, Any]:
+        return _calib_session_state()
+
+    @app.post("/api/vision/calibrate/capture")
+    def vision_calibrate_capture() -> dict[str, Any]:
+        """Grab one fresh frame, detect the session board, and (if found) accumulate it.
+
+        Never raises on a blank/board-less frame: it reports ``{captured: false, reason}``.
+        """
+        spec: BoardSpec | None = app.state.calib_session_spec
+        if spec is None:
+            raise HTTPException(400, "no active calibration session; start one first")
+        source = science_source()
+        if source is None:
+            raise HTTPException(503, "no science camera available")
+        try:
+            frame = source.grab_fresh()
+        except Exception as exc:  # noqa: BLE001 - a grab failure must not 500 the capture flow
+            return {"captured": False, "reason": f"frame grab failed: {exc}"}
+        detection = detect_board(frame.image, spec)
+        if detection is None:
+            return {"captured": False, "reason": "no board detected in frame"}
+        views: list[BoardDetection] = app.state.calib_session_views
+        views.append(detection)
+        app.state.calib_session_image_size = (
+            int(frame.image.shape[1]),
+            int(frame.image.shape[0]),
+        )
+        return {
+            "captured": True,
+            "count": len(views),
+            "corners_found": int(len(detection.image_points)),
+        }
+
+    @app.post("/api/vision/calibrate/finalize")
+    def vision_calibrate_finalize(body: CalibFinalizeBody) -> dict[str, Any]:
+        """Compute intrinsics from the accumulated views + a bed homography on UNDISTORTED
+        points, persist the calibration, and hot-swap it onto the live capture worker."""
+        import cv2
+
+        spec: BoardSpec | None = app.state.calib_session_spec
+        if spec is None:
+            raise HTTPException(400, "no active calibration session; start one first")
+        views: list[BoardDetection] = app.state.calib_session_views
+        if not views:
+            raise HTTPException(400, "no calibration views captured; capture a board first")
+
+        # Resolve the bed-plane correspondence BEFORE the heavy intrinsics compute.
+        if body.use_last_capture_as_bed:
+            last = views[-1]
+            bed_image_pts = np.asarray(last.image_points, dtype=float)
+            bed_world_pts = np.asarray(last.object_points, dtype=float)[:, :2]
+        elif body.bed_image_points is not None and body.bed_world_points_mm is not None:
+            bed_image_pts = np.asarray(body.bed_image_points, dtype=float)
+            bed_world_pts = np.asarray(body.bed_world_points_mm, dtype=float)
+        else:
+            raise HTTPException(
+                400,
+                "no bed view: set use_last_capture_as_bed or provide bed_image_points + "
+                "bed_world_points_mm",
+            )
+
+        image_size_raw = body.image_size or app.state.calib_session_image_size
+        if image_size_raw is None:
+            raise HTTPException(400, "unknown image size; capture at least one frame first")
+        image_size = (int(image_size_raw[0]), int(image_size_raw[1]))
+
+        try:
+            k_matrix, dist_coeffs, intrinsics_rms = calibrate_intrinsics_boards(
+                views, spec, image_size
+            )
+        except (cv2.error, ValueError) as exc:
+            raise HTTPException(400, f"intrinsics calibration failed: {exc}") from exc
+
+        bed_img_for_h = undistort_points(bed_image_pts, k_matrix, dist_coeffs)
+        h_matrix = compute_homography(bed_img_for_h, bed_world_pts)
+        err = reprojection_error(h_matrix, bed_img_for_h, bed_world_pts)
+
+        version = datetime.now(UTC).strftime("cal-%Y%m%dT%H%M%SZ")
+        calib = Calibration(
+            H=h_matrix,
+            mm_per_px=body.mm_per_px,
+            bed_extent_mm=body.bed_extent_mm,
+            version=version,
+            reprojection_error=err,
+            camera_matrix=k_matrix,
+            dist_coeffs=dist_coeffs,
+            distortion_model="opencv-5",
+            image_size=image_size,
+            validation={},
+        )
+        save_calibration(vision_calibration_path, calib)
+        vision = vision_service()
+        if vision is not None:
+            vision.set_calibration(calib)
+        return {
+            "corrected": True,
+            "intrinsics_rms": intrinsics_rms,
+            "reprojection_error": err,
+            "calibration_version": version,
+            "n_views": len(views),
+        }
+
+    # ---- checkerboard-validation mode --------------------------------------------------------
+    @app.post("/api/vision/validate")
+    def vision_validate(body: VisionValidateBody) -> dict[str, Any]:
+        """Validate dimensional accuracy against a certified checkerboard (protocol §5).
+
+        Maps detected corners to bed-mm via point correspondences (undistort_points ->
+        apply_homography on the CURRENT calibration, never off the warped raster), rigidly
+        aligns (rotation + translation, NO scale) the measured points onto the known grid so
+        residuals are not dominated by placement offset, then scores with validate_dimensions.
+        A SEPARATE scale_bias (measured mean pitch / certified pitch) is returned so a scale
+        error — which the no-scale fit deliberately does not absorb — is still caught.
+        """
+        vision = vision_service()
+        calib: Calibration | None = vision.calibration if vision is not None else None
+        if calib is None:
+            raise HTTPException(400, "no calibration loaded; calibrate before validating")
+
+        spec = _board_spec(body.spec)
+        if spec.kind != "checkerboard":
+            raise HTTPException(400, "validate requires a checkerboard spec")
+        if spec.square_size_mm <= 0:
+            raise HTTPException(400, "spec.square_size_mm must be > 0")
+        if body.square_size_mm <= 0:
+            raise HTTPException(400, "square_size_mm (certified pitch) must be > 0")
+
+        source = science_source()
+        if source is None:
+            raise HTTPException(503, "no science camera available")
+        try:
+            frame = source.grab_fresh()
+        except Exception as exc:  # noqa: BLE001 - a grab failure must not 500 the request
+            raise HTTPException(400, f"frame grab failed: {exc}") from exc
+
+        detection = detect_board(frame.image, spec)
+        if detection is None:
+            raise HTTPException(400, "checkerboard not detected in frame")
+
+        # Corners -> bed mm via point correspondences (undistort, then H on undistorted px).
+        img_pts = np.asarray(detection.image_points, dtype=float)
+        if calib.camera_matrix is not None:
+            dist = calib.dist_coeffs if calib.dist_coeffs is not None else np.zeros(5)
+            img_pts = undistort_points(img_pts, calib.camera_matrix, dist)
+        measured_mm = apply_homography(calib.H, img_pts)
+
+        # Known grid at the CERTIFIED pitch, in the SAME order as the detection's own object
+        # points (guaranteed paired with image_points) — avoids any corner-ordering mismatch.
+        known_mm = np.asarray(detection.object_points, dtype=float)[:, :2]
+        known_mm = known_mm * (body.square_size_mm / spec.square_size_mm)
+
+        # Rigid (no-scale) best fit of measured onto known, then score the aligned points.
+        r_mat, t_vec = rigid_transform_2d(measured_mm, known_mm)
+        aligned_mm = measured_mm @ r_mat.T + t_vec
+        scored = validate_dimensions(known_mm, aligned_mm)
+
+        scale_bias = _grid_scale_bias(known_mm, measured_mm, body.square_size_mm)
+
+        return {
+            "rms_mm": scored["rms_mm"],
+            "max_mm": scored["max_mm"],
+            "per_point": scored["points"],
+            "scale_bias": scale_bias,
+            "n_points": int(len(known_mm)),
         }
 
     @app.get("/api/vision/captures")

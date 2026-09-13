@@ -46,7 +46,12 @@ export interface VisionCameras { overview: VisionCameraSpec; science: VisionCame
 // vision_devices: `role` is resolved via resolve_roles against the persisted role map (so an
 // unmapped device sitting at a role's default index can still show that role — resolved, but
 // not operator-confirmed, is exactly what `roles_resolved`/`unresolved` distinguish for).
-export interface VisionDevice { index: number; stable_id: string | null; name: string | null; role: string | null; preview_url: string | null }
+// `has_frame` mirrors vision/cameras.py's enumerate_devices probe: whether a fresh read() off
+// this device actually returned a frame (null when the enumerator didn't report it).
+export interface VisionDevice { index: number; stable_id: string | null; name: string | null; role: string | null; preview_url: string | null; has_frame: boolean | null }
+// Overall camera-permission signal aggregated across every enumerated device — see backend
+// vention_printer_interface/vision/cameras.py's camera_access_state (ok/denied/no_devices).
+export interface VisionDevicesResponse { devices: VisionDevice[]; camera_access: "ok" | "denied" | "no_devices" }
 // GET/PUT /api/vision/roles body/response shape: a stable_id -> role ("overview"/"science") map.
 export type VisionRoleMap = Record<string, string>;
 export interface VisionRolesPutResult { mapping: VisionRoleMap; roles_resolved: boolean; unresolved: string[] }
@@ -60,6 +65,43 @@ export interface VisionCaptureRecord {
 }
 export interface VisionCalibrateBody { image_points: [number, number][]; world_points_mm: [number, number][]; mm_per_px: number; bed_extent_mm: [number, number, number, number] }
 export interface VisionCalibrateResult { reprojection_error: number; calibration_version: string }
+// Board geometry shared by the calibration session and the validate endpoint — mirrors backend
+// vention_printer_interface/api/app.py's BoardSpecBody (both ChArUco and checkerboard fields;
+// unused fields for a given `kind` are left at their zero-value default and ignored server-side).
+export interface VisionBoardSpecBody {
+  kind: "charuco" | "checkerboard";
+  squares_x?: number;
+  squares_y?: number;
+  square_length_mm?: number;
+  marker_length_mm?: number;
+  aruco_dict?: string;
+  cols?: number;
+  rows?: number;
+  square_size_mm?: number;
+}
+// GET/POST /api/vision/calibrate/session — see backend app.py's `_calib_session_state`.
+export interface VisionCalibSession { n_views: number; spec: Record<string, unknown> | null; ready: boolean }
+// POST /api/vision/calibrate/capture — see backend app.py's `vision_calibrate_capture`.
+export interface VisionCalibCaptureResult { captured: boolean; count?: number; corners_found?: number; reason?: string }
+// POST /api/vision/calibrate/finalize body — see backend app.py's CalibFinalizeBody.
+export interface VisionCalibFinalizeBody {
+  mm_per_px: number;
+  bed_extent_mm: [number, number, number, number];
+  image_size?: [number, number];
+  use_last_capture_as_bed?: boolean;
+  bed_image_points?: [number, number][];
+  bed_world_points_mm?: [number, number][];
+}
+// POST /api/vision/calibrate/finalize result — see backend app.py's `vision_calibrate_finalize`.
+export interface VisionCalibFinalizeResult {
+  corrected: boolean;
+  intrinsics_rms: number;
+  reprojection_error: number;
+  calibration_version: string;
+  n_views: number;
+}
+// POST /api/vision/validate result — see backend app.py's `vision_validate`.
+export interface VisionValidateResult { rms_mm: number; max_mm: number; per_point: unknown; scale_bias: number; n_points: number }
 // The capture sidecar JSON served at a record's sidecar_url — see backend
 // vention_printer_interface/vision/store.py's _SIDECAR_TEMPLATE. Every leaf is optional/nullable:
 // a field the backend never populated for a given capture is absent or null, never invented.
@@ -121,11 +163,16 @@ export const api = {
   setAutoLog: (enabled: boolean) => req<{ enabled: boolean }>("PUT", "/api/auto-log", { enabled }),
   visionStatus: () => req<VisionStatus>("GET", "/api/vision/status"),
   visionCameras: () => req<VisionCameras>("GET", "/api/vision/cameras"),
-  visionDevices: () => req<VisionDevice[]>("GET", "/api/vision/devices"),
+  visionDevices: () => req<VisionDevicesResponse>("GET", "/api/vision/devices"),
   visionGetRoles: () => req<VisionRoleMap>("GET", "/api/vision/roles"),
   visionSetRoles: (mapping: VisionRoleMap) => req<VisionRolesPutResult>("PUT", "/api/vision/roles", { mapping }),
   visionCaptures: (run: string) => req<VisionCaptureRecord[]>("GET", `/api/vision/captures?run=${encodeURIComponent(run)}`),
   visionCalibrate: (body: VisionCalibrateBody) => req<VisionCalibrateResult>("POST", "/api/vision/calibrate", body),
+  visionCalibrateSessionStart: (spec?: VisionBoardSpecBody) => req<VisionCalibSession>("POST", "/api/vision/calibrate/session", { spec: spec ?? null }),
+  visionCalibrateSessionGet: () => req<VisionCalibSession>("GET", "/api/vision/calibrate/session"),
+  visionCalibrateCapture: () => req<VisionCalibCaptureResult>("POST", "/api/vision/calibrate/capture"),
+  visionCalibrateFinalize: (body: VisionCalibFinalizeBody) => req<VisionCalibFinalizeResult>("POST", "/api/vision/calibrate/finalize", body),
+  visionValidate: (spec: VisionBoardSpecBody, square_size_mm: number) => req<VisionValidateResult>("POST", "/api/vision/validate", { spec, square_size_mm }),
   // `url` is a backend-provided path (a record's sidecar_url from visionCaptures), already
   // carrying its own query string — passed straight through to req(), same as every other path.
   visionCaptureSidecar: (url: string) => req<VisionCaptureSidecar>("GET", url),

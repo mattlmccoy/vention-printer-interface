@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react";
 import { api, type VisionDevice, type VisionRoleMap } from "../lib/api.ts";
+import { cameraAccessMessage, type CameraAccessStatus } from "../lib/vision.ts";
 import type { Call } from "./views/types.ts";
 
 const ROLES = ["overview", "science"] as const;
@@ -21,15 +22,17 @@ export function QuickStartVision({ base, call, onSkip, onSaved }: {
   onSaved: () => void;
 }) {
   const [devices, setDevices] = useState<VisionDevice[] | null>(null);
+  const [cameraAccess, setCameraAccess] = useState<CameraAccessStatus | null>(null);
   const [assign, setAssign] = useState<Record<string, Role | "">>({});
   const [err, setErr] = useState<string | null>(null);
 
-  useEffect(() => {
-    let live = true;
+  const rescan = () => {
+    setDevices(null);
+    setCameraAccess(null);
     api.visionDevices()
-      .then((detected) => {
-        if (!live) return;
+      .then(({ devices: detected, camera_access }) => {
         setDevices(detected);
+        setCameraAccess(camera_access);
         const initial: Record<string, Role | ""> = {};
         for (const dev of detected) {
           const key = dev.stable_id ?? String(dev.index);
@@ -37,7 +40,24 @@ export function QuickStartVision({ base, call, onSkip, onSaved }: {
         }
         setAssign(initial);
       })
-      .catch(() => { if (live) setDevices([]); });
+      .catch(() => { setDevices([]); setCameraAccess(null); });
+  };
+
+  useEffect(() => {
+    let live = true;
+    api.visionDevices()
+      .then(({ devices: detected, camera_access }) => {
+        if (!live) return;
+        setDevices(detected);
+        setCameraAccess(camera_access);
+        const initial: Record<string, Role | ""> = {};
+        for (const dev of detected) {
+          const key = dev.stable_id ?? String(dev.index);
+          initial[key] = dev.role === "overview" || dev.role === "science" ? dev.role : "";
+        }
+        setAssign(initial);
+      })
+      .catch(() => { if (live) { setDevices([]); setCameraAccess(null); } });
     return () => { live = false; };
   }, []);
 
@@ -76,7 +96,13 @@ export function QuickStartVision({ base, call, onSkip, onSaved }: {
         </span>
       </div>
       {devices === null && <div className="hint">detecting cameras…</div>}
-      {devices !== null && devices.length === 0 && <div className="hint">no cameras detected</div>}
+      {devices !== null && cameraAccess !== null && cameraAccess !== "ok" && (
+        <div className="banner err" style={{ marginTop: 8 }}>
+          <span className="reason">{cameraAccessMessage(cameraAccess)}</span>
+          <button className="small" style={{ marginLeft: "auto" }} onClick={rescan}>rescan</button>
+        </div>
+      )}
+      {devices !== null && devices.length === 0 && cameraAccess === "ok" && <div className="hint">no cameras detected</div>}
       {devices !== null && devices.length > 0 && (
         <div style={{ display: "flex", flexWrap: "wrap", gap: 12, marginTop: 8 }}>
           {devices.map((dev) => {

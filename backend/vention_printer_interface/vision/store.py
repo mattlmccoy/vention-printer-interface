@@ -22,6 +22,7 @@ _SIDECAR_TEMPLATE: dict[str, Any] = {
     "stage": None,
     "host_timestamp_ns": None,
     "frame_timestamp_ns": None,
+    "stale": None,
     "job": None,
     "axis_positions_mm": None,
     "camera": {

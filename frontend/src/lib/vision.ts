@@ -104,3 +104,54 @@ export function shouldShowQuickStart(status: VisionStatusLike | null, storage: S
 export function dismissQuickStart(status: VisionStatusLike, storage: Storage | null): void {
   try { storage?.setItem(QUICKSTART_DISMISS_KEY, unresolvedSignature(status.unresolved)); } catch { /* ignore */ }
 }
+
+/** `camera_access` as reported by `GET /api/vision/devices` (see backend
+ *  vention_printer_interface/vision/cameras.py's `camera_access_state`). */
+export type CameraAccessStatus = "ok" | "denied" | "no_devices";
+
+/** User-facing message for a camera-access state, shown in place of an empty/silent device list
+ *  so a macOS Privacy & Security permission block reads as an actionable message instead of a
+ *  confusing "no cameras" result (data-contract-verification: unknown/blocked must never render
+ *  as healthy). `"ok"` returns "" — nothing to surface when access is fine. */
+export function cameraAccessMessage(status: CameraAccessStatus): string {
+  switch (status) {
+    case "denied":
+      return "Camera permission not granted — enable it in System Settings → Privacy & Security → Camera, then rescan";
+    case "no_devices":
+      return "No cameras detected — check the USB connection, then rescan";
+    case "ok":
+      return "";
+  }
+}
+
+/** The guided calibration-capture session shape from GET/POST /api/vision/calibrate/session
+ *  (see backend vention_printer_interface/api/app.py's `_calib_session_state`). */
+export interface CalibSessionLike { n_views: number }
+
+/** True once the accumulated session has enough views to finalize — mirrors the backend's own
+ *  `_MIN_CALIB_VIEWS = 3` gate (app.py), computed here too so the UI can disable Finalize without
+ *  waiting on a round trip. */
+export function calibrationReady(session: CalibSessionLike): boolean {
+  return session.n_views >= 3;
+}
+
+/** The POST /api/vision/validate result shape (see backend vention_printer_interface/api/app.py's
+ *  vision_validate: {rms_mm, max_mm, per_point, scale_bias, n_points}) — only the three scored
+ *  fields this formatter needs. */
+export interface ValidationResultLike { rms_mm: number; max_mm: number; scale_bias: number }
+
+export interface FormattedValidation { rmsMm: number; maxMm: number; scaleBias: number; pass: boolean }
+
+/** Pure PASS/FAIL scoring for a validate result against a dimensional target (protocol default
+ *  +/-0.1 mm). `tolMm` does double duty: an absolute-mm bound on `max_mm`, and (reused as a
+ *  fraction) a bound on how far `scale_bias` may drift from 1 — the rigid, no-scale residual fit
+ *  behind rms_mm/max_mm deliberately does NOT absorb a uniform scale error, so scale_bias is the
+ *  only thing that catches it; without this second check a mis-scaled calibration could still
+ *  report a deceptively tight rms/max. */
+export function formatValidation(result: ValidationResultLike, tolMm = 0.1): FormattedValidation {
+  const rmsMm = result.rms_mm;
+  const maxMm = result.max_mm;
+  const scaleBias = result.scale_bias;
+  const pass = maxMm <= tolMm && Math.abs(scaleBias - 1) <= tolMm;
+  return { rmsMm, maxMm, scaleBias, pass };
+}

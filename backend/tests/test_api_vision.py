@@ -19,9 +19,11 @@ from fastapi.testclient import TestClient
 from vention_printer_interface.api.app import create_app
 from vention_printer_interface.vision.frame_source import Frame, FrameSource, SimulatedFrameSource
 from vention_printer_interface.vision.registration import (
+    Calibration,
     apply_homography,
     load_calibration,
     register_frame,
+    save_calibration,
 )
 
 
@@ -729,8 +731,8 @@ def test_board_endpoint_valid_explicit_params_still_returns_200(client: TestClie
 
 def _fake_devices() -> list[dict[str, Any]]:
     return [
-        {"index": 0, "stable_id": "usb-A-overview", "name": "ELP overview"},
-        {"index": 1, "stable_id": "usb-B-science", "name": "ELP science"},
+        {"index": 0, "stable_id": "usb-A-overview", "name": "ELP overview", "has_frame": True},
+        {"index": 1, "stable_id": "usb-B-science", "name": "ELP science", "has_frame": True},
     ]
 
 
@@ -791,13 +793,65 @@ def test_vision_devices_lists_stubbed_devices_with_resolved_roles(tmp_path: Path
     with TestClient(app) as c:
         r = c.get("/api/vision/devices")
         assert r.status_code == 200
-        devices = r.json()
+        body = r.json()
+        assert body["camera_access"] == "ok"
+        devices = body["devices"]
         assert len(devices) == 2
         by_index = {d["index"]: d for d in devices}
         assert by_index[0]["stable_id"] == "usb-A-overview"
         assert by_index[0]["role"] == "overview"
+        assert by_index[0]["has_frame"] is True
         assert by_index[1]["stable_id"] == "usb-B-science"
         assert by_index[1]["role"] == "science"  # index-fallback resolved, not operator-confirmed
+        assert by_index[1]["has_frame"] is True
+
+
+# ---- GET /api/vision/devices camera_access (macOS permission-denied signal) -------------------
+def _fake_devices_denied() -> list[dict[str, Any]]:
+    """Both devices enumerate (opened successfully) but neither yields a frame -- the macOS
+    "camera permission not granted" signature."""
+    return [
+        {"index": 0, "stable_id": "usb-A-overview", "name": "ELP overview", "has_frame": False},
+        {"index": 1, "stable_id": "usb-B-science", "name": "ELP science", "has_frame": False},
+    ]
+
+
+def _fake_devices_mixed() -> list[dict[str, Any]]:
+    return [
+        {"index": 0, "stable_id": "usb-A-overview", "name": "ELP overview", "has_frame": False},
+        {"index": 1, "stable_id": "usb-B-science", "name": "ELP science", "has_frame": True},
+    ]
+
+
+def test_vision_devices_camera_access_denied_when_no_device_yields_a_frame(tmp_path: Path) -> None:
+    app = _vision_app(tmp_path, device_enumerator=_fake_devices_denied)
+    with TestClient(app) as c:
+        r = c.get("/api/vision/devices")
+        assert r.status_code == 200
+        body = r.json()
+        assert body["camera_access"] == "denied"
+        assert all(d["has_frame"] is False for d in body["devices"])
+
+
+def test_vision_devices_camera_access_no_devices_when_enumerator_returns_empty(
+    tmp_path: Path,
+) -> None:
+    app = _vision_app(tmp_path, device_enumerator=lambda: [])
+    with TestClient(app) as c:
+        r = c.get("/api/vision/devices")
+        assert r.status_code == 200
+        body = r.json()
+        assert body["camera_access"] == "no_devices"
+        assert body["devices"] == []
+
+
+def test_vision_devices_camera_access_ok_when_at_least_one_device_yields_a_frame(
+    tmp_path: Path,
+) -> None:
+    app = _vision_app(tmp_path, device_enumerator=_fake_devices_mixed)
+    with TestClient(app) as c:
+        body = c.get("/api/vision/devices").json()
+        assert body["camera_access"] == "ok"
 
 
 def test_vision_roles_get_returns_persisted_map(tmp_path: Path) -> None:
@@ -898,3 +952,329 @@ def test_vision_roles_put_still_persists_a_valid_mapping(tmp_path: Path) -> None
             "usb-A-overview": "overview",
             "usb-B-science": "science",
         }
+
+
+# ---- guided calibration-capture session (A6b, /api/vision/calibrate/session|capture|finalize)
+#
+# Hardware-free: a synthetic FrameSource renders warped ChArUco poses (rendered from the REAL
+# installed cv2.aruco, so geometry is the library's own, not invented) -- one pose per grab.
+# Session -> repeated capture (views accumulate) -> finalize (intrinsics + bed homography).
+
+_SESSION_CHARUCO = {
+    "kind": "charuco",
+    "squares_x": 7,
+    "squares_y": 5,
+    "square_length_mm": 20.0,
+    "marker_length_mm": 15.0,
+    "aruco_dict": "DICT_5X5_100",
+}
+
+
+def _render_charuco_base(size: tuple[int, int] = (900, 700)) -> np.ndarray:
+    import cv2.aruco as aruco
+
+    dictionary = aruco.getPredefinedDictionary(aruco.DICT_5X5_100)
+    board = aruco.CharucoBoard((7, 5), 20.0, 15.0, dictionary)
+    img: np.ndarray = board.generateImage(size, marginSize=60)
+    return img
+
+
+def _warped_charuco_frames(n: int, seed: int = 11) -> list[np.ndarray]:
+    import cv2
+
+    base = _render_charuco_base()
+    rng = np.random.default_rng(seed)
+    h, w = base.shape[:2]
+    src = np.float32([[0, 0], [w, 0], [w, h], [0, h]])
+    frames: list[np.ndarray] = []
+    for _ in range(n):
+        jitter = rng.uniform(-25, 25, (4, 2)).astype(np.float32)
+        m = cv2.getPerspectiveTransform(src, src + jitter)
+        frames.append(cv2.warpPerspective(base, m, (w, h), borderValue=255))
+    return frames
+
+
+class _CharucoPoseSource(FrameSource):
+    """Returns a different warped ChArUco frame on each grab (cycles through a fixed set)."""
+
+    def __init__(self, n: int = 10) -> None:
+        self._frames = _warped_charuco_frames(n)
+        self._i = 0
+
+    def open(self) -> None:
+        pass
+
+    def close(self) -> None:
+        pass
+
+    def grab(self) -> Frame:
+        img = self._frames[self._i % len(self._frames)]
+        self._i += 1
+        return Frame(image=img, timestamp_ns=time.time_ns() + self._i)
+
+
+class _BlankSource(FrameSource):
+    """Always returns a blank (no-board) frame -- detect_board must return None on it."""
+
+    def open(self) -> None:
+        pass
+
+    def close(self) -> None:
+        pass
+
+    def grab(self) -> Frame:
+        return Frame(image=np.full((500, 700, 3), 255, np.uint8), timestamp_ns=time.time_ns())
+
+
+def _calib_app(tmp_path: Path, source: FrameSource) -> FastAPI:
+    return create_app(
+        backend="none",
+        experiments_root=tmp_path,
+        poll_interval_s=0.05,
+        print_min_wait_s=0.1,
+        print_step_timeout_s=5.0,
+        vision_source=source,
+    )
+
+
+def test_calibrate_session_start_resets_and_reports_state(tmp_path: Path) -> None:
+    app = _calib_app(tmp_path, _CharucoPoseSource())
+    with TestClient(app) as c:
+        r = c.post("/api/vision/calibrate/session", json={"spec": _SESSION_CHARUCO})
+        assert r.status_code == 200
+        body = r.json()
+        assert body["n_views"] == 0
+        assert body["ready"] is False
+        assert body["spec"]["kind"] == "charuco"
+
+        # GET mirrors the POST-reported state.
+        g = c.get("/api/vision/calibrate/session").json()
+        assert g["n_views"] == 0
+        assert g["spec"]["squares_x"] == 7
+
+
+def test_calibrate_capture_accumulates_views(tmp_path: Path) -> None:
+    app = _calib_app(tmp_path, _CharucoPoseSource())
+    with TestClient(app) as c:
+        c.post("/api/vision/calibrate/session", json={"spec": _SESSION_CHARUCO})
+        captured = 0
+        for _ in range(8):
+            r = c.post("/api/vision/calibrate/capture")
+            assert r.status_code == 200
+            if r.json()["captured"]:
+                captured += 1
+        assert captured >= 4
+        session = c.get("/api/vision/calibrate/session").json()
+        assert session["n_views"] == captured
+        assert session["ready"] is True
+
+
+def test_calibrate_capture_on_blank_frame_reports_not_captured_without_raising(
+    tmp_path: Path,
+) -> None:
+    app = _calib_app(tmp_path, _BlankSource())
+    with TestClient(app) as c:
+        c.post("/api/vision/calibrate/session", json={"spec": _SESSION_CHARUCO})
+        r = c.post("/api/vision/calibrate/capture")
+        assert r.status_code == 200
+        body = r.json()
+        assert body["captured"] is False
+        assert isinstance(body.get("reason"), str) and body["reason"]
+        assert c.get("/api/vision/calibrate/session").json()["n_views"] == 0
+
+
+def test_calibrate_finalize_uses_last_capture_as_bed_and_reaches_runtime(
+    tmp_path: Path,
+) -> None:
+    app = _calib_app(tmp_path, _CharucoPoseSource())
+    with TestClient(app) as c:
+        c.post("/api/vision/calibrate/session", json={"spec": _SESSION_CHARUCO})
+        for _ in range(8):
+            c.post("/api/vision/calibrate/capture")
+
+        r = c.post(
+            "/api/vision/calibrate/finalize",
+            json={
+                "mm_per_px": 0.5,
+                "bed_extent_mm": [0.0, 0.0, 120.0, 80.0],
+                "use_last_capture_as_bed": True,
+            },
+        )
+        assert r.status_code == 200
+        out = r.json()
+        assert out["corrected"] is True
+        assert out["intrinsics_rms"] is not None
+        assert out["n_views"] >= 4
+        assert isinstance(out["calibration_version"], str) and out["calibration_version"]
+
+        # Persisted with a non-null camera_matrix.
+        loaded = load_calibration(tmp_path / ".vision_calibration.json")
+        assert loaded is not None
+        assert loaded.camera_matrix is not None
+        assert loaded.dist_coeffs is not None
+
+        # Reached the live capture worker.
+        assert app.state.vision.calibration is not None
+        assert app.state.vision.calibration.camera_matrix is not None
+        assert app.state.vision.calibration.version == out["calibration_version"]
+
+
+def test_calibrate_finalize_with_zero_views_returns_400(tmp_path: Path) -> None:
+    app = _calib_app(tmp_path, _CharucoPoseSource())
+    with TestClient(app) as c:
+        c.post("/api/vision/calibrate/session", json={"spec": _SESSION_CHARUCO})
+        r = c.post(
+            "/api/vision/calibrate/finalize",
+            json={
+                "mm_per_px": 0.5,
+                "bed_extent_mm": [0.0, 0.0, 120.0, 80.0],
+                "use_last_capture_as_bed": True,
+            },
+        )
+        assert r.status_code == 400
+
+
+def test_calibrate_finalize_without_bed_view_returns_400(tmp_path: Path) -> None:
+    app = _calib_app(tmp_path, _CharucoPoseSource())
+    with TestClient(app) as c:
+        c.post("/api/vision/calibrate/session", json={"spec": _SESSION_CHARUCO})
+        for _ in range(8):
+            c.post("/api/vision/calibrate/capture")
+        # neither use_last_capture_as_bed nor explicit bed correspondence -> 400.
+        r = c.post(
+            "/api/vision/calibrate/finalize",
+            json={"mm_per_px": 0.5, "bed_extent_mm": [0.0, 0.0, 120.0, 80.0]},
+        )
+        assert r.status_code == 400
+
+
+# ---- checkerboard-validation mode (/api/vision/validate) ------------------------------------
+#
+# Hardware-free: a synthetic checkerboard image + a KNOWN calibration whose bed homography
+# maps image px -> mm at a controlled scale. Case 1 (H scale == true pitch) -> tiny rms and
+# scale_bias ~= 1. Case 2 (H scale 5% high) -> scale_bias ~= 1.05 caught, while the rigid
+# (no-scale) alignment still strips the large placement offset so rms stays small.
+
+_CHECKER_VALIDATE_SPEC = {
+    "kind": "checkerboard",
+    "cols": 6,
+    "rows": 4,
+    "square_size_mm": 20.0,
+}
+_CHECKER_SQUARE_PX = 40
+_CHECKER_BORDER = 40
+_CHECKER_W = (6 + 1) * _CHECKER_SQUARE_PX + 2 * _CHECKER_BORDER  # 360
+_CHECKER_H = (4 + 1) * _CHECKER_SQUARE_PX + 2 * _CHECKER_BORDER  # 280
+
+
+def _render_checker_validate() -> np.ndarray:
+    n_cols_sq, n_rows_sq = 6 + 1, 4 + 1
+    img = np.full((_CHECKER_H, _CHECKER_W), 255, np.uint8)
+    for r in range(n_rows_sq):
+        for col in range(n_cols_sq):
+            if (r + col) % 2 == 0:
+                y0 = _CHECKER_BORDER + r * _CHECKER_SQUARE_PX
+                x0 = _CHECKER_BORDER + col * _CHECKER_SQUARE_PX
+                img[y0 : y0 + _CHECKER_SQUARE_PX, x0 : x0 + _CHECKER_SQUARE_PX] = 0
+    return img
+
+
+class _CheckerSource(FrameSource):
+    def __init__(self) -> None:
+        self._img = _render_checker_validate()
+
+    def open(self) -> None:
+        pass
+
+    def close(self) -> None:
+        pass
+
+    def grab(self) -> Frame:
+        return Frame(image=self._img.copy(), timestamp_ns=time.time_ns())
+
+
+def _save_checker_calib(path: Path, k_scale: float) -> None:
+    """Persist a calibration whose H maps px -> mm at 0.5*k_scale mm/px (+ a big mm offset)."""
+    scale = 0.5 * k_scale  # px pitch 40 -> mm pitch 20*k_scale
+    h_matrix = np.array([[scale, 0.0, 500.0], [0.0, scale, 300.0], [0.0, 0.0, 1.0]])
+    k_matrix = np.array(
+        [[1000.0, 0.0, _CHECKER_W / 2], [0.0, 1000.0, _CHECKER_H / 2], [0.0, 0.0, 1.0]]
+    )
+    calib = Calibration(
+        H=h_matrix,
+        mm_per_px=0.05,
+        bed_extent_mm=(0.0, 0.0, 400.0, 400.0),
+        version="cal-validate-test",
+        reprojection_error=0.0,
+        camera_matrix=k_matrix,
+        dist_coeffs=np.zeros(5),
+        distortion_model="opencv-5",
+        image_size=(_CHECKER_W, _CHECKER_H),
+    )
+    save_calibration(path, calib)
+
+
+def _validate_app(tmp_path: Path, source: FrameSource) -> FastAPI:
+    return create_app(
+        backend="none",
+        experiments_root=tmp_path,
+        poll_interval_s=0.05,
+        print_min_wait_s=0.1,
+        print_step_timeout_s=5.0,
+        vision_source=source,
+    )
+
+
+def test_validate_true_geometry_small_rms_and_unit_scale_bias(tmp_path: Path) -> None:
+    _save_checker_calib(tmp_path / ".vision_calibration.json", k_scale=1.0)
+    app = _validate_app(tmp_path, _CheckerSource())
+    with TestClient(app) as c:
+        r = c.post(
+            "/api/vision/validate",
+            json={"spec": _CHECKER_VALIDATE_SPEC, "square_size_mm": 20.0},
+        )
+        assert r.status_code == 200
+        out = r.json()
+        assert out["n_points"] == 24
+        assert len(out["per_point"]) == 24
+        assert out["rms_mm"] < 0.5
+        assert out["scale_bias"] == pytest.approx(1.0, abs=0.01)
+
+
+def test_validate_catches_scale_error_after_alignment_removes_offset(tmp_path: Path) -> None:
+    """A 5% scale error must show up in scale_bias (a scaled fit would hide it), while the
+    rigid no-scale alignment still strips the large placement offset so rms stays small."""
+    _save_checker_calib(tmp_path / ".vision_calibration.json", k_scale=1.05)
+    app = _validate_app(tmp_path, _CheckerSource())
+    with TestClient(app) as c:
+        r = c.post(
+            "/api/vision/validate",
+            json={"spec": _CHECKER_VALIDATE_SPEC, "square_size_mm": 20.0},
+        )
+        assert r.status_code == 200
+        out = r.json()
+        assert out["scale_bias"] == pytest.approx(1.05, abs=0.01)  # scale error CAUGHT
+        # the ~580 mm placement offset is removed by the rigid fit; only the scale residual
+        # (0.05 * field radius) remains, well under the raw un-aligned distance.
+        assert out["rms_mm"] < 3.0
+
+
+def test_validate_returns_400_without_calibration(tmp_path: Path) -> None:
+    app = _validate_app(tmp_path, _CheckerSource())  # no calibration file saved
+    with TestClient(app) as c:
+        r = c.post(
+            "/api/vision/validate",
+            json={"spec": _CHECKER_VALIDATE_SPEC, "square_size_mm": 20.0},
+        )
+        assert r.status_code == 400
+
+
+def test_validate_returns_400_when_board_not_detected(tmp_path: Path) -> None:
+    _save_checker_calib(tmp_path / ".vision_calibration.json", k_scale=1.0)
+    app = _validate_app(tmp_path, _BlankSource())  # blank frame -> no checkerboard
+    with TestClient(app) as c:
+        r = c.post(
+            "/api/vision/validate",
+            json={"spec": _CHECKER_VALIDATE_SPEC, "square_size_mm": 20.0},
+        )
+        assert r.status_code == 400
