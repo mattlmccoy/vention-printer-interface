@@ -12,6 +12,8 @@
 
 > **⚠ 2026-09-13 Addendum at the end of this file supersedes the camera model and the registration approach used in the tasks below.** Finalized cameras are two ELP AR2020 modules; registration is now intrinsics + distortion + homography (not homography-only); capture must be fresh; metadata is expanded. Read the Addendum before implementing Tasks 3, 4–6 (extend), 7, 9, 11b, and Phase 8.
 
+> **✅ STATUS 2026-09-13 — Slice 1 code-complete on `feat/layerwise-vision`.** All tasks + the addendum implemented; all review findings (I1–I3, M4–M8) and the capture-trigger defect closed. Gates: full backend suite ~423 passed / 1 skipped / 0 failed; frontend 65 tests + build; ruff + mypy-strict clean. Not yet merged to `main`. **Open follow-ups (non-blocking, tracked):** (M5) the `/api/vision/calibrate` endpoint builds a homography-only `Calibration` — the intrinsics/distortion pipeline exists and is unit-tested but is not yet wired into the endpoint, so runtime registration is homography-only until an intrinsics-calibration endpoint is added; and a `stale` sidecar field for the rare still-stale-after-regrab capture (needs a `store.py` template change). **Phase 8 hardware bring-up is the remaining user step.**
+
 **Reconciliation vs spec:** the spec sketched storage as `runs/<run_id>/…`; this plan nests captures under the **recorder's active run dir** (`<run_dir>/vision/layer_NNNN/<stage>.png`) so a run's telemetry/events/vision live together. When no run is active, captures write to `<experiments_root>/vision_adhoc/<ts>/…`.
 
 **Cross-platform requirement (macOS, Windows, Linux):** the operator is cross-platform (`install.sh` + `install.ps1`), and the vision module must not break that. Rules every task follows:
