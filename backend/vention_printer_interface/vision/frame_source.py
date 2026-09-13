@@ -36,12 +36,33 @@ class FrameSource(ABC):
         return self.grab()
 
 
+def _simulated_default_settings(width: int, height: int) -> dict[str, Any]:
+    """A deterministic, realistic `{requested, actual, controls}`-shaped settings dict.
+
+    Matches `UvcFrameSource`'s flat-key contract (`requested`/`actual`/`exposure`/
+    `gain`/`white_balance`/`auto_exposure`/`auto_white_balance`) so tests exercising
+    the default (unconfigured) simulated source exercise real values through the
+    capture/store pipeline, not `None`.
+    """
+    mode = {"width": width, "height": height, "fps": 30.0, "pixel_format": "MJPG"}
+    return {
+        "requested": dict(mode),
+        "actual": dict(mode),
+        "exposure": -6.0,
+        "gain": 1.0,
+        "white_balance": 4600.0,
+        "auto_exposure": 1.0,
+        "auto_white_balance": 1.0,
+    }
+
+
 class SimulatedFrameSource(FrameSource):
     """Deterministic synthetic frames for tests (a gradient + a bright square)."""
 
     def __init__(self, width: int = 640, height: int = 480) -> None:
         self.width, self.height = width, height
         self._settings: dict[str, Any] = {}
+        self._configured = False
         self._open = False
 
     def open(self) -> None:
@@ -51,6 +72,7 @@ class SimulatedFrameSource(FrameSource):
         self._open = False
 
     def configure(self, **settings: Any) -> None:
+        self._configured = True
         self._settings = {**self._settings, **settings}
 
     def grab(self) -> Frame:
@@ -59,7 +81,12 @@ class SimulatedFrameSource(FrameSource):
         img = np.zeros((self.height, self.width, 3), dtype=np.uint8)
         img[:, :, 1] = np.linspace(0, 255, self.width, dtype=np.uint8)[None, :]
         img[self.height // 4 : self.height // 2, self.width // 4 : self.width // 2] = 255
-        return Frame(image=img, timestamp_ns=time.time_ns(), settings=dict(self._settings))
+        settings = (
+            dict(self._settings)
+            if self._configured
+            else _simulated_default_settings(self.width, self.height)
+        )
+        return Frame(image=img, timestamp_ns=time.time_ns(), settings=settings)
 
 
 # UVC control names read back best-effort on open(); the sidecar key each maps to.

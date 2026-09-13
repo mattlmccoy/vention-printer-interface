@@ -192,6 +192,22 @@ def test_capture_meta_includes_expanded_fields(tmp_path):
     }
 
 
+def test_capture_sidecar_carries_real_capture_and_control_values_not_none(tmp_path):
+    """With the default (unconfigured) SimulatedFrameSource, capture/actual and controls
+    in the sidecar should be realistic values, not None -- I3's "exercise real values"."""
+    svc = _svc(tmp_path)
+    svc.start()
+    svc.on_event("capture:pre_jet", {"layer": 1})
+    svc.drain(timeout=2.0)
+    svc.stop()
+
+    sidecar = json.loads((tmp_path / "vision" / "layer_0001" / "pre_jet.json").read_text())
+    assert sidecar["capture"]["requested"] is not None
+    assert sidecar["capture"]["actual"] is not None
+    assert sidecar["controls"]["exposure"] is not None
+    assert sidecar["controls"]["gain"] is not None
+
+
 # ---- I2: worker-side capture-freshness guard (re-grab a frame that predates the event) ----
 
 

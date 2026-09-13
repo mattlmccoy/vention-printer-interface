@@ -30,6 +30,34 @@ def test_configure_records_effective_settings():
     src.close()
 
 
+def test_simulated_source_default_settings_carry_realistic_requested_actual_controls():
+    """Unconfigured SimulatedFrameSource should still emit a {requested, actual,
+    controls} shape (deterministic, non-None values) so downstream store/capture
+    tests exercise realistic data instead of an empty settings dict."""
+    src = SimulatedFrameSource(width=64, height=48)
+    src.open()
+    f = src.grab()
+
+    assert f.settings["requested"] == {
+        "width": 64,
+        "height": 48,
+        "fps": 30.0,
+        "pixel_format": "MJPG",
+    }
+    assert f.settings["actual"] == {
+        "width": 64,
+        "height": 48,
+        "fps": 30.0,
+        "pixel_format": "MJPG",
+    }
+    assert f.settings["exposure"] is not None
+    assert f.settings["gain"] is not None
+    assert f.settings["white_balance"] is not None
+    assert f.settings["auto_exposure"] is not None
+    assert f.settings["auto_white_balance"] is not None
+    src.close()
+
+
 def test_grab_fresh_default_returns_a_frame():
     """The base FrameSource.grab_fresh() default just delegates to grab()."""
     src = SimulatedFrameSource(width=16, height=12)
