@@ -120,6 +120,12 @@ def resolve_roles(
     For each role, a device whose `stable_id` is mapped (in `mapping`) to that role wins.
     Only when no enumerated device's `stable_id` appears in `mapping` for a role does that
     role fall back to whichever enumerated device has the spec's configured `index`.
+
+    Two roles are never assigned the SAME enumerated device (I-2): when both an
+    explicit-stable_id match and an index-fallback match land on one device, the explicit
+    match wins and the index-fallback role is dropped back to unresolved -- auto-open must
+    never open two `VideoCapture`s on one physical camera. See `unresolved_roles` for the
+    stricter, operator-confirmation-only notion of "resolved" that drives the quick-start UI.
     """
     specs = {"overview": config.overview, "science": config.science}
     by_stable_id = {
@@ -130,11 +136,15 @@ def resolve_roles(
     by_index = {device["index"]: device for device in enumerated_devices}
 
     resolved: dict[str, CameraSpec] = {}
+    resolved_explicitly: dict[str, bool] = {}
+    device_index_by_role: dict[str, int] = {}
     for role, spec in specs.items():
         device = None
+        matched_explicitly = False
         for stable_id, mapped_role in mapping.items():
             if mapped_role == role and stable_id in by_stable_id:
                 device = by_stable_id[stable_id]
+                matched_explicitly = True
                 break
         if device is None:
             device = by_index.get(spec.index)
@@ -146,6 +156,24 @@ def resolve_roles(
             path=device.get("path", spec.path),
             stable_id=device.get("stable_id", spec.stable_id),
         )
+        resolved_explicitly[role] = matched_explicitly
+        device_index_by_role[role] = int(device["index"])
+
+    roles_by_device_index: dict[int, list[str]] = {}
+    for role, index in device_index_by_role.items():
+        roles_by_device_index.setdefault(index, []).append(role)
+    for roles in roles_by_device_index.values():
+        if len(roles) < 2:
+            continue
+        explicit_roles = [role for role in roles if resolved_explicitly[role]]
+        # Keep every explicitly-mapped role (there can be at most one per device, since a
+        # stable_id maps to a single role); with no explicit match at all, keep just the
+        # first role so at most one still claims this device.
+        keep = set(explicit_roles) if explicit_roles else {roles[0]}
+        for role in roles:
+            if role not in keep:
+                del resolved[role]
+
     return resolved
 
 

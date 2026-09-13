@@ -141,6 +141,24 @@ def test_resolve_roles_falls_back_to_index_when_stable_id_not_in_mapping():
     assert resolved["science"].index == 1
 
 
+def test_resolve_roles_does_not_assign_two_roles_to_the_same_device():
+    """I-2: only ONE device is enumerated (index 0). It is explicitly mapped to 'science' via
+    stable_id. 'overview' has no stable_id mapping and must NOT fall back to grabbing the same
+    device index -- that would auto-open two VideoCaptures on one physical camera. Instead
+    'overview' must come back unresolved."""
+    config = CameraConfig.from_dict({"overview": {"index": 0}, "science": {"index": 0}})
+    enumerated = [{"index": 0, "stable_id": "usb-X", "name": "ELP cam"}]
+    mapping = {"usb-X": "science"}
+
+    resolved = resolve_roles(enumerated, mapping, config)
+
+    assert resolved["science"].index == 0
+    assert resolved["science"].stable_id == "usb-X"
+    assert "overview" not in resolved
+
+    assert unresolved_roles(enumerated, mapping) == ["overview"]
+
+
 def test_save_and_load_role_map_round_trips(tmp_path: Path):
     path = tmp_path / "role_map.json"
     mapping = {"usb-A-overview": "overview", "usb-B-science": "science"}
