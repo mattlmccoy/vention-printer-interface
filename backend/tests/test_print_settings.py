@@ -599,6 +599,15 @@ def test_capture_marks_absent_when_disabled() -> None:
     assert not any(s.label.startswith("capture:") for s in steps if s.kind == "mark")
 
 
+def test_bounded_passes_through_capture_stages() -> None:
+    # bounded() must not silently drop capture_stages back to the dataclass default (True) —
+    # an operator turning captures off via PUT /api/print-settings must have that value stick.
+    lim = SafetyLimits()
+    assert PrintSettings.bounded({"capture_stages": False}, lim).capture_stages is False
+    assert PrintSettings.bounded({"capture_stages": True}, lim).capture_stages is True
+    assert PrintSettings.bounded({}, lim).capture_stages is True  # default unchanged
+
+
 def test_estimate_duration_is_positive_and_scales_with_layers() -> None:
     from vention_printer_interface.control.print_settings import estimate_duration_s
 

@@ -298,6 +298,7 @@ class PrintSettings:
             heater_section_power_w=_clamp(
                 num("heater_section_power_w", base.heater_section_power_w), 1e-6, 1e5
             ),
+            capture_stages=bool(d.get("capture_stages", base.capture_stages)),
         )
 
 
