@@ -18,6 +18,7 @@ from vention_printer_interface.vision.frame_source import (
     SimulatedFrameSource,
     UvcFrameSource,
 )
+from vention_printer_interface.vision.overview import encode_jpeg, mjpeg_chunk
 from vention_printer_interface.vision.registration import (
     Calibration,
     apply_homography,
@@ -58,9 +59,11 @@ __all__ = [
     "capture_dir",
     "compute_homography",
     "default_backend",
+    "encode_jpeg",
     "label_to_stage",
     "load_calibration",
     "load_role_map",
+    "mjpeg_chunk",
     "read_manifest",
     "register_frame",
     "reprojection_error",
