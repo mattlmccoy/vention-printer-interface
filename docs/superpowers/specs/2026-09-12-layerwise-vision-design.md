@@ -58,6 +58,25 @@ Both are ELP modules on the Onsemi **AR2020** sensor (max **5120×3840**), USB3/
 - **Manual** optical zoom/focus; confirm the mechanical iris (advertised lens-ring brightness) during acceptance. **Set zoom/focus/aperture at install, then lock** — any change invalidates calibration.
 - Approx. install: **~2 ft from the bed at a 30–45° angle** — confirm whether that angle is from vertical or from the bed surface before computing coverage. Short, rigid mount with cable strain relief.
 
+## Camera connection & role persistence (auto-connect + quick-start)
+
+Both cameras share the AR2020 sensor, so the OS cannot tell them apart by name — the operator should NOT have to re-pick devices on every connect.
+
+- **Persistent role memory:** a role map (`stable_id → role`, stored under the config/experiments root; `cameras.save_role_map`/`load_role_map` already exist) remembers which physical device is `overview` vs `science`. Keyed on a **stable device identifier** (USB path/serial), not enumeration index.
+- **Auto-connect on connect:** whenever the operator connects to the software, it enumerates devices, loads the role map, `resolve_roles`, and **auto-opens the mapped overview + science cameras** — no per-device selection. If every role resolves, connection is silent.
+- **Quick-start setup page (first-run wizard):** shown only when roles are unresolved/ambiguous (new machine, a camera swapped, or an unknown `stable_id`). It previews each detected camera so the operator labels which is `overview` and which is `science`, saves the role map, then **disappears**. It is **reopenable any time from Settings** to re-assign roles (cameras swapped, replaced, or re-cabled). Changing a role updates the map and re-opens sources accordingly.
+- Backend endpoints: enumerate detected devices (id + preview), get/set the role map. Frontend: the wizard + a Settings entry to reopen it.
+
+## Calibration board generation (SVG/DXF for laser engraving)
+
+The operator will laser-engrave ChArUco boards onto **dual-color ABS sheet**, so the app must generate boards as **true vector** files at exact physical size.
+
+- **Vector, not raster:** `cv2.aruco...generateImage()` outputs a bitmap — unusable for a laser. The generator draws the board as vector geometry itself: the checkerboard squares as filled rectangles at exact **mm** coordinates, and each ArUco marker's NxN **bit cells** as filled rectangles read from the contrib dictionary's bit patterns. Output **SVG** (native, no dep) and **DXF** (via `ezdxf`, a new dep, or hand-rolled).
+- **Dual-color engrave semantics:** engraving removes the top color to reveal the second. The output marks the "black" regions (black checker squares + black marker bits) as the **engrave** layer/fill; make the engrave polarity **invertible** (config), since which ABS color is on top varies.
+- **Adjustable + presets:** parameters are adjustable (`squares_x`, `squares_y`, `square_length_mm`, marker/square ratio, ArUco dictionary). Presets: a **small board that fits a ~4 in (Ø101.6 mm) cylinder top**, a **medium 5×7**, and a **large 6×9** — all overridable.
+- **Self-labeling:** engrave a human-readable label with the exact `BoardSpec` (dict, squares, square mm) on the board, so a photographed board's spec — which the calibration step must match — is recoverable.
+- Backend endpoint returns the SVG/DXF for given params/preset; a small UI lets the operator pick a preset/params and download it (local operator app, so downloads work).
+
 ## Architecture
 
 ### Isolation (the safety property)
@@ -93,7 +112,7 @@ UVC capture buffers frames; a naive `read()` can return a **stale, pre-event** f
 
 A single homography is **not** enough: it corrects planar perspective but not lens distortion, and dewarping can never recover optical blur or missing detail. The science-camera registration is a calibrated pipeline, performed once at the final locked focus/zoom/capture-mode:
 
-1. **Intrinsics + distortion** — calibrate the camera matrix `K` and distortion coefficients from **multiple** calibration-target views (`cv2.calibrateCamera`).
+1. **Intrinsics + distortion** — calibrate the camera matrix `K` and distortion coefficients from **multiple** calibration-target views. **Both board types are supported: ChArUco (preferred) and plain checkerboard (allowed).** ChArUco detection/calibration (`cv2.aruco.detectMarkers` → `interpolateCornersCharuco` → `calibrateCameraCharuco`) is more robust to occlusion/partial views and gives per-corner IDs; checkerboard uses `findChessboardCorners`+`cornerSubPix` → `calibrateCamera`. A board-spec config (squares_x/y, square_length_mm, marker_length_mm + ArUco dictionary for ChArUco; rows/cols + square_size for checkerboard) drives detection. **Dependency note:** `cv2.aruco` lives in `opencv-contrib`, so the ChArUco path requires switching the dependency from `opencv-python-headless` to `opencv-contrib-python-headless` (a drop-in superset).
 2. **Bed-plane homography** — estimate the homography from a target lying in the **actual powder-surface plane** (not an arbitrary height).
 3. **Undistort → bed map** — undistort the image, then map into bed (mm) coordinates.
 4. **Fuse** — where practical, compose undistort + homography into **one** resampling (precomputed remap) to avoid double interpolation.

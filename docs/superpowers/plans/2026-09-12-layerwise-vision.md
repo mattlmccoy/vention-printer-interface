@@ -785,3 +785,30 @@ Keep `default_backend()` + its per-OS test. **Because both share the AR2020 sens
 
 ### A5 — Phase 8 hardware acceptance (replaces Phase 8 list)
 Use the spec's **Hardware acceptance checks** section verbatim: identity + supported modes on host; simultaneous overview stream + full-res science capture; exposure/gain/WB locking through the backend; focus/sharpness across the **tilted** bed at ~2 ft / 30–45°; iris operation + setting retention; cross-bed dimensional validation vs independent known dimensions; capture-freshness (no stale frame mislabeled); repeatable diffuse lighting. Record all results.
+
+---
+
+## Addendum — 2026-09-13b: ChArUco/checkerboard cal boards + auto-connect/quick-start
+
+Both follow the same TDD/cross-platform/gate rules. Do them AFTER M5 (they extend M5's endpoint and `app.py`; sequence to avoid file conflicts).
+
+### A6 — ChArUco + checkerboard calibration in the cal pipeline
+- **Dependency:** switch `opencv-python-headless` → **`opencv-contrib-python-headless`** in `backend/pyproject.toml` (superset; adds `cv2.aruco`); `uv sync --extra dev`; verify `python -c "import cv2.aruco"`. TDD note: guard imports so non-aruco code still imports if a build lacks it, but the ChArUco tests require it.
+- **`registration.py`:** `@dataclass BoardSpec` (`kind: "charuco"|"checkerboard"`; for charuco: `squares_x, squares_y, square_length_mm, marker_length_mm, aruco_dict` e.g. `DICT_4X4_50`; for checkerboard: `cols, rows, square_size_mm`). `detect_board(image, spec) -> (image_points, object_points, ids|None)` — checkerboard: `findChessboardCorners`+`cornerSubPix`; charuco: `aruco.detectMarkers`→`aruco.interpolateCornersCharuco`. `calibrate_intrinsics_boards(views, spec, image_size) -> (K, dist, rms)` — charuco: `aruco.calibrateCameraCharuco`; checkerboard: reuse `calibrate_intrinsics`. Keep the existing point-based `calibrate_intrinsics`.
+- **Tests (hardware-free):** render a synthetic checkerboard and a synthetic ChArUco board image (cv2 can draw both: `aruco.CharucoBoard(...).generateImage(...)`, and a checkerboard via numpy), assert `detect_board` finds the expected corner count/IDs and `calibrate_intrinsics_boards` recovers a plausible `K`. Red→green.
+- **Endpoint:** extend M5's `/api/vision/calibrate` (or add `/calibrate/intrinsics`) to accept a `board` spec + a set of captured frames (or detected per-view points), run detection+calibration, then continue M5's undistort→bed-homography→save flow. ChArUco preferred, checkerboard allowed.
+
+### A7 — Auto-connect + persistent roles + quick-start wizard
+- **Backend:** `GET /api/vision/devices` (enumerate detected cameras: `stable_id`, index, + a single still preview via the file/stream helpers); `GET/PUT /api/vision/roles` (read/write the `stable_id→role` map using `cameras.save_role_map`/`load_role_map`). On connect/startup: enumerate → `load_role_map` → `resolve_roles` → **auto-open the mapped overview+science sources** (guarded); add `roles_resolved: bool` + `unresolved: [...]` to `/api/vision/status`. Changing roles via PUT re-opens sources.
+- **Tests:** endpoint tests with stubbed device lists (hardware-free) — full map → `roles_resolved=True`, auto-open both; missing/unknown stable_id → `roles_resolved=False` + lists the unresolved device; PUT persists and re-resolves. (`resolve_roles`/persistence already unit-tested in `test_vision_cameras.py`.)
+- **Frontend:** a `QuickStart` wizard (own component) shown only when `!roles_resolved` — previews each detected device, operator labels overview/science, PUTs the role map, then it disappears; a **Settings** entry reopens it any time to re-assign. Pure gating logic (`shouldShowQuickStart(status, store)`) in `lib/vision.ts` (TDD); wizard + settings entry verified by `npm run build`.
+
+### A8 — ChArUco board generator (SVG/DXF for laser engraving)
+Generate calibration boards as TRUE VECTOR files at exact physical size for laser-engraving dual-color ABS. Depends on the contrib `cv2.aruco` dictionary (shared with A6).
+- **`vision/board_gen.py`:** `generate_charuco_svg(spec, *, engrave_black=True, label=True) -> str` and `generate_charuco_dxf(spec, ...) -> bytes`. Draw the checkerboard squares as filled rects at exact **mm**, and each marker's NxN bit cells as filled rects read from `aruco_dict.bytesList`/`getBitsFromByteList` (NOT `generateImage`). SVG hand-rolled (units in mm, `viewBox` in mm, `width/height` in mm); DXF via **`ezdxf`** (add to `pyproject`) — closed LWPOLYLINE/HATCH per filled cell, or hand-rolled minimal DXF if avoiding the dep. Engrave polarity invertible (`engrave_black`). Engrave the `BoardSpec` label as vector text.
+- **Presets:** `small_cylinder` (fit within Ø101.6 mm — choose squares/size so the board fits the circle), `medium_5x7`, `large_6x9`; every field overridable.
+- **Endpoint:** `GET /api/vision/board?kind=charuco&format=svg|dxf&preset=…|squares_x=…&squares_y=…&square_mm=…&dict=…&engrave_black=…` → returns the file with correct content-type + download filename.
+- **Frontend:** a small "Calibration boards" panel (in Settings or the Cameras view) to pick preset/params and download SVG/DXF.
+- **Tests (hardware-free, TDD):** SVG has the expected `width/height` in mm and the right number of filled cells; a sampled marker's bit rects match `aruco`'s bits for that id; physical mm scaling is exact; DXF round-trips through `ezdxf` with the expected entity count; `small_cylinder` board's bounding circle ≤ 101.6 mm; invert flips which cells are filled. Red→green.
+
+**Sequencing for 2026-09-13b:** M5 → A6 → A8 (A6+A8 share the contrib dict + BoardSpec; A8 after A6) → A7. All touch `app.py`/`pyproject` — run sequentially, not in parallel.
