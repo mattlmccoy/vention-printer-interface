@@ -7,18 +7,21 @@ Cross-origin policy is copied from FLIR/T&C: cross-origin state-changing /api/ r
 from __future__ import annotations
 
 import asyncio
+import dataclasses
 import logging
 import platform
 import socket
 import time
-from collections.abc import AsyncIterator, Callable
+from collections.abc import AsyncIterator, Callable, Iterator
 from contextlib import asynccontextmanager
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
+import numpy as np
 from fastapi import FastAPI, HTTPException, Request, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import FileResponse, JSONResponse, Response
+from fastapi.responses import FileResponse, JSONResponse, Response, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 
@@ -48,6 +51,18 @@ from vention_printer_interface.device.printer import PrinterDevice
 from vention_printer_interface.jobs.store import JobInfo, JobStore, layer_png, load_job
 from vention_printer_interface.protocol import routes as r
 from vention_printer_interface.recording.recorder import Recorder
+from vention_printer_interface.vision.cameras import CameraConfig
+from vention_printer_interface.vision.capture import VisionService
+from vention_printer_interface.vision.frame_source import FrameSource, UvcFrameSource
+from vention_printer_interface.vision.overview import encode_jpeg, mjpeg_chunk
+from vention_printer_interface.vision.registration import (
+    Calibration,
+    compute_homography,
+    load_calibration,
+    reprojection_error,
+    save_calibration,
+)
+from vention_printer_interface.vision.store import read_manifest
 
 log = logging.getLogger(__name__)
 
@@ -156,6 +171,13 @@ class JobSelectBody(BaseModel):
     path: str
 
 
+class VisionCalibrateBody(BaseModel):
+    image_points: list[tuple[float, float]]
+    world_points_mm: list[tuple[float, float]]
+    mm_per_px: float
+    bed_extent_mm: tuple[float, float, float, float]
+
+
 def _tcp_open(ip: str, port: int, timeout_s: float = 0.5) -> bool:
     try:
         with socket.create_connection((ip, port), timeout=timeout_s):
@@ -205,9 +227,12 @@ def create_app(
     print_min_wait_s: float = 0.5,
     print_step_timeout_s: float = 120.0,
     jobs_roots: list[Path] | None = None,
+    vision_source: FrameSource | None = None,
 ) -> FastAPI:
     root = experiments_root or Path.cwd() / "experiments"
     jobs = JobStore(jobs_roots or [root.parent / "jobs"])
+    camera_config = CameraConfig.from_env()
+    vision_calibration_path = root / ".vision_calibration.json"
 
     @asynccontextmanager
     async def lifespan(app: FastAPI) -> AsyncIterator[None]:
@@ -220,6 +245,27 @@ def create_app(
         app.state.auto_run_open = False
         events = EventLog()
         events.add_sink(recorder.event)  # every event also lands in the durable run record
+
+        # Vision: a science-camera capture worker fed by capture:* marks off the same EventLog.
+        # Guard hardware: an absent/broken camera must never block or crash app startup.
+        science = camera_config.science
+        source = vision_source or UvcFrameSource(
+            science.index, science.width, science.height, science.effective_backend()
+        )
+        vision_svc = VisionService(
+            source=source,
+            run_dir_provider=lambda: recorder.current_run_dir,
+            calibration=load_calibration(vision_calibration_path),
+            camera_role="science",
+        )
+        try:
+            vision_svc.start()
+            events.add_sink(vision_svc.on_event)
+            app.state.vision = vision_svc
+        except Exception as exc:  # noqa: BLE001 - a missing/broken camera must not block startup
+            log.warning("vision service start failed (%s); serving without capture", exc)
+            app.state.vision = None
+        app.state.vision_source = source
 
         def on_print_event(label: str, data: dict[str, Any]) -> None:
             events.append(label, data)
@@ -288,6 +334,8 @@ def create_app(
         try:
             yield
         finally:
+            if app.state.vision is not None:
+                app.state.vision.stop()
             recorder.stop()
             controller.stop()
 
@@ -309,6 +357,12 @@ def create_app(
 
     def printer() -> PrintController:
         return app.state.printer  # type: ignore[no-any-return]
+
+    def vision_service() -> VisionService | None:
+        return app.state.vision  # type: ignore[no-any-return]
+
+    def vision_src() -> FrameSource:
+        return app.state.vision_source  # type: ignore[no-any-return]
 
     def ev(label: str, data: dict[str, Any] | None = None) -> None:
         app.state.events.append(label, data)
@@ -834,6 +888,65 @@ def create_app(
         if target.parent.parent != root.resolve() or not target.exists():
             raise HTTPException(400, "bad run")
         return FileResponse(target)
+
+    # ---- vision (overview + science cameras) -------------------------------------------------
+    @app.get("/api/vision/status")
+    def vision_status() -> dict[str, Any]:
+        vision = vision_service()
+        if vision is None:
+            return {"cameras": [], "calibration": None, "queue": {"drops": 0}, "active": False}
+        calib: Calibration | None = vision._calibration  # noqa: SLF001 - hot-swap contract
+        return {
+            "cameras": [camera_config.science.role],
+            "calibration": calib.version if calib is not None else None,
+            "queue": {"drops": vision.drops},
+            "active": True,
+        }
+
+    @app.get("/api/vision/cameras")
+    def vision_cameras() -> dict[str, Any]:
+        return {
+            "overview": dataclasses.asdict(camera_config.overview),
+            "science": dataclasses.asdict(camera_config.science),
+        }
+
+    @app.post("/api/vision/calibrate")
+    def vision_calibrate(body: VisionCalibrateBody) -> dict[str, Any]:
+        image_pts = np.asarray(body.image_points, dtype=float)
+        world_pts = np.asarray(body.world_points_mm, dtype=float)
+        h_matrix = compute_homography(image_pts, world_pts)
+        err = reprojection_error(h_matrix, image_pts, world_pts)
+        version = datetime.now(UTC).strftime("cal-%Y%m%dT%H%M%SZ")
+        calib = Calibration(
+            H=h_matrix,
+            mm_per_px=body.mm_per_px,
+            bed_extent_mm=body.bed_extent_mm,
+            version=version,
+            reprojection_error=err,
+        )
+        save_calibration(vision_calibration_path, calib)
+        vision = vision_service()
+        if vision is not None:
+            vision._calibration = calib  # noqa: SLF001 - hot-swap the running service's calibration
+        return {"reprojection_error": err, "calibration_version": version}
+
+    @app.get("/api/vision/captures")
+    def vision_captures(run: str) -> list[dict[str, Any]]:
+        target = (root / run).resolve()
+        if target.parent != root.resolve():
+            raise HTTPException(400, "bad run")
+        return read_manifest(target)
+
+    @app.get("/api/vision/overview/stream")
+    def vision_overview_stream() -> StreamingResponse:
+        source = vision_src()
+
+        def gen() -> Iterator[bytes]:
+            while True:
+                frame = source.grab()
+                yield mjpeg_chunk(encode_jpeg(frame.image))
+
+        return StreamingResponse(gen(), media_type="multipart/x-mixed-replace; boundary=frame")
 
     # ---- websocket --------------------------------------------------------------------------
     @app.websocket("/ws/telemetry")
