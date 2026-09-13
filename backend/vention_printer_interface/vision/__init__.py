@@ -6,6 +6,12 @@ from vention_printer_interface.vision.cameras import (
     resolve_roles,
     save_role_map,
 )
+from vention_printer_interface.vision.board_gen import (
+    BOARD_PRESETS,
+    generate_charuco_dxf,
+    generate_charuco_svg,
+    resolve_preset,
+)
 from vention_printer_interface.vision.capture import VisionService
 from vention_printer_interface.vision.events import (
     CAPTURE_LABELS,
@@ -46,6 +52,7 @@ from vention_printer_interface.vision.store import (
 )
 
 __all__ = [
+    "BOARD_PRESETS",
     "CAPTURE_LABELS",
     "BoardDetection",
     "BoardSpec",
@@ -68,12 +75,15 @@ __all__ = [
     "detect_board",
     "default_backend",
     "encode_jpeg",
+    "generate_charuco_dxf",
+    "generate_charuco_svg",
     "label_to_stage",
     "load_calibration",
     "load_role_map",
     "mjpeg_chunk",
     "read_manifest",
     "register_frame",
+    "resolve_preset",
     "reprojection_error",
     "resolve_roles",
     "save_calibration",
