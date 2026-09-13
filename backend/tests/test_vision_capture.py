@@ -7,6 +7,7 @@ from vention_printer_interface.vision.capture import VisionService
 from vention_printer_interface.vision.events import CAPTURE_LABELS, CaptureRequest, label_to_stage
 from vention_printer_interface.vision.frame_source import Frame, FrameSource, SimulatedFrameSource
 from vention_printer_interface.vision.registration import Calibration
+from vention_printer_interface.vision.store import read_manifest
 
 
 def test_capture_labels_are_the_three_stage_marks():
@@ -129,6 +130,26 @@ def test_worker_uses_grab_fresh_not_grab(tmp_path):
     svc.drain(timeout=2.0)
     assert (tmp_path / "vision" / "layer_0001" / "pre_jet.png").exists()
     svc.stop()
+
+
+def test_capture_event_appends_manifest_record(tmp_path):
+    svc = _svc(tmp_path)
+    svc.start()
+    svc.on_event(
+        "capture:post_jet",
+        {"layer": 2, "host_timestamp_ns": 555, "axis_positions_mm": {"build": 0.0}},
+    )
+    svc.drain(timeout=2.0)
+    svc.stop()
+
+    records = read_manifest(tmp_path)
+    assert len(records) == 1
+    record = records[0]
+    assert record["layer"] == 2
+    assert record["stage"] == "post_jet"
+    assert record["run_id"] == tmp_path.name
+    assert record["registered"] == "vision/layer_0002/post_jet.png"
+    assert record["host_timestamp_ns"] == 555
 
 
 def test_capture_meta_includes_expanded_fields(tmp_path):

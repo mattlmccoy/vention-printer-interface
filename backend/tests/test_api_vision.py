@@ -181,3 +181,28 @@ def test_vision_capture_event_writes_file_under_active_run_dir(
     assert captured.exists()
 
     client.post("/api/recording/stop")
+
+
+def test_vision_captures_endpoint_lists_capture_after_e2e_flow(
+    app_and_client: tuple[FastAPI, TestClient], tmp_path: Path
+) -> None:
+    """Regression guard: the manifest (and therefore this endpoint) must not silently stay
+    empty after a real capture — a debug/status page reading this must never show a false
+    "no captures" when a capture actually happened (data-contract-verification false-green)."""
+    app, client = app_and_client
+    r = client.post("/api/recording/start", json={"name": "vision-captures-e2e"})
+    assert r.status_code == 200
+    run_name = r.json()["run"]
+
+    app.state.events.append(
+        "capture:post_jet", {"layer": 1, "axis_positions_mm": {"build": 0.0}}
+    )
+    app.state.vision.drain(timeout=2.0)
+    client.post("/api/recording/stop")
+
+    r = client.get("/api/vision/captures", params={"run": run_name})
+    assert r.status_code == 200
+    records = r.json()
+    assert len(records) == 1
+    assert records[0]["layer"] == 1
+    assert records[0]["stage"] == "post_jet"

@@ -19,7 +19,7 @@ from typing import Any
 from vention_printer_interface.vision.events import CaptureRequest, label_to_stage
 from vention_printer_interface.vision.frame_source import FrameSource
 from vention_printer_interface.vision.registration import Calibration, register_frame
-from vention_printer_interface.vision.store import write_capture
+from vention_printer_interface.vision.store import append_manifest, write_capture
 
 log = logging.getLogger(__name__)
 
@@ -139,13 +139,25 @@ class VisionService:
             "registered_space": registered_space,
         }
 
-        write_capture(
+        paths = write_capture(
             Path(base),
             layer=req.layer,
             stage=req.stage,
             raw=frame.image,
             registered=registered,
             meta=meta,
+        )
+
+        registered_rel = Path(paths["registered"]).relative_to(Path(base)).as_posix()
+        append_manifest(
+            Path(base),
+            {
+                "run_id": meta["run_id"],
+                "layer": req.layer,
+                "stage": req.stage,
+                "registered": registered_rel,
+                "host_timestamp_ns": meta["host_timestamp_ns"],
+            },
         )
 
     def _calibration_meta(self) -> dict[str, Any] | None:
