@@ -14,6 +14,7 @@ from vention_printer_interface.vision.registration import (
     save_calibration,
     undistort_image,
     undistort_points,
+    validate_dimensions,
     warp_to_bed,
 )
 
@@ -210,3 +211,27 @@ def test_build_bed_remap_output_dimensions():
     assert map2.shape == (160, 200)
     assert map1.dtype == np.float32
     assert map2.dtype == np.float32
+
+
+def test_validate_dimensions_computes_rms_and_max_error():
+    known = np.array([[0.0, 0.0], [10.0, 0.0], [10.0, 10.0], [0.0, 10.0]])
+    measured = np.array([[0.1, 0.0], [10.0, -0.2], [10.3, 10.0], [0.0, 9.8]])
+    expected_dists = np.sqrt(((measured - known) ** 2).sum(axis=1))
+
+    result = validate_dimensions(known, measured)
+
+    assert np.isclose(result["rms_mm"], np.sqrt((expected_dists**2).mean()))
+    assert np.isclose(result["max_mm"], expected_dists.max())
+    assert len(result["points"]) == 4
+    assert result["points"][0]["known_mm"] == [0.0, 0.0]
+    assert result["points"][0]["measured_mm"] == [0.1, 0.0]
+    assert np.isclose(result["points"][0]["error_mm"], expected_dists[0])
+
+
+def test_validate_dimensions_zero_error_for_identical_points():
+    pts = np.array([[0.0, 0.0], [5.0, 5.0]])
+
+    result = validate_dimensions(pts, pts)
+
+    assert result["rms_mm"] == 0.0
+    assert result["max_mm"] == 0.0

@@ -156,6 +156,31 @@ def build_bed_remap(
     return map1, map2
 
 
+def validate_dimensions(
+    known_points_mm: np.ndarray, measured_points_mm: np.ndarray
+) -> dict[str, Any]:
+    """Compare `measured_points_mm` against `known_points_mm` (independent ground truth).
+
+    Returns `{"rms_mm", "max_mm", "points": [{"known_mm", "measured_mm", "error_mm"}, ...]}`.
+    """
+    known = np.asarray(known_points_mm, float)
+    measured = np.asarray(measured_points_mm, float)
+    dists = np.sqrt(((measured - known) ** 2).sum(axis=1))
+    points = [
+        {
+            "known_mm": known[i].tolist(),
+            "measured_mm": measured[i].tolist(),
+            "error_mm": float(dists[i]),
+        }
+        for i in range(len(known))
+    ]
+    return {
+        "rms_mm": float(np.sqrt((dists**2).mean())),
+        "max_mm": float(dists.max()),
+        "points": points,
+    }
+
+
 @dataclass
 class Calibration:
     """Persisted bed-plane calibration. Field names are a stable on-disk contract.
