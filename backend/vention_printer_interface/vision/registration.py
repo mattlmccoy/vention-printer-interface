@@ -93,6 +93,24 @@ def calibrate_intrinsics(
     return k_matrix, dist_coeffs, float(rms)
 
 
+def undistort_image(image: np.ndarray, k_matrix: np.ndarray, dist_coeffs: np.ndarray) -> np.ndarray:
+    """Undistort a raw frame given camera intrinsics `k_matrix` and `dist_coeffs`."""
+    import cv2
+
+    result: np.ndarray = cv2.undistort(image, k_matrix, dist_coeffs)
+    return result
+
+
+def undistort_points(pts: np.ndarray, k_matrix: np.ndarray, dist_coeffs: np.ndarray) -> np.ndarray:
+    """Undistort 2D pixel points, returning pixel coordinates (not normalized)."""
+    import cv2
+
+    src = np.asarray(pts, np.float32).reshape(-1, 1, 2)
+    undistorted = cv2.undistortPoints(src, k_matrix, dist_coeffs, P=k_matrix)
+    result: np.ndarray = undistorted.reshape(-1, 2)
+    return result
+
+
 @dataclass
 class Calibration:
     """Persisted bed-plane calibration. Field names are a stable on-disk contract.

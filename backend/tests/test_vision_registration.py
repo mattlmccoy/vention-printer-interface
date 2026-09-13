@@ -11,6 +11,8 @@ from vention_printer_interface.vision.registration import (
     register_frame,
     reprojection_error,
     save_calibration,
+    undistort_image,
+    undistort_points,
     warp_to_bed,
 )
 
@@ -169,3 +171,26 @@ def test_calibrate_intrinsics_recovers_known_camera_matrix():
     assert np.isclose(k_computed[0, 2], k_true[0, 2], atol=15)
     assert np.isclose(k_computed[1, 2], k_true[1, 2], atol=15)
     assert dist_computed.size == 5
+
+
+def test_undistort_image_with_zero_distortion_matches_input():
+    img = np.random.default_rng(0).integers(0, 255, (48, 64, 3), dtype=np.uint8)
+    k_matrix = np.array([[100.0, 0.0, 32.0], [0.0, 100.0, 24.0], [0.0, 0.0, 1.0]])
+    dist = np.zeros(5)
+
+    result = undistort_image(img, k_matrix, dist)
+
+    assert result.shape == img.shape
+    assert result.dtype == np.uint8
+    assert np.allclose(result, img, atol=2)
+
+
+def test_undistort_points_with_zero_distortion_matches_input():
+    k_matrix = np.array([[800.0, 0.0, 320.0], [0.0, 800.0, 240.0], [0.0, 0.0, 1.0]])
+    dist = np.zeros(5)
+    pts = np.array([[100.0, 150.0], [320.0, 240.0], [500.0, 400.0]])
+
+    result = undistort_points(pts, k_matrix, dist)
+
+    assert result.shape == pts.shape
+    assert np.allclose(result, pts, atol=1e-3)
