@@ -1,16 +1,18 @@
-from vention_printer_interface.vision.cameras import (
-    CameraConfig,
-    CameraSpec,
-    default_backend,
-    load_role_map,
-    resolve_roles,
-    save_role_map,
-)
 from vention_printer_interface.vision.board_gen import (
     BOARD_PRESETS,
     generate_charuco_dxf,
     generate_charuco_svg,
     resolve_preset,
+)
+from vention_printer_interface.vision.cameras import (
+    CameraConfig,
+    CameraSpec,
+    default_backend,
+    enumerate_devices,
+    load_role_map,
+    resolve_roles,
+    save_role_map,
+    unresolved_roles,
 )
 from vention_printer_interface.vision.capture import VisionService
 from vention_printer_interface.vision.events import (
@@ -75,6 +77,7 @@ __all__ = [
     "detect_board",
     "default_backend",
     "encode_jpeg",
+    "enumerate_devices",
     "generate_charuco_dxf",
     "generate_charuco_svg",
     "label_to_stage",
@@ -90,6 +93,7 @@ __all__ = [
     "save_role_map",
     "undistort_image",
     "undistort_points",
+    "unresolved_roles",
     "validate_dimensions",
     "warp_to_bed",
     "write_capture",
