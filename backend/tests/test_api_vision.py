@@ -164,6 +164,34 @@ def test_vision_overview_stream_headers(tmp_path: Path) -> None:
         assert r.headers["content-type"].startswith("multipart/x-mixed-replace")
 
 
+def test_vision_overview_stream_uses_dedicated_overview_source(tmp_path: Path) -> None:
+    """The overview live view must use its own OVERVIEW camera, not the science camera.
+
+    Injects a distinct overview_source (bounded, per the established one-frame-then-stop
+    pattern) alongside the science vision_source, and checks the stream reads from the
+    overview source (not the science one) while status.cameras reports overview as active.
+    """
+    overview_src = _OneFrameThenStopSource()
+    app = create_app(
+        backend="none",
+        experiments_root=tmp_path,
+        poll_interval_s=0.05,
+        print_min_wait_s=0.1,
+        print_step_timeout_s=5.0,
+        vision_source=SimulatedFrameSource(width=32, height=24),
+        overview_source=overview_src,
+    )
+    with TestClient(app, raise_server_exceptions=False) as c:
+        r = c.get("/api/vision/overview/stream")
+        assert r.status_code == 200
+        assert r.headers["content-type"].startswith("multipart/x-mixed-replace")
+        # The dedicated overview source's single frame must actually have been consumed.
+        assert overview_src._used is True
+
+        status = c.get("/api/vision/status").json()
+        assert "overview" in status["cameras"]
+
+
 def test_vision_capture_event_writes_file_under_active_run_dir(
     app_and_client: tuple[FastAPI, TestClient], tmp_path: Path
 ) -> None:

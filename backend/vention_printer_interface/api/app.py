@@ -228,6 +228,7 @@ def create_app(
     print_step_timeout_s: float = 120.0,
     jobs_roots: list[Path] | None = None,
     vision_source: FrameSource | None = None,
+    overview_source: FrameSource | None = None,
 ) -> FastAPI:
     root = experiments_root or Path.cwd() / "experiments"
     jobs = JobStore(jobs_roots or [root.parent / "jobs"])
@@ -266,6 +267,21 @@ def create_app(
             log.warning("vision service start failed (%s); serving without capture", exc)
             app.state.vision = None
         app.state.vision_source = source
+
+        # Overview: a separate OVERVIEW camera for the live-view stream, distinct from the
+        # science capture source above. Opened once here and shared across stream clients —
+        # never opened per-request. Guard hardware: an absent/broken overview camera must
+        # never block or crash app startup; the stream then falls back to the science source.
+        overview = camera_config.overview
+        ov_source = overview_source or UvcFrameSource(
+            overview.index, overview.width, overview.height, overview.effective_backend()
+        )
+        app.state.overview_source = None
+        try:
+            ov_source.open()
+            app.state.overview_source = ov_source
+        except Exception as exc:  # noqa: BLE001 - a missing/broken overview camera must not block
+            log.warning("overview camera open failed (%s); serving without overview", exc)
 
         def on_print_event(label: str, data: dict[str, Any]) -> None:
             events.append(label, data)
@@ -336,6 +352,8 @@ def create_app(
         finally:
             if app.state.vision is not None:
                 app.state.vision.stop()
+            if app.state.overview_source is not None:
+                app.state.overview_source.close()
             recorder.stop()
             controller.stop()
 
@@ -363,6 +381,9 @@ def create_app(
 
     def vision_src() -> FrameSource:
         return app.state.vision_source  # type: ignore[no-any-return]
+
+    def overview_src() -> FrameSource | None:
+        return app.state.overview_source  # type: ignore[no-any-return]
 
     def ev(label: str, data: dict[str, Any] | None = None) -> None:
         app.state.events.append(label, data)
@@ -893,14 +914,17 @@ def create_app(
     @app.get("/api/vision/status")
     def vision_status() -> dict[str, Any]:
         vision = vision_service()
-        if vision is None:
-            return {"cameras": [], "calibration": None, "queue": {"drops": 0}, "active": False}
-        calib: Calibration | None = vision._calibration  # noqa: SLF001 - hot-swap contract
+        active_roles: list[str] = []
+        if overview_src() is not None:
+            active_roles.append(camera_config.overview.role)
+        if vision is not None:
+            active_roles.append(camera_config.science.role)
+        calib: Calibration | None = vision._calibration if vision is not None else None  # noqa: SLF001
         return {
-            "cameras": [camera_config.science.role],
+            "cameras": active_roles,
             "calibration": calib.version if calib is not None else None,
-            "queue": {"drops": vision.drops},
-            "active": True,
+            "queue": {"drops": vision.drops if vision is not None else 0},
+            "active": bool(active_roles),
         }
 
     @app.get("/api/vision/cameras")
@@ -939,7 +963,11 @@ def create_app(
 
     @app.get("/api/vision/overview/stream")
     def vision_overview_stream() -> StreamingResponse:
-        source = vision_src()
+        # Prefer the dedicated OVERVIEW camera; fall back to the science source only when no
+        # overview source is active, so single-camera dev setups still get a live view.
+        source = overview_src() or vision_src()
+        if source is None:
+            raise HTTPException(503, "no camera available for overview stream")
 
         def gen() -> Iterator[bytes]:
             while True:
