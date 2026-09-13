@@ -898,3 +898,197 @@ def test_vision_roles_put_still_persists_a_valid_mapping(tmp_path: Path) -> None
             "usb-A-overview": "overview",
             "usb-B-science": "science",
         }
+
+
+# ---- guided calibration-capture session (A6b, /api/vision/calibrate/session|capture|finalize)
+#
+# Hardware-free: a synthetic FrameSource renders warped ChArUco poses (rendered from the REAL
+# installed cv2.aruco, so geometry is the library's own, not invented) -- one pose per grab.
+# Session -> repeated capture (views accumulate) -> finalize (intrinsics + bed homography).
+
+_SESSION_CHARUCO = {
+    "kind": "charuco",
+    "squares_x": 7,
+    "squares_y": 5,
+    "square_length_mm": 20.0,
+    "marker_length_mm": 15.0,
+    "aruco_dict": "DICT_5X5_100",
+}
+
+
+def _render_charuco_base(size: tuple[int, int] = (900, 700)) -> np.ndarray:
+    import cv2.aruco as aruco
+
+    dictionary = aruco.getPredefinedDictionary(aruco.DICT_5X5_100)
+    board = aruco.CharucoBoard((7, 5), 20.0, 15.0, dictionary)
+    img: np.ndarray = board.generateImage(size, marginSize=60)
+    return img
+
+
+def _warped_charuco_frames(n: int, seed: int = 11) -> list[np.ndarray]:
+    import cv2
+
+    base = _render_charuco_base()
+    rng = np.random.default_rng(seed)
+    h, w = base.shape[:2]
+    src = np.float32([[0, 0], [w, 0], [w, h], [0, h]])
+    frames: list[np.ndarray] = []
+    for _ in range(n):
+        jitter = rng.uniform(-25, 25, (4, 2)).astype(np.float32)
+        m = cv2.getPerspectiveTransform(src, src + jitter)
+        frames.append(cv2.warpPerspective(base, m, (w, h), borderValue=255))
+    return frames
+
+
+class _CharucoPoseSource(FrameSource):
+    """Returns a different warped ChArUco frame on each grab (cycles through a fixed set)."""
+
+    def __init__(self, n: int = 10) -> None:
+        self._frames = _warped_charuco_frames(n)
+        self._i = 0
+
+    def open(self) -> None:
+        pass
+
+    def close(self) -> None:
+        pass
+
+    def grab(self) -> Frame:
+        img = self._frames[self._i % len(self._frames)]
+        self._i += 1
+        return Frame(image=img, timestamp_ns=time.time_ns() + self._i)
+
+
+class _BlankSource(FrameSource):
+    """Always returns a blank (no-board) frame -- detect_board must return None on it."""
+
+    def open(self) -> None:
+        pass
+
+    def close(self) -> None:
+        pass
+
+    def grab(self) -> Frame:
+        return Frame(image=np.full((500, 700, 3), 255, np.uint8), timestamp_ns=time.time_ns())
+
+
+def _calib_app(tmp_path: Path, source: FrameSource) -> FastAPI:
+    return create_app(
+        backend="none",
+        experiments_root=tmp_path,
+        poll_interval_s=0.05,
+        print_min_wait_s=0.1,
+        print_step_timeout_s=5.0,
+        vision_source=source,
+    )
+
+
+def test_calibrate_session_start_resets_and_reports_state(tmp_path: Path) -> None:
+    app = _calib_app(tmp_path, _CharucoPoseSource())
+    with TestClient(app) as c:
+        r = c.post("/api/vision/calibrate/session", json={"spec": _SESSION_CHARUCO})
+        assert r.status_code == 200
+        body = r.json()
+        assert body["n_views"] == 0
+        assert body["ready"] is False
+        assert body["spec"]["kind"] == "charuco"
+
+        # GET mirrors the POST-reported state.
+        g = c.get("/api/vision/calibrate/session").json()
+        assert g["n_views"] == 0
+        assert g["spec"]["squares_x"] == 7
+
+
+def test_calibrate_capture_accumulates_views(tmp_path: Path) -> None:
+    app = _calib_app(tmp_path, _CharucoPoseSource())
+    with TestClient(app) as c:
+        c.post("/api/vision/calibrate/session", json={"spec": _SESSION_CHARUCO})
+        captured = 0
+        for _ in range(8):
+            r = c.post("/api/vision/calibrate/capture")
+            assert r.status_code == 200
+            if r.json()["captured"]:
+                captured += 1
+        assert captured >= 4
+        session = c.get("/api/vision/calibrate/session").json()
+        assert session["n_views"] == captured
+        assert session["ready"] is True
+
+
+def test_calibrate_capture_on_blank_frame_reports_not_captured_without_raising(
+    tmp_path: Path,
+) -> None:
+    app = _calib_app(tmp_path, _BlankSource())
+    with TestClient(app) as c:
+        c.post("/api/vision/calibrate/session", json={"spec": _SESSION_CHARUCO})
+        r = c.post("/api/vision/calibrate/capture")
+        assert r.status_code == 200
+        body = r.json()
+        assert body["captured"] is False
+        assert isinstance(body.get("reason"), str) and body["reason"]
+        assert c.get("/api/vision/calibrate/session").json()["n_views"] == 0
+
+
+def test_calibrate_finalize_uses_last_capture_as_bed_and_reaches_runtime(
+    tmp_path: Path,
+) -> None:
+    app = _calib_app(tmp_path, _CharucoPoseSource())
+    with TestClient(app) as c:
+        c.post("/api/vision/calibrate/session", json={"spec": _SESSION_CHARUCO})
+        for _ in range(8):
+            c.post("/api/vision/calibrate/capture")
+
+        r = c.post(
+            "/api/vision/calibrate/finalize",
+            json={
+                "mm_per_px": 0.5,
+                "bed_extent_mm": [0.0, 0.0, 120.0, 80.0],
+                "use_last_capture_as_bed": True,
+            },
+        )
+        assert r.status_code == 200
+        out = r.json()
+        assert out["corrected"] is True
+        assert out["intrinsics_rms"] is not None
+        assert out["n_views"] >= 4
+        assert isinstance(out["calibration_version"], str) and out["calibration_version"]
+
+        # Persisted with a non-null camera_matrix.
+        loaded = load_calibration(tmp_path / ".vision_calibration.json")
+        assert loaded is not None
+        assert loaded.camera_matrix is not None
+        assert loaded.dist_coeffs is not None
+
+        # Reached the live capture worker.
+        assert app.state.vision.calibration is not None
+        assert app.state.vision.calibration.camera_matrix is not None
+        assert app.state.vision.calibration.version == out["calibration_version"]
+
+
+def test_calibrate_finalize_with_zero_views_returns_400(tmp_path: Path) -> None:
+    app = _calib_app(tmp_path, _CharucoPoseSource())
+    with TestClient(app) as c:
+        c.post("/api/vision/calibrate/session", json={"spec": _SESSION_CHARUCO})
+        r = c.post(
+            "/api/vision/calibrate/finalize",
+            json={
+                "mm_per_px": 0.5,
+                "bed_extent_mm": [0.0, 0.0, 120.0, 80.0],
+                "use_last_capture_as_bed": True,
+            },
+        )
+        assert r.status_code == 400
+
+
+def test_calibrate_finalize_without_bed_view_returns_400(tmp_path: Path) -> None:
+    app = _calib_app(tmp_path, _CharucoPoseSource())
+    with TestClient(app) as c:
+        c.post("/api/vision/calibrate/session", json={"spec": _SESSION_CHARUCO})
+        for _ in range(8):
+            c.post("/api/vision/calibrate/capture")
+        # neither use_last_capture_as_bed nor explicit bed correspondence -> 400.
+        r = c.post(
+            "/api/vision/calibrate/finalize",
+            json={"mm_per_px": 0.5, "bed_extent_mm": [0.0, 0.0, 120.0, 80.0]},
+        )
+        assert r.status_code == 400
