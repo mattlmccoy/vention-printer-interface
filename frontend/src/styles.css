@@ -336,3 +336,20 @@ button.small { height: 34px; padding: 0 12px; border: 1px solid var(--line-contr
 .mimg svg { width: 100%; height: auto; display: block; background: var(--danger-ink); border-radius: var(--radius); }
 .mk-rail { stroke: var(--trace-rc); stroke-width: 2; stroke-dasharray: 6 6; opacity: .45; }
 .mk-hint { fill: var(--err); font: 700 26px var(--font-mono); }
+
+/* ---- vision / camera panels ---- */
+.cam-panel { border: 1px solid var(--line); border-radius: var(--radius); background: var(--panel); margin: 0 0 16px; overflow: hidden; }
+.cam-panel-head { display: flex; justify-content: space-between; align-items: center; padding: 8px 12px; border-bottom: 1px solid var(--line); font: 12px var(--font-mono); letter-spacing: .09em; text-transform: uppercase; color: var(--label); }
+.cam-panel-body { background: var(--image-bg); display: grid; place-items: center; min-height: 120px; }
+.cam-panel-img { display: block; width: 100%; max-height: 320px; object-fit: contain; }
+.cam-panel-empty { flex-direction: column; gap: 10px; padding: 24px; color: var(--muted); font-size: 13px; text-align: center; }
+.cam-panel-ph { width: 40px; height: 40px; border: 1px solid var(--line-control); border-radius: 50%; display: inline-block; }
+.cam-panel.full .cam-panel-img, .cam-panel.full .cam-panel-body { max-height: none; }
+.cam-panel.full .cam-panel-body { min-height: 360px; }
+.cam-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 12px; margin-top: 4px; }
+.cam-still { border: 1px solid var(--line); border-radius: var(--radius); background: var(--image-bg); overflow: hidden; }
+.cam-still header { padding: 6px 10px; font: 12px var(--font-mono); color: var(--label); border-bottom: 1px solid var(--line); background: var(--panel); }
+.cam-still img { display: block; width: 100%; max-height: 220px; object-fit: contain; }
+.cam-still .cam-panel-empty { min-height: 140px; display: flex; align-items: center; justify-content: center; }
+.cam-browser-row { display: flex; gap: 10px; flex-wrap: wrap; align-items: center; margin: 12px 0; }
+.cam-browser-row select { min-width: 140px; }
