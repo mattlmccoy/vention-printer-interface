@@ -8,15 +8,19 @@ export function overviewStreamUrl(base: string): string {
   return `${base}/api/vision/overview/stream`;
 }
 
-export interface Capture { layer: number; stage: string; url: string }
+export interface Capture { layer: number; stage: string; url: string; sidecarUrl?: string }
 
 // pre_jet < post_jet < post_heat — the order captures happen within a printing layer.
 const STAGE_ORDER: Record<string, number> = { pre_jet: 0, post_jet: 1, post_heat: 2 };
 
 /** Maps `GET /api/vision/captures?run=<run>` manifest records (see backend
- *  vision/capture.py's append_manifest call: {run_id, layer, stage, registered,
- *  host_timestamp_ns}) into sorted {layer, stage, url} entries. Records missing/malformed
- *  layer, stage, or a path field are dropped rather than guessed at. */
+ *  vention_printer_interface/api/app.py's vision_captures, which enriches each
+ *  {run_id, layer, stage, registered, host_timestamp_ns} manifest record with ready-to-use
+ *  `url`/`sidecar_url` fields pointing at GET /api/vision/runs/{run}/file) into sorted
+ *  {layer, stage, url, sidecarUrl} entries. The backend-provided `url` is used when present;
+ *  a record without one (an older/un-enriched fixture) falls back to the bare `registered`
+ *  path, matching prior behavior. Records missing/malformed layer, stage, or a path field are
+ *  dropped rather than guessed at. */
 export function parseCaptures(manifest: unknown[]): Capture[] {
   const out: Capture[] = [];
   for (const rec of manifest) {
@@ -24,11 +28,22 @@ export function parseCaptures(manifest: unknown[]): Capture[] {
     const r = rec as Record<string, unknown>;
     const layer = r.layer;
     const stage = r.stage;
-    const url = r.registered ?? r.url;
+    const url = r.url ?? r.registered;
     if (typeof layer !== "number" || typeof stage !== "string" || typeof url !== "string") continue;
-    out.push({ layer, stage, url });
+    const capture: Capture = { layer, stage, url };
+    if (typeof r.sidecar_url === "string") capture.sidecarUrl = r.sidecar_url;
+    out.push(capture);
   }
   return out.sort((a, b) => a.layer - b.layer || (STAGE_ORDER[a.stage] ?? 99) - (STAGE_ORDER[b.stage] ?? 99));
+}
+
+/** Pure formatting core for the capture browser's sidecar-metadata display: an absent value
+ *  (null/undefined — the backend's sidecar template default for anything not populated) always
+ *  renders as "—", never invented or silently blanked. Never throws on an object/array value. */
+export function formatCaptureMetaValue(value: unknown): string {
+  if (value === null || value === undefined) return "—";
+  if (typeof value === "object") return JSON.stringify(value);
+  return String(value);
 }
 
 const PANEL_KEY = "vpi.vision.panels.v1";

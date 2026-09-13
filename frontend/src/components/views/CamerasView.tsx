@@ -1,8 +1,8 @@
 import { useEffect, useMemo, useState } from "react";
-import { api, type VisionCalibrateResult } from "../../lib/api.ts";
+import { api, type VisionCalibrateResult, type VisionCaptureSidecar } from "../../lib/api.ts";
 import type { Gates } from "../../lib/format.ts";
 import type { StatusPayload } from "../../lib/telemetry.ts";
-import { overviewStreamUrl, parseCaptures, type Capture } from "../../lib/vision.ts";
+import { formatCaptureMetaValue, overviewStreamUrl, parseCaptures, type Capture } from "../../lib/vision.ts";
 import { ModuleGrid, type Module } from "../Modules.tsx";
 import type { Call } from "./types.ts";
 
@@ -18,6 +18,44 @@ function CamImg({ src, alt, className }: { src: string; alt: string; className?:
   useEffect(() => setErrored(false), [src]);
   if (errored) return <div className="cam-panel-empty"><span className="cam-panel-ph" aria-hidden="true" /><span>{alt} unavailable</span></div>;
   return <img className={className} src={src} alt={alt} onError={() => setErrored(true)} />;
+}
+
+/** Fetches and renders one capture's sidecar JSON (see backend vision/store.py's
+ *  _SIDECAR_TEMPLATE) via its `sidecar_url`. Shows only fields the backend actually
+ *  populated — an absent/null field renders "—", never a guessed value (data-contract-
+ *  verification: unknown must never render as healthy/invented). */
+function CaptureMeta({ sidecarUrl }: { sidecarUrl?: string }) {
+  const [meta, setMeta] = useState<VisionCaptureSidecar | null>(null);
+  const [failed, setFailed] = useState(false);
+
+  useEffect(() => {
+    setMeta(null);
+    setFailed(false);
+    if (!sidecarUrl) return;
+    let live = true;
+    api.visionCaptureSidecar(sidecarUrl)
+      .then((m) => { if (live) setMeta(m); })
+      .catch(() => { if (live) setFailed(true); });
+    return () => { live = false; };
+  }, [sidecarUrl]);
+
+  if (!sidecarUrl) return null;
+  if (failed) return <div className="hint">metadata unavailable</div>;
+  if (!meta) return null; // loading — say nothing rather than show a stale/wrong value
+
+  const fmt = formatCaptureMetaValue;
+  return (
+    <div className="kv">
+      <span>layer</span><span>{fmt(meta.layer)}</span>
+      <span>stage</span><span>{fmt(meta.stage)}</span>
+      <span>axis positions (mm)</span><span>{fmt(meta.axis_positions_mm)}</span>
+      <span>capture requested</span><span>{fmt(meta.capture?.requested)}</span>
+      <span>capture actual</span><span>{fmt(meta.capture?.actual)}</span>
+      <span>exposure</span><span>{fmt(meta.controls?.exposure)}</span>
+      <span>gain</span><span>{fmt(meta.controls?.gain)}</span>
+      <span>calibration version</span><span>{fmt(meta.calibration?.version)}</span>
+    </div>
+  );
 }
 
 function CalibrationForm({ call, disabled }: { call: Call; disabled: boolean }) {
@@ -118,7 +156,8 @@ function CaptureBrowser({ base }: { base: string }) {
           {forLayer.map((c) => (
             <div key={c.stage} className="cam-still">
               <header>{STAGE_LABEL[c.stage] ?? c.stage} · layer {c.layer}</header>
-              <CamImg src={`${base}/api/recordings/${run}/${c.url}`} alt={`${c.stage} layer ${c.layer}`} />
+              <CamImg src={`${base}${c.url}`} alt={`${c.stage} layer ${c.layer}`} />
+              <CaptureMeta sidecarUrl={c.sidecarUrl} />
             </div>
           ))}
         </div>
@@ -163,7 +202,7 @@ export function CamerasView({ status, gates, call, base, order, sizes, onOrder, 
             return (
               <div key={s} className="cam-still">
                 <header>{STAGE_LABEL[s]}</header>
-                {c ? <CamImg src={`${base}/api/recordings/${run}/${c.url}`} alt={STAGE_LABEL[s]} />
+                {c ? <CamImg src={`${base}${c.url}`} alt={STAGE_LABEL[s]} />
                   : <div className="cam-panel-empty"><span className="cam-panel-ph" aria-hidden="true" /><span>not captured yet</span></div>}
               </div>
             );

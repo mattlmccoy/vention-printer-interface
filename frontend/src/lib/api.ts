@@ -43,10 +43,26 @@ export interface VisionStatus { cameras: string[]; calibration: string | null; q
 export interface VisionCameraSpec { role: string; index: number; path: string | null; backend: number | null; width: number | null; height: number | null }
 export interface VisionCameras { overview: VisionCameraSpec; science: VisionCameraSpec }
 // Raw manifest record shape from GET /api/vision/captures — see backend
-// vention_printer_interface/vision/capture.py's append_manifest call.
-export interface VisionCaptureRecord { run_id: string; layer: number; stage: string; registered: string; host_timestamp_ns: number }
+// vention_printer_interface/vision/capture.py's append_manifest call (run_id..host_timestamp_ns)
+// plus the url/sidecar_url fields vention_printer_interface/api/app.py's vision_captures adds,
+// pointing at GET /api/vision/runs/{run}/file.
+export interface VisionCaptureRecord {
+  run_id: string; layer: number; stage: string; registered: string; host_timestamp_ns: number;
+  url?: string; sidecar_url?: string;
+}
 export interface VisionCalibrateBody { image_points: [number, number][]; world_points_mm: [number, number][]; mm_per_px: number; bed_extent_mm: [number, number, number, number] }
 export interface VisionCalibrateResult { reprojection_error: number; calibration_version: string }
+// The capture sidecar JSON served at a record's sidecar_url — see backend
+// vention_printer_interface/vision/store.py's _SIDECAR_TEMPLATE. Every leaf is optional/nullable:
+// a field the backend never populated for a given capture is absent or null, never invented.
+export interface VisionCaptureSidecar {
+  layer?: number | null;
+  stage?: string | null;
+  axis_positions_mm?: Record<string, number> | null;
+  capture?: { requested?: unknown; actual?: unknown } | null;
+  controls?: { exposure?: number | null; gain?: number | null } | null;
+  calibration?: { version?: string | null } | null;
+}
 
 export const api = {
   health: () => req<Health>("GET", "/api/health"),
@@ -99,4 +115,7 @@ export const api = {
   visionCameras: () => req<VisionCameras>("GET", "/api/vision/cameras"),
   visionCaptures: (run: string) => req<VisionCaptureRecord[]>("GET", `/api/vision/captures?run=${encodeURIComponent(run)}`),
   visionCalibrate: (body: VisionCalibrateBody) => req<VisionCalibrateResult>("POST", "/api/vision/calibrate", body),
+  // `url` is a backend-provided path (a record's sidecar_url from visionCaptures), already
+  // carrying its own query string — passed straight through to req(), same as every other path.
+  visionCaptureSidecar: (url: string) => req<VisionCaptureSidecar>("GET", url),
 };
