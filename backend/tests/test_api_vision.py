@@ -65,6 +65,45 @@ class _CountingGrabSource(FrameSource):
         return Frame(image=np.zeros((4, 4, 3), dtype=np.uint8), timestamp_ns=self.calls)
 
 
+class _TrackingSource(FrameSource):
+    """Records open()/close()/grab() calls and reports whether it is currently open.
+
+    The camera-on-demand fix is proven at the API level with this hardware-free double: no
+    open() at startup, open only on actual use, close on release/deactivate.
+    """
+
+    def __init__(self) -> None:
+        self.open_count = 0
+        self.close_count = 0
+        self.grab_count = 0
+        self._open = False
+
+    @property
+    def is_open(self) -> bool:
+        return self._open
+
+    def open(self) -> None:
+        self.open_count += 1
+        self._open = True
+
+    def close(self) -> None:
+        self.close_count += 1
+        self._open = False
+
+    def grab(self) -> Frame:
+        self.grab_count += 1
+        return Frame(image=np.zeros((4, 4, 3), dtype=np.uint8), timestamp_ns=self.grab_count)
+
+
+def _wait_until(predicate: Any, timeout: float = 2.0) -> bool:
+    deadline = time.monotonic() + timeout
+    while time.monotonic() < deadline:
+        if predicate():
+            return True
+        time.sleep(0.005)
+    return bool(predicate())
+
+
 @pytest.fixture
 def app_and_client(tmp_path: Path) -> Iterator[tuple[FastAPI, TestClient]]:
     app = create_app(
@@ -91,11 +130,41 @@ def test_vision_status_active_with_injected_source(client: TestClient) -> None:
     assert body["active"] is True
     assert body["calibration"] is None
     assert body["queue"] == {"drops": 0}
-    assert body["cameras"] == ["science"]
+    # `cameras` now reports roles that are WIRED UP (constructed), not ones currently
+    # streaming -- on-demand access means the device is only opened on use. Science is
+    # injected here, so it must be listed.
+    assert "science" in body["cameras"]
 
 
-def test_vision_status_returns_200_and_disabled_when_camera_open_fails(tmp_path: Path) -> None:
-    # Guard requirement: a camera that fails to open must never block/crash app startup.
+def test_no_camera_opened_at_startup(tmp_path: Path) -> None:
+    """The core of the fix: create_app() may construct the streamer + VisionService, but
+    must NOT open any FrameSource at startup (no camera light on at boot)."""
+    science = _TrackingSource()
+    overview = _TrackingSource()
+    app = create_app(
+        backend="none",
+        experiments_root=tmp_path,
+        poll_interval_s=0.05,
+        print_min_wait_s=0.1,
+        print_step_timeout_s=5.0,
+        vision_source=science,
+        overview_source=overview,
+    )
+    with TestClient(app):
+        # Let any startup work settle, then assert neither device was ever opened.
+        time.sleep(0.15)
+        assert science.open_count == 0
+        assert not science.is_open
+        assert overview.open_count == 0
+        assert not overview.is_open
+
+
+def test_startup_does_not_crash_with_a_failing_source_and_degrades_gracefully(
+    tmp_path: Path,
+) -> None:
+    """A camera that fails to open must never block/crash app startup. Under on-demand access
+    nothing opens at boot, so startup is trivially fine; the failure now surfaces (gracefully)
+    only at use time -- a capture event must be swallowed, not crash the worker."""
     app = create_app(
         backend="none",
         experiments_root=tmp_path,
@@ -103,15 +172,52 @@ def test_vision_status_returns_200_and_disabled_when_camera_open_fails(tmp_path:
         print_min_wait_s=0.1,
         print_step_timeout_s=5.0,
         vision_source=_FailingSource(),
+        overview_source=_FailingSource(),
     )
     with TestClient(app) as c:
         r = c.get("/api/vision/status")
         assert r.status_code == 200
+        # Fire a capture: opening the failing source must be caught by the worker, not crash.
+        c.post("/api/recording/start", json={"name": "degrade-e2e"})
+        app.state.events.append("capture:post_jet", {"layer": 1})
+        app.state.vision.drain(timeout=2.0)
+        assert c.get("/api/vision/status").status_code == 200  # still serving
+        c.post("/api/recording/stop")
+
+
+def test_deactivate_releases_all_sources_and_status_reports_inactive(tmp_path: Path) -> None:
+    """POST /api/vision/deactivate force-releases every camera source now and flips status to
+    inactive (empty cameras)."""
+    science = _TrackingSource()
+    overview = _TrackingSource()
+    app = create_app(
+        backend="none",
+        experiments_root=tmp_path,
+        poll_interval_s=0.05,
+        print_min_wait_s=0.1,
+        print_step_timeout_s=5.0,
+        vision_source=science,
+        overview_source=overview,
+    )
+    with TestClient(app) as c:
+        # Engage the overview camera by registering a viewer on its streamer.
+        gen = app.state.overview_streamer.frames()
+        next(gen)
+        assert overview.is_open  # opened on demand
+
+        r = c.post("/api/vision/deactivate")
+        assert r.status_code == 200
         body = r.json()
         assert body["active"] is False
         assert body["cameras"] == []
-        assert body["calibration"] is None
-        assert body["queue"] == {"drops": 0}
+
+        assert not overview.is_open  # force-released
+        assert overview.close_count >= 1
+        assert app.state.vision is None  # science service torn down
+
+        gen.close()
+        # status stays inactive after teardown
+        assert c.get("/api/vision/status").json()["active"] is False
 
 
 def test_vision_cameras_lists_roles(client: TestClient) -> None:
@@ -199,15 +305,13 @@ def test_vision_overview_stream_returns_503_when_no_overview_source(tmp_path: Pa
         assert science_src.calls == 0
 
 
-def test_vision_overview_stream_uses_dedicated_overview_source(tmp_path: Path) -> None:
-    """The overview live view must use its own OVERVIEW camera, not the science camera.
-
-    Injects a distinct, always-succeeding overview_source alongside the science
-    vision_source and waits (bounded) for the background grabber thread to actually call
-    grab() on it, confirming the wiring reads from the dedicated overview source.
+def test_vision_overview_stream_uses_dedicated_overview_source_on_demand(tmp_path: Path) -> None:
+    """The overview live view must use its own OVERVIEW camera, not the science camera, and
+    only ON DEMAND: nothing grabs at startup; registering a stream viewer opens and grabs the
+    dedicated overview source while the science source is never touched.
     """
-    overview_src = _CountingGrabSource()
-    science_src = _CountingGrabSource()
+    overview_src = _TrackingSource()
+    science_src = _TrackingSource()
     app = create_app(
         backend="none",
         experiments_root=tmp_path,
@@ -218,10 +322,20 @@ def test_vision_overview_stream_uses_dedicated_overview_source(tmp_path: Path) -
         overview_source=overview_src,
     )
     with TestClient(app) as c:
-        deadline = time.monotonic() + 2.0
-        while time.monotonic() < deadline and overview_src.calls == 0:
-            time.sleep(0.01)
-        assert overview_src.calls >= 1
+        # Nothing opened/grabbed at startup.
+        time.sleep(0.1)
+        assert overview_src.open_count == 0
+        assert overview_src.grab_count == 0
+
+        # Registering a viewer (the on-demand trigger) opens+grabs the OVERVIEW source only.
+        gen = app.state.overview_streamer.frames()
+        try:
+            next(gen)
+            assert overview_src.open_count == 1
+            assert overview_src.grab_count >= 1
+            assert science_src.open_count == 0  # dedicated: science never touched
+        finally:
+            gen.close()
 
         status = c.get("/api/vision/status").json()
         assert "overview" in status["cameras"]

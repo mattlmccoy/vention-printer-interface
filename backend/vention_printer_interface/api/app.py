@@ -453,26 +453,24 @@ def create_app(
             app.state.vision_source = source
 
         # Overview: a separate OVERVIEW camera for the live-view stream, distinct from the
-        # science capture source above. Opened once here and shared across stream clients via
-        # one OverviewStreamer grabber thread — never opened/grabbed per-request, and never
-        # falls back to the science source (that capture is owned by the vision worker; a
-        # second reader racing its cv2.VideoCapture.read() is the I1 hazard). Guard hardware:
-        # an absent/broken overview camera must never block or crash app startup — the stream
-        # route then answers 503 instead of silently reusing the science camera.
+        # science capture source above. Shared across stream clients via one OverviewStreamer
+        # grabber thread — never falls back to the science source (that capture is owned by the
+        # vision worker; a second reader racing its cv2.VideoCapture.read() is the I1 hazard).
+        # Camera-on-demand: the streamer is only CONSTRUCTED here — it does not open the device.
+        # The overview camera is opened lazily on the first stream viewer and released when the
+        # last viewer disconnects (see OverviewStreamer), so it is never held open at idle. A
+        # broken/absent camera therefore surfaces at stream time (503), never blocking startup.
         def open_overview(spec: CameraSpec) -> None:
-            ov_source = overview_source or UvcFrameSource(
-                spec.index, spec.width, spec.height, spec.effective_backend()
-            )
             app.state.overview_source = None
             app.state.overview_streamer = None
             try:
-                ov_source.open()
+                ov_source = overview_source or UvcFrameSource(
+                    spec.index, spec.width, spec.height, spec.effective_backend()
+                )
                 app.state.overview_source = ov_source
-                streamer = OverviewStreamer(ov_source)
-                streamer.start()
-                app.state.overview_streamer = streamer
-            except Exception as exc:  # noqa: BLE001 - a missing/broken overview camera must not block
-                log.warning("overview camera open failed (%s); serving without overview", exc)
+                app.state.overview_streamer = OverviewStreamer(ov_source)
+            except Exception as exc:  # noqa: BLE001 - constructing must never block startup
+                log.warning("overview streamer setup failed (%s); serving without overview", exc)
 
         app.state.vision_refresh_role_resolution = refresh_role_resolution
         app.state.vision_open_science = open_science
@@ -586,14 +584,6 @@ def create_app(
 
     def overview_src() -> FrameSource | None:
         return app.state.overview_source  # type: ignore[no-any-return]
-
-    def science_source() -> FrameSource | None:
-        # The dedicated SCIENCE capture source (owned by the vision worker). Grabbing from it
-        # directly is only safe when no capture is in flight — the guided-calibration and
-        # validate flows are interactive, operator-driven, and run with no print active, so the
-        # worker is idle. Never call this while a print/capture stream is running.
-        source: FrameSource | None = getattr(app.state, "vision_source", None)
-        return source
 
     def overview_streamer() -> OverviewStreamer | None:
         return app.state.overview_streamer  # type: ignore[no-any-return]
@@ -1143,6 +1133,40 @@ def create_app(
             "unresolved": unresolved,
         }
 
+    @app.post("/api/vision/deactivate")
+    def vision_deactivate() -> dict[str, Any]:
+        """Force-release every camera source right now (turn all camera lights off).
+
+        Stops the science capture worker and the overview streamer and closes their devices,
+        then tears the services down so GET /api/vision/status reports inactive. Guarded end to
+        end so a stuck worker or a close failure can never 500 this safety-release path."""
+        vision = vision_service()
+        if vision is not None:
+            try:
+                vision.stop()  # joins worker + closes the science device if open
+            except Exception as exc:  # noqa: BLE001 - a stuck worker must not block release
+                log.warning("vision service stop on deactivate failed (%s)", exc)
+            app.state.vision = None
+
+        streamer = overview_streamer()
+        if streamer is not None:
+            try:
+                streamer.stop()  # stops grabber + closes the overview device if open
+            except Exception as exc:  # noqa: BLE001 - guarded release
+                log.warning("overview streamer stop on deactivate failed (%s)", exc)
+            app.state.overview_streamer = None
+
+        src = overview_src()
+        if src is not None:
+            try:
+                src.close()  # belt-and-suspenders: explicit close even if streamer setup failed
+            except Exception as exc:  # noqa: BLE001 - guarded release
+                log.warning("overview source close on deactivate failed (%s)", exc)
+            app.state.overview_source = None
+
+        ev("vision_deactivated")
+        return vision_status()
+
     @app.get("/api/vision/cameras")
     def vision_cameras() -> dict[str, Any]:
         return {
@@ -1433,11 +1457,11 @@ def create_app(
         spec: BoardSpec | None = app.state.calib_session_spec
         if spec is None:
             raise HTTPException(400, "no active calibration session; start one first")
-        source = science_source()
-        if source is None:
+        vision = vision_service()
+        if vision is None:
             raise HTTPException(503, "no science camera available")
         try:
-            frame = source.grab_fresh()
+            frame = vision.grab_once()  # on-demand: open -> grab -> close, never held open
         except Exception as exc:  # noqa: BLE001 - a grab failure must not 500 the capture flow
             return {"captured": False, "reason": f"frame grab failed: {exc}"}
         detection = detect_board(frame.image, spec)
@@ -1549,11 +1573,10 @@ def create_app(
         if body.square_size_mm <= 0:
             raise HTTPException(400, "square_size_mm (certified pitch) must be > 0")
 
-        source = science_source()
-        if source is None:
+        if vision is None:
             raise HTTPException(503, "no science camera available")
         try:
-            frame = source.grab_fresh()
+            frame = vision.grab_once()  # on-demand: open -> grab -> close, never held open
         except Exception as exc:  # noqa: BLE001 - a grab failure must not 500 the request
             raise HTTPException(400, f"frame grab failed: {exc}") from exc
 
@@ -1632,11 +1655,18 @@ def create_app(
     def vision_overview_stream() -> StreamingResponse:
         # The dedicated OVERVIEW camera only — never the science source, which the vision
         # worker owns and is not safe to share (I1). Absent/broken overview camera -> 503.
+        # Camera-on-demand: frames() is the on-demand trigger — it opens the device for THIS
+        # viewer (releasing it when the last viewer disconnects). It opens eagerly so a broken
+        # camera surfaces here as a 503, not a half-open 200.
         streamer = overview_streamer()
         if streamer is None:
             raise HTTPException(503, "no dedicated overview camera available")
+        try:
+            stream = streamer.frames()
+        except Exception as exc:  # noqa: BLE001 - a failed on-demand open -> 503, not a 500
+            raise HTTPException(503, f"overview camera unavailable: {exc}") from exc
         return StreamingResponse(
-            streamer.frames(), media_type="multipart/x-mixed-replace; boundary=frame"
+            stream, media_type="multipart/x-mixed-replace; boundary=frame"
         )
 
     # ---- websocket --------------------------------------------------------------------------
