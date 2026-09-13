@@ -1,12 +1,14 @@
 import { useCallback, useEffect, useRef, useState } from "react";
-import { api, operatorBase, setOperatorBase, SITE_MODE } from "./lib/api.ts";
+import { api, operatorBase, setOperatorBase, SITE_MODE, type VisionStatus } from "./lib/api.ts";
 import { formatError, gates as computeGates } from "./lib/format.ts";
 import { checkHandshake, saveOperatorBase, UI_API_VERSION, wsUrl } from "./lib/operator.ts";
 import { clampSize, loadConsole, saveConsole, VIEWS, type ModuleSize, type View } from "./lib/console.ts";
 import { connectOptions, type Candidate } from "./lib/connect.ts";
+import { dismissQuickStart, shouldShowQuickStart } from "./lib/vision.ts";
 import type { StatusPayload } from "./lib/telemetry.ts";
 import { ErrorBoundary } from "./components/ErrorBoundary.tsx";
 import { StatusBar } from "./components/StatusBar.tsx";
+import { QuickStartVision } from "./components/QuickStartVision.tsx";
 import { PrintView } from "./components/views/PrintView.tsx";
 import { JobView } from "./components/views/JobView.tsx";
 import { ControlView } from "./components/views/ControlView.tsx";
@@ -38,6 +40,19 @@ export function App() {
   const [ip, setIp] = useState("192.168.0.2");
   const [heaterIo, setHeaterIo] = useState("1,0");
   const samples = useRef<number[]>([]);
+  const [visionStatus, setVisionStatus] = useState<VisionStatus | null>(null);
+  const [quickStartOpen, setQuickStartOpen] = useState(false); // explicit re-open, e.g. from Settings
+
+  // Camera auto-connect + quick-start (A7): poll /api/vision/status while the operator is
+  // reachable so shouldShowQuickStart can gate the first-run/re-assign wizard on roles_resolved.
+  useEffect(() => {
+    if (!reachable) return;
+    let live = true;
+    const poll = () => api.visionStatus().then((s) => { if (live) setVisionStatus(s); }).catch(() => undefined);
+    poll();
+    const id = window.setInterval(poll, 5000);
+    return () => { live = false; window.clearInterval(id); };
+  }, [reachable, base]);
 
   useEffect(() => {
     let ws: WebSocket | null = null; let alive = true; let timer: number | undefined;
@@ -75,6 +90,7 @@ export function App() {
     try { await fn(); setErr(null); } catch (e) { setErr(`${label}: ${formatError(e)}`); } finally { setBusy(null); }
   }, []);
   const g = computeGates(status, reachable);
+  const showQuickStart = quickStartOpen || shouldShowQuickStart(visionStatus, storage);
   const n = samples.current.length;
   const pollHz = n > 2 ? ((n - 1) * 1e9) / (samples.current[n - 1] - samples.current[0]) : null;
   const c = status?.controller;
@@ -167,6 +183,14 @@ export function App() {
             </div>
           )}
         </div>
+        {!showHelp && showQuickStart && (
+          <QuickStartVision
+            base={base}
+            call={call}
+            onSkip={() => { if (visionStatus) dismissQuickStart(visionStatus, storage); setQuickStartOpen(false); }}
+            onSaved={() => { setQuickStartOpen(false); api.visionStatus().then(setVisionStatus).catch(() => undefined); }}
+          />
+        )}
         {showHelp && (
           <div className="setup-help">
             <div className="setup-title">Operator not found on this computer</div>
@@ -200,7 +224,7 @@ export function App() {
         {ui.view === "control" && <ControlView status={status} gates={g} call={call} base={base} gantryStep={ui.gantryStep} pistonStep={ui.pistonStep} setGantryStep={(s) => setUi((u) => ({ ...u, gantryStep: s }))} setPistonStep={(s) => setUi((u) => ({ ...u, pistonStep: s }))} order={ui.order.control} sizes={ui.sizes.control} onOrder={setOrder("control")} onResize={setResize("control")} />}
         {ui.view === "priming" && <PrimingView status={status} gates={g} call={call} base={base} onJob={() => setView("job")} onPrint={() => setView("print")} />}
         {ui.view === "runs" && <RunsView status={status} gates={g} call={call} order={ui.order.runs} sizes={ui.sizes.runs} onOrder={setOrder("runs")} onResize={setResize("runs")} />}
-        {ui.view === "cameras" && <CamerasView status={status} gates={g} call={call} base={base} order={ui.order.cameras} sizes={ui.sizes.cameras} onOrder={setOrder("cameras")} onResize={setResize("cameras")} />}
+        {ui.view === "cameras" && <CamerasView status={status} gates={g} call={call} base={base} order={ui.order.cameras} sizes={ui.sizes.cameras} onOrder={setOrder("cameras")} onResize={setResize("cameras")} onOpenQuickStart={() => setQuickStartOpen(true)} />}
         </>)}
         <StatusBar state={c?.state ?? "disconnected"} backend={c?.backend ?? "none"} pollHz={pollHz} reachable={reachable}
           estop={c?.telemetry?.estop_triggered ?? null} drivesReady={c?.telemetry?.drives_ready ?? null} heaterOn={c?.heater.on ?? null} heaterOnS={c?.heater.on_s ?? 0} heaterMaxS={c?.heater.max_on_s ?? 0}

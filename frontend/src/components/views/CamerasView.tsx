@@ -3,6 +3,7 @@ import { api, type VisionCalibrateResult, type VisionCaptureSidecar } from "../.
 import type { Gates } from "../../lib/format.ts";
 import type { StatusPayload } from "../../lib/telemetry.ts";
 import { formatCaptureMetaValue, overviewStreamUrl, parseCaptures, type Capture } from "../../lib/vision.ts";
+import { CalibrationBoardPanel } from "../CalibrationBoardPanel.tsx";
 import { ModuleGrid, type Module } from "../Modules.tsx";
 import type { Call } from "./types.ts";
 
@@ -166,10 +167,12 @@ function CaptureBrowser({ base }: { base: string }) {
   );
 }
 
-export function CamerasView({ status, gates, call, base, order, sizes, onOrder, onResize }: {
+export function CamerasView({ status, gates, call, base, order, sizes, onOrder, onResize, onOpenQuickStart }: {
   status: StatusPayload | null; gates: Gates; call: Call; base: string;
   order?: string[]; sizes?: Record<string, import("../../lib/console.ts").ModuleSize>;
   onOrder: (ids: string[]) => void; onResize: (id: string, size: import("../../lib/console.ts").ModuleSize) => void;
+  /** A7: reopens the camera-role quick-start wizard any time (cameras swapped/replaced/re-cabled) */
+  onOpenQuickStart: () => void;
 }) {
   const run = status?.recording.run ?? null;
   const layer = status?.print?.layer ?? null;
@@ -211,7 +214,15 @@ export function CamerasView({ status, gates, call, base, order, sizes, onOrder, 
       )
     ) },
     { id: "calibration", title: "calibration", size: "m", node: <CalibrationForm call={call} disabled={!gates.reachable} /> },
+    { id: "board", title: "calibration boards (SVG/DXF)", size: "m", node: <CalibrationBoardPanel base={base} /> },
     { id: "browser", title: "capture browser", size: "l", node: <CaptureBrowser base={base} /> },
   ];
-  return <div className="view modules-view"><ModuleGrid modules={modules} order={order} sizes={sizes} onOrder={onOrder} onResize={onResize} /></div>;
+  return (
+    <div className="view modules-view">
+      <div className="actions one tight" style={{ marginBottom: 12 }}>
+        <button className="small" onClick={onOpenQuickStart}>camera setup…</button>
+      </div>
+      <ModuleGrid modules={modules} order={order} sizes={sizes} onOrder={onOrder} onResize={onResize} />
+    </div>
+  );
 }
