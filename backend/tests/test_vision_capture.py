@@ -336,6 +336,39 @@ def test_worker_skips_staleness_check_when_event_has_no_host_timestamp(tmp_path)
 # ---- M4: bounded queue drops the oldest request, never blocks the sink -------------------
 
 
+def test_set_calibration_updates_calibration_property(tmp_path):
+    svc = _svc(tmp_path)
+    assert svc.calibration is None
+    new_calib = Calibration(
+        H=np.eye(3),
+        mm_per_px=1.0,
+        bed_extent_mm=(0.0, 0.0, 5.0, 5.0),
+        version="cal-x",
+        reprojection_error=0.0,
+    )
+    svc.set_calibration(new_calib)
+    assert svc.calibration is new_calib
+
+
+def test_set_calibration_used_by_subsequent_capture(tmp_path):
+    svc = _svc(tmp_path)
+    svc.start()
+    new_calib = Calibration(
+        H=np.eye(3),
+        mm_per_px=1.0,
+        bed_extent_mm=(0.0, 0.0, 5.0, 5.0),
+        version="cal-x",
+        reprojection_error=0.0,
+    )
+    svc.set_calibration(new_calib)
+    svc.on_event("capture:pre_jet", {"layer": 1})
+    svc.drain(timeout=2.0)
+    svc.stop()
+
+    sidecar = json.loads((tmp_path / "vision" / "layer_0001" / "pre_jet.json").read_text())
+    assert sidecar["calibration"]["version"] == "cal-x"
+
+
 def test_queue_full_drops_oldest_request_and_increments_drops(tmp_path):
     block = threading.Event()
 

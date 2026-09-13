@@ -66,6 +66,14 @@ class VisionService:
             except queue.Empty:
                 self.drops += 1
 
+    @property
+    def calibration(self) -> Calibration | None:
+        return self._calibration
+
+    def set_calibration(self, calibration: Calibration | None) -> None:
+        """Hot-swap the calibration used by future captures (control-thread accessor)."""
+        self._calibration = calibration
+
     def start(self) -> None:
         self._source.open()
         self._stop.clear()

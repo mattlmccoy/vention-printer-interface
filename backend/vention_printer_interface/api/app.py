@@ -934,7 +934,7 @@ def create_app(
             active_roles.append(camera_config.overview.role)
         if vision is not None:
             active_roles.append(camera_config.science.role)
-        calib: Calibration | None = vision._calibration if vision is not None else None  # noqa: SLF001
+        calib: Calibration | None = vision.calibration if vision is not None else None
         return {
             "cameras": active_roles,
             "calibration": calib.version if calib is not None else None,
@@ -966,7 +966,7 @@ def create_app(
         save_calibration(vision_calibration_path, calib)
         vision = vision_service()
         if vision is not None:
-            vision._calibration = calib  # noqa: SLF001 - hot-swap the running service's calibration
+            vision.set_calibration(calib)
         return {"reprojection_error": err, "calibration_version": version}
 
     @app.get("/api/vision/captures")
