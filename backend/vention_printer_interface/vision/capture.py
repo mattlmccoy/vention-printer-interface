@@ -17,7 +17,7 @@ from pathlib import Path
 from typing import Any
 
 from vention_printer_interface.vision.events import CaptureRequest, label_to_stage
-from vention_printer_interface.vision.frame_source import FrameSource
+from vention_printer_interface.vision.frame_source import Frame, FrameSource
 from vention_printer_interface.vision.registration import Calibration, register_frame
 from vention_printer_interface.vision.store import append_manifest, write_capture
 
@@ -108,6 +108,7 @@ class VisionService:
             return
 
         frame = self._source.grab_fresh()
+        frame = self._ensure_fresh(frame, req)
         registered, registered_space = register_frame(frame.image, self._calibration)
 
         meta: dict[str, Any] = {
@@ -159,6 +160,31 @@ class VisionService:
                 "host_timestamp_ns": meta["host_timestamp_ns"],
             },
         )
+
+    def _ensure_fresh(self, frame: Frame, req: CaptureRequest) -> Frame:
+        """Capture-freshness guard: never hand a pre-event frame to the wrong stage.
+
+        `grab_fresh()` already flushes the driver's buffer, but a frame can still
+        predate the triggering event (e.g. a slow driver, a race on the discard
+        count). When the event carries a `host_timestamp_ns`, re-grab once; if the
+        second frame is still older than the event, accept it (never silently drop
+        the capture) but log a warning so the staleness is recorded, not hidden.
+        """
+        if not req.host_timestamp_ns:
+            return frame
+        if frame.timestamp_ns >= req.host_timestamp_ns:
+            return frame
+        frame = self._source.grab_fresh()
+        if frame.timestamp_ns < req.host_timestamp_ns:
+            log.warning(
+                "vision capture stale: layer %s %s frame_timestamp_ns=%s predates "
+                "host_timestamp_ns=%s after re-grab",
+                req.layer,
+                req.stage,
+                frame.timestamp_ns,
+                req.host_timestamp_ns,
+            )
+        return frame
 
     def _calibration_meta(self) -> dict[str, Any] | None:
         calibration = self._calibration

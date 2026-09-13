@@ -1,4 +1,6 @@
 import json
+import logging
+import threading
 import time
 
 import numpy as np
@@ -188,3 +190,178 @@ def test_capture_meta_includes_expanded_fields(tmp_path):
         "mm_per_px": 0.5,
         "bed_extent_mm": [0.0, 0.0, 10.0, 10.0],
     }
+
+
+# ---- I2: worker-side capture-freshness guard (re-grab a frame that predates the event) ----
+
+
+def test_worker_regrabs_once_when_first_frame_predates_the_event(tmp_path):
+    """capture freshness: a frame older than the triggering event must not be accepted
+    as-is -- the worker re-grabs once via grab_fresh() before writing."""
+
+    class StaleThenFresh(FrameSource):
+        def __init__(self):
+            self.calls = 0
+
+        def open(self):
+            pass
+
+        def close(self):
+            pass
+
+        def grab(self):
+            raise AssertionError("worker must call grab_fresh(), not grab()")
+
+        def grab_fresh(self, discard: int = 2) -> Frame:
+            self.calls += 1
+            ts = 100 if self.calls == 1 else 5_000_000_000
+            return Frame(image=np.zeros((4, 4, 3), np.uint8), timestamp_ns=ts)
+
+    source = StaleThenFresh()
+    svc = _svc(tmp_path, source=source)
+    svc.start()
+    svc.on_event("capture:pre_jet", {"layer": 1, "host_timestamp_ns": 1_000_000_000})
+    svc.drain(timeout=2.0)
+    svc.stop()
+
+    assert source.calls == 2  # the first grab predated the event -> exactly one re-grab
+    sidecar = json.loads((tmp_path / "vision" / "layer_0001" / "pre_jet.json").read_text())
+    assert sidecar["frame_timestamp_ns"] == 5_000_000_000
+
+
+def test_worker_does_not_regrab_when_first_frame_is_already_fresh(tmp_path):
+    class CountingFresh(FrameSource):
+        def __init__(self):
+            self.calls = 0
+
+        def open(self):
+            pass
+
+        def close(self):
+            pass
+
+        def grab(self):
+            raise AssertionError("worker must call grab_fresh(), not grab()")
+
+        def grab_fresh(self, discard: int = 2) -> Frame:
+            self.calls += 1
+            return Frame(image=np.zeros((4, 4, 3), np.uint8), timestamp_ns=5_000_000_000)
+
+    source = CountingFresh()
+    svc = _svc(tmp_path, source=source)
+    svc.start()
+    svc.on_event("capture:pre_jet", {"layer": 1, "host_timestamp_ns": 1_000_000_000})
+    svc.drain(timeout=2.0)
+    svc.stop()
+
+    assert source.calls == 1  # frame was already newer than the event -> no re-grab
+
+
+def test_worker_logs_warning_when_still_stale_after_regrab(tmp_path, caplog):
+    class AlwaysStale(FrameSource):
+        def __init__(self):
+            self.calls = 0
+
+        def open(self):
+            pass
+
+        def close(self):
+            pass
+
+        def grab(self):
+            raise AssertionError("worker must call grab_fresh(), not grab()")
+
+        def grab_fresh(self, discard: int = 2) -> Frame:
+            self.calls += 1
+            return Frame(image=np.zeros((4, 4, 3), np.uint8), timestamp_ns=100)
+
+    source = AlwaysStale()
+    svc = _svc(tmp_path, source=source)
+    svc.start()
+    with caplog.at_level(logging.WARNING, logger="vention_printer_interface.vision.capture"):
+        svc.on_event("capture:pre_jet", {"layer": 1, "host_timestamp_ns": 1_000_000_000})
+        svc.drain(timeout=2.0)
+    svc.stop()
+
+    assert source.calls == 2  # re-grabbed once, still older than the event
+    assert any("stale" in record.message.lower() for record in caplog.records)
+    # the capture must still be written -- staleness is recorded, never silently dropped
+    assert (tmp_path / "vision" / "layer_0001" / "pre_jet.png").exists()
+
+
+def test_worker_skips_staleness_check_when_event_has_no_host_timestamp(tmp_path):
+    class CountingFresh(FrameSource):
+        def __init__(self):
+            self.calls = 0
+
+        def open(self):
+            pass
+
+        def close(self):
+            pass
+
+        def grab(self):
+            raise AssertionError("worker must call grab_fresh(), not grab()")
+
+        def grab_fresh(self, discard: int = 2) -> Frame:
+            self.calls += 1
+            return Frame(image=np.zeros((4, 4, 3), np.uint8), timestamp_ns=1)
+
+    source = CountingFresh()
+    svc = _svc(tmp_path, source=source)
+    svc.start()
+    svc.on_event("capture:pre_jet", {"layer": 1})  # no host_timestamp_ns
+    svc.drain(timeout=2.0)
+    svc.stop()
+
+    assert source.calls == 1  # nothing to compare against -> no re-grab
+
+
+# ---- M4: bounded queue drops the oldest request, never blocks the sink -------------------
+
+
+def test_queue_full_drops_oldest_request_and_increments_drops(tmp_path):
+    block = threading.Event()
+
+    class Blocking(FrameSource):
+        def __init__(self):
+            self.entered = threading.Event()
+
+        def open(self):
+            pass
+
+        def close(self):
+            pass
+
+        def grab(self):
+            raise AssertionError("worker must call grab_fresh(), not grab()")
+
+        def grab_fresh(self, discard: int = 2) -> Frame:
+            self.entered.set()
+            block.wait(timeout=5.0)
+            return Frame(image=np.zeros((4, 4, 3), np.uint8), timestamp_ns=time.time_ns())
+
+    source = Blocking()
+    svc = VisionService(
+        source=source, run_dir_provider=lambda: tmp_path, calibration=None, queue_max=2
+    )
+    svc.start()
+    try:
+        svc.on_event("capture:pre_jet", {"layer": 1})
+        assert source.entered.wait(timeout=2.0), "worker never entered grab_fresh"
+
+        # worker is now stuck processing layer 1; these three fill (and overflow) queue_max=2
+        svc.on_event("capture:pre_jet", {"layer": 2})
+        svc.on_event("capture:post_jet", {"layer": 3})
+        svc.on_event("capture:post_heat", {"layer": 4})  # queue full -> drops layer 2
+
+        assert svc.drops == 1
+    finally:
+        block.set()
+        svc.drain(timeout=2.0)
+        svc.stop()
+
+    assert (tmp_path / "vision" / "layer_0001").exists()
+    assert not (tmp_path / "vision" / "layer_0002").exists()  # dropped, never written
+    assert (tmp_path / "vision" / "layer_0003").exists()
+    assert (tmp_path / "vision" / "layer_0004").exists()
