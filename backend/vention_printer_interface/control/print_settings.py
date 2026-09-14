@@ -126,6 +126,9 @@ class PrintSettings:
     purge_dwell_s: float = 0.0
     purge_mode: str = "per_layer"  # "every_pass" | "per_layer" | "every_n_layers"
     purge_every_n_layers: int = 5  # used when purge_mode == "every_n_layers"
+    # Absolute printhead position (mm) where the nozzle-purge dwell happens. None => fall back to
+    # printhead_start_mm (preserves the original behavior of holding at the printhead start).
+    purge_position_mm: float | None = None
     part_max_mm: float = 72.0  # final part-cylinder drop position (= part spill-safe depth)
     heater_speed: float = 50.0
     heater_accel: float = 250.0
@@ -236,6 +239,13 @@ class PrintSettings:
         p_mode = p_mode if p_mode in PURGE_MODES else base.purge_mode
         p_every = d.get("purge_every_n_layers", base.purge_every_n_layers)
         p_every = int(p_every) if isinstance(p_every, int | float) else base.purge_every_n_layers
+        p_pos_raw = d.get("purge_position_mm", base.purge_position_mm)
+        # None keeps the printhead_start_mm fallback; a set value is clamped like other positions.
+        p_pos = (
+            limits.clamp_position(PRINTHEAD, float(p_pos_raw))
+            if isinstance(p_pos_raw, int | float) and not isinstance(p_pos_raw, bool)
+            else None
+        )
         return cls(
             thin_precoat=PhasePlan.bounded(d.get("thin_precoat"), limits, base.thin_precoat),
             printing=PhasePlan.bounded(d.get("printing"), limits, base.printing),
@@ -284,6 +294,7 @@ class PrintSettings:
             purge_dwell_s=_clamp(num("purge_dwell_s", base.purge_dwell_s), 0.0, 60.0),
             purge_mode=p_mode,
             purge_every_n_layers=int(_clamp(p_every, 1, MAX_LAYERS)),
+            purge_position_mm=p_pos,
             feed_fast_speed=limits.clamp_speed(FEED, num("feed_fast_speed", base.feed_fast_speed)),
             feed_fast_accel=limits.clamp_accel(FEED, num("feed_fast_accel", base.feed_fast_accel)),
             target_carbon_wt=_clamp(
@@ -468,9 +479,16 @@ def compile_print(plan: PrintSettings) -> tuple[Step, ...]:
             # covers both moves. Multipass shuttles the printhead back only to
             # printhead_multipass_return_mm between passes (saves travel), home on the LAST pass.
             add(name, layer_no, "move_abs", RECOATER, plan.recoater_home_mm)
+            # Where the purge dwell holds the printhead: purge_position_mm when set, else the
+            # printhead start position (original behavior).
+            purge_pos = (
+                plan.purge_position_mm
+                if plan.purge_position_mm is not None
+                else plan.printhead_start_mm
+            )
             for pass_no in range(plan.n_jet_passes):
                 if purge_every_pass or (purge_first_pass and pass_no == 0):
-                    add(name, layer_no, "move_abs", PRINTHEAD, plan.printhead_start_mm)
+                    add(name, layer_no, "move_abs", PRINTHEAD, purge_pos)
                     add(name, layer_no, "wait")
                     add(name, layer_no, "dwell", value=plan.purge_dwell_s, label="nozzle purge")
                 add(name, layer_no, "move_abs", PRINTHEAD, plan.printhead_end_mm)

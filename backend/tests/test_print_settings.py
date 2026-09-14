@@ -198,6 +198,47 @@ def test_nozzle_purge_dwell_and_scheduling() -> None:
     assert len([s for s in compile_print(p3) if s.label == "nozzle purge"]) == 2
 
 
+def test_purge_position_defaults_to_printhead_start() -> None:
+    # Default is None -> the purge hold falls back to printhead_start_mm exactly as before,
+    # so a plan with purge on but no purge_position_mm compiles identically to today.
+    assert PrintSettings().purge_position_mm is None
+    base = dataclasses.replace(
+        one_layer(), n_jet_passes=3, purge_dwell_s=0.5, purge_mode="every_pass"
+    )
+    assert base.purge_position_mm is None
+    steps = compile_print(base)
+    for i, s in enumerate(steps):
+        if s.label == "nozzle purge":
+            prev = [x for x in steps[:i] if x.axis == PRINTHEAD and x.kind == "move_abs"][-1]
+            assert prev.value == base.printhead_start_mm
+
+
+def test_purge_position_overrides_the_purge_hold() -> None:
+    # When set, purge_position_mm is the absolute printhead position for the purge dwell,
+    # WITHOUT changing printhead_start_mm (the capture park still uses printhead_start_mm).
+    p = dataclasses.replace(
+        one_layer(),
+        n_jet_passes=3,
+        purge_dwell_s=0.5,
+        purge_mode="every_pass",
+        purge_position_mm=175.0,
+    )
+    steps = compile_print(p)
+    for i, s in enumerate(steps):
+        if s.label == "nozzle purge":
+            prev = [x for x in steps[:i] if x.axis == PRINTHEAD and x.kind == "move_abs"][-1]
+            assert prev.value == 175.0
+
+
+def test_bounded_clamps_purge_position_and_preserves_none() -> None:
+    lim = SafetyLimits()
+    # unset stays None (fallback behavior preserved)
+    assert PrintSettings.bounded({}, lim).purge_position_mm is None
+    # a set value is clamped into the printhead axis travel like other positions
+    p = PrintSettings.bounded({"purge_position_mm": 5000}, lim)
+    assert p.purge_position_mm == lim.travel_max[PRINTHEAD]
+
+
 def test_feed_backlash_preload_drops_feed_before_spread() -> None:
     # Opt-in anti-backlash: the feed drops feed_backlash_mm BEFORE the recoater spread, then the
     # post-spread feed-up covers that drop plus the advance — net advance unchanged, approached from
