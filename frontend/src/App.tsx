@@ -125,7 +125,7 @@ export function App() {
     <ErrorBoundary>
       <div className="console">
         <header className="top">
-          <span className="wordmark">RFAM BINDER JET<span className="sub">MM2 · MetPrint</span></span>
+          <span className="wordmark">VENTION PRINTER INTERFACE<span className="sub">MM2 · MetPrint</span></span>
           <nav className="tabs">
             <div className="tabgroup build">
               <span className="tglabel">BUILD</span>

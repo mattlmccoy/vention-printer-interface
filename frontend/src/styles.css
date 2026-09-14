@@ -268,10 +268,13 @@ button.small { height: 34px; padding: 0 12px; border: 1px solid var(--line-contr
    two tidy rows — label -> shrinkable input -> set -> cap — that shrink and wrap instead of
    overflowing at narrow module widths. minmax(0,*) tracks + min-width:0 children guarantee no
    horizontal overflow when a module is resized narrow. */
-.tune { grid-column: 1 / -1; display: grid; grid-template-columns: auto minmax(3rem, 6rem) auto minmax(0, 1fr); gap: 8px 10px; align-items: center; margin: 2px 0 0; }
+/* SPD/ACC tuning: pack tight to the LEFT (label · input · set · cap) instead of spreading the cap
+   to the far edge — the readability win. Content-sized columns, left-justified; leftover space is
+   intentional margin (size-to-content rule). Wraps on very narrow modules. */
+.tune { grid-column: 1 / -1; display: grid; grid-template-columns: max-content minmax(3rem, 5rem) max-content max-content; justify-content: start; gap: 8px 10px; align-items: center; margin: 2px 0 0; }
 .tune .lbl { font: 12px var(--font-mono); letter-spacing: .06em; text-transform: uppercase; color: var(--label); }
 .tune .inp { width: 100%; min-width: 0; }
-.tune .cap { font: 12px var(--font-mono); color: var(--faint); min-width: 0; white-space: normal; overflow-wrap: break-word; }
+.tune .cap { font: 12px var(--font-mono); color: var(--faint); white-space: nowrap; }
 .row { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; font-size: 14px; color: var(--muted); }
 
 /* runs */
@@ -323,7 +326,9 @@ button.small { height: 34px; padding: 0 12px; border: 1px solid var(--line-contr
 .job-map .warnv { color: var(--warn); }
 
 /* ---- modules ---- */
-.modules { display: flex; flex-wrap: wrap; align-items: stretch; align-content: flex-start; gap: 16px; padding: 20px 24px; overflow: auto; min-height: 0; }
+/* cards size to their own content height (align-items:flex-start) instead of stretching to the
+   tallest sibling — kills the big empty space under short modules like Motion / Heater. */
+.modules { display: flex; flex-wrap: wrap; align-items: flex-start; align-content: flex-start; gap: 16px; padding: 20px 24px; overflow: auto; min-height: 0; }
 .module { background: var(--panel); border: 1px solid var(--line); border-radius: 4px; display: flex; flex-direction: column; min-width: 0; position: relative; }
 /* Unsized modules grow to share the row (no dead gap to the right); declared size sets the flex-basis,
    so a larger size claims a wider track and wraps sooner, i.e. spans more. min(..,100%) keeps a lone
@@ -351,6 +356,20 @@ button.small { height: 34px; padding: 0 12px; border: 1px solid var(--line-contr
 .stack.compact .col { width: 150px; }
 .actions.tight { margin-top: 14px; }
 .pill .lock { width: 12px; height: 12px; }
+
+/* ---- routine parameters: grouped cards (nesting + packing; no flat wide field list) ---- */
+.rp-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(212px, 1fr)); gap: 12px; align-items: start; margin-top: 2px; }
+.rp-card { border: 1px solid var(--line); border-radius: var(--radius); background: var(--bg-deep); padding: 12px 13px; }
+.rp-card h4 { margin: 0 0 8px; font: 11px var(--font-mono); letter-spacing: .1em; text-transform: uppercase; color: var(--accent); }
+.rp-row { display: flex; align-items: center; justify-content: space-between; gap: 6px 10px; padding: 4px 0; font-size: 13px; color: var(--muted); flex-wrap: wrap; }
+.rp-row > span:first-child { min-width: 0; }
+.rp-row .rv { display: inline-flex; align-items: center; gap: 6px; margin-left: auto; }
+.rp-card input[type=number] { width: 80px; text-align: right; padding: 5px 8px; }
+.rp-card .seg { margin: 0; gap: 6px; }
+.rp-card .seg .small { height: 28px; padding: 0 9px; }
+.rp-note { font-size: 11px; color: var(--faint); margin-top: 8px; line-height: 1.4; }
+.rp-readout { border-top: 1px dashed var(--line); margin-top: 10px; padding-top: 9px; font: 12px var(--font-mono); color: var(--muted); line-height: 1.5; }
+.rp-readout b { color: var(--fg-strong); }
 
 /* ---- machine image overlay ---- */
 .mimg svg { width: 100%; height: auto; display: block; background: var(--danger-ink); border-radius: var(--radius); }

@@ -100,31 +100,49 @@ export function RoutinePanel({ gates, call }: { gates: Gates; call: Call }) {
   const exp = p.exposure;
   return (
     <>
-      <div className="fields" style={{ marginTop: 0, maxWidth: "none" }}>
-        <span>thin precoat</span>
-        <label className="row"><NumberField value={d.thin_precoat.n_layers} disabled={!ok} style={{ width: 64 }} onChange={(v) => setPh("thin_precoat", { n_layers: v })} /> × <NumberField step="0.1" value={d.thin_precoat.layer_thickness_mm} disabled={!ok} style={{ width: 72 }} onChange={(v) => setPh("thin_precoat", { layer_thickness_mm: v })} /> mm · feed <NumberField step="0.1" value={d.thin_precoat.feed_thickness_mm} disabled={!ok} style={{ width: 72 }} onChange={(v) => setPh("thin_precoat", { feed_thickness_mm: v })} /> mm</label>
-        <span>printing feed</span><span className="row"><NumberField step="0.1" value={d.printing_feed_thickness_mm} disabled={!ok} onChange={(v) => setD({ printing_feed_thickness_mm: v })} /> mm / layer</span>
-        <span>recoater return</span><span className="row"><NumberField value={d.recoater_return_mm} disabled={!ok} onChange={(v) => setD({ recoater_return_mm: v })} /> mm</span>
-        <span>heater start</span><span className="row"><NumberField value={d.heater_start_mm} disabled={!ok} onChange={(v) => setD({ heater_start_mm: v })} /> mm</span>
-        <span title="Manual recoater sweep speed during the heater pass — overrides the computed exposure sweep (which is unachievable on the current hardware).">heater speed</span><span className="row"><NumberField step="1" value={d.heater_speed} disabled={!ok} onChange={(v) => setD({ heater_speed: v })} /> mm/s <span className="hint">(manual override)</span></span>
-        <span>part max</span><span className="row"><NumberField value={d.part_max_mm} disabled={!ok} onChange={(v) => setD({ part_max_mm: v })} /> mm</span>
-        <span title="prints each layer N times without dropping the build piston">multipass (passes / layer)</span><span className="row"><NumberField value={d.n_jet_passes} disabled={!ok} onChange={(v) => setD({ n_jet_passes: v })} /></span>
-        <span title="Between multipass passes the printhead returns only to here instead of home (saves travel); it still returns home on the last pass.">multipass return</span><span className="row"><NumberField value={d.printhead_multipass_return_mm} disabled={!ok} onChange={(v) => setD({ printhead_multipass_return_mm: v })} /> mm</span>
-        <span title="Where the printhead parks at the start of every print (after the setup homing), before layer 1.">printhead start</span><span className="row"><NumberField value={d.printhead_start_mm} disabled={!ok} onChange={(v) => setD({ printhead_start_mm: v })} /> mm</span>
-        <span title="Anti-backlash: drops the feed piston this much BEFORE the recoater spread, then the post-spread feed-up returns it from below to take up mechanical slop. 0 = off.">feed backlash</span><span className="row"><NumberField step="0.1" value={d.feed_backlash_mm} disabled={!ok} onChange={(v) => setD({ feed_backlash_mm: v })} /> mm</span>
-        <span title="Nozzle purge: firing is external, so this holds the printhead at its start position (250) for this many seconds before a jet pass — a window for the printhead controller to purge. 0 = off.">nozzle purge</span><label className="row"><NumberField step="0.1" value={d.purge_dwell_s} disabled={!ok} style={{ width: 60 }} onChange={(v) => setD({ purge_dwell_s: v })} /> s
-          <span className="seg" style={{ marginLeft: 8 }}>{([["every_pass", "every pass"], ["per_layer", "per layer"], ["every_n_layers", "every N"]] as const).map(([m, lbl]) => <button key={m} type="button" className={`small${d.purge_mode === m ? " on" : ""}`} aria-pressed={d.purge_mode === m} disabled={!ok} onClick={() => setD({ purge_mode: m })}>{lbl}</button>)}</span>
-          {d.purge_mode === "every_n_layers" && <> N=<NumberField value={d.purge_every_n_layers} disabled={!ok} style={{ width: 48 }} onChange={(v) => setD({ purge_every_n_layers: v })} /></>}</label>
-        <span>pre-heater drop</span><span className="row"><NumberField step="0.1" value={d.pre_heater_drop_mm} disabled={!ok} onChange={(v) => setD({ pre_heater_drop_mm: v })} /> mm</span>
-        <span>postcoat</span><span className="row"><Toggle checked={d.postcoat_enabled} disabled={!ok} onChange={(v) => setD({ postcoat_enabled: v })} /></span>
-        <span>target carbon</span><span className="row"><NumberField step="0.01" value={d.target_carbon_wt} disabled={!ok} onChange={(v) => setD({ target_carbon_wt: v })} /> wt</span>
-        <span>part area</span><span className="row"><NumberField value={d.part_area_mm2} disabled={!ok} onChange={(v) => setD({ part_area_mm2: v })} /> mm²</span>
-        <span>heater power</span><span className="row"><NumberField value={d.heater_section_power_w} disabled={!ok} onChange={(v) => setD({ heater_section_power_w: v })} /> W</span>
+      <div className="rp-grid">
+        <div className="rp-card">
+          <h4>powder handling</h4>
+          <div className="rp-row"><span>thin precoat (n × mm)</span><span className="rv"><NumberField value={d.thin_precoat.n_layers} disabled={!ok} style={{ width: 46 }} onChange={(v) => setPh("thin_precoat", { n_layers: v })} /> × <NumberField step="0.1" value={d.thin_precoat.layer_thickness_mm} disabled={!ok} style={{ width: 64 }} onChange={(v) => setPh("thin_precoat", { layer_thickness_mm: v })} /></span></div>
+          <div className="rp-row"><span>precoat feed (mm)</span><span className="rv"><NumberField step="0.1" value={d.thin_precoat.feed_thickness_mm} disabled={!ok} onChange={(v) => setPh("thin_precoat", { feed_thickness_mm: v })} /></span></div>
+          <div className="rp-row"><span>printing feed (mm)</span><span className="rv"><NumberField step="0.1" value={d.printing_feed_thickness_mm} disabled={!ok} onChange={(v) => setD({ printing_feed_thickness_mm: v })} /></span></div>
+          <div className="rp-row"><span>recoater return (mm)</span><span className="rv"><NumberField value={d.recoater_return_mm} disabled={!ok} onChange={(v) => setD({ recoater_return_mm: v })} /></span></div>
+          <div className="rp-row"><span title="Anti-backlash: drops the feed piston this much BEFORE the recoater spread, then the post-spread feed-up returns it from below to take up mechanical slop. 0 = off.">feed backlash (mm)</span><span className="rv"><NumberField step="0.1" value={d.feed_backlash_mm} disabled={!ok} onChange={(v) => setD({ feed_backlash_mm: v })} /></span></div>
+          <div className="rp-row"><span>postcoat</span><span className="rv"><Toggle checked={d.postcoat_enabled} disabled={!ok} onChange={(v) => setD({ postcoat_enabled: v })} /></span></div>
+          <div className="rp-note">Thick precoats live in the Priming routine, not here.</div>
+        </div>
+
+        <div className="rp-card">
+          <h4>multipass</h4>
+          <div className="rp-row"><span title="prints each layer N times without dropping the build piston">passes / layer</span><span className="rv"><NumberField value={d.n_jet_passes} disabled={!ok} onChange={(v) => setD({ n_jet_passes: v })} /></span></div>
+          <div className="rp-row"><span title="Between multipass passes the printhead returns only to here instead of home (saves travel); it still returns home on the last pass.">multipass return (mm)</span><span className="rv"><NumberField value={d.printhead_multipass_return_mm} disabled={!ok} onChange={(v) => setD({ printhead_multipass_return_mm: v })} /></span></div>
+          <div className="rp-row"><span title="Where the printhead parks at the start of every print (after the setup homing), before layer 1.">printhead start (mm)</span><span className="rv"><NumberField value={d.printhead_start_mm} disabled={!ok} onChange={(v) => setD({ printhead_start_mm: v })} /></span></div>
+        </div>
+
+        <div className="rp-card">
+          <h4>heat</h4>
+          <div className="rp-row"><span>heater start (mm)</span><span className="rv"><NumberField value={d.heater_start_mm} disabled={!ok} onChange={(v) => setD({ heater_start_mm: v })} /></span></div>
+          <div className="rp-row"><span title="Manual recoater sweep speed during the heater pass — overrides the computed exposure sweep (unachievable on current hardware).">heater speed (mm/s)</span><span className="rv"><NumberField step="1" value={d.heater_speed} disabled={!ok} onChange={(v) => setD({ heater_speed: v })} /></span></div>
+          <div className="rp-row"><span>pre-heater drop (mm)</span><span className="rv"><NumberField step="0.1" value={d.pre_heater_drop_mm} disabled={!ok} onChange={(v) => setD({ pre_heater_drop_mm: v })} /></span></div>
+          <div className="rp-row"><span title="FINISH drives the part cylinder to this absolute position — the spill-safe depth.">part max (mm)</span><span className="rv"><NumberField value={d.part_max_mm} disabled={!ok} onChange={(v) => setD({ part_max_mm: v })} /></span></div>
+        </div>
+
+        <div className="rp-card">
+          <h4>nozzle purge</h4>
+          <div className="rp-row"><span title="Firing is external, so this holds the printhead at its start position for this many seconds before a jet pass — a window for the printhead controller to purge. 0 = off.">purge dwell (s)</span><span className="rv"><NumberField step="0.1" value={d.purge_dwell_s} disabled={!ok} style={{ width: 64 }} onChange={(v) => setD({ purge_dwell_s: v })} /></span></div>
+          <div className="rp-row" style={{ alignItems: "flex-start" }}><span>frequency</span><span className="seg">{([["every_pass", "every pass"], ["per_layer", "per layer"], ["every_n_layers", "every N"]] as const).map(([m, lbl]) => <button key={m} type="button" className={`small${d.purge_mode === m ? " on" : ""}`} aria-pressed={d.purge_mode === m} disabled={!ok} onClick={() => setD({ purge_mode: m })}>{lbl}</button>)}</span></div>
+          {d.purge_mode === "every_n_layers" && <div className="rp-row"><span>N (layers)</span><span className="rv"><NumberField value={d.purge_every_n_layers} disabled={!ok} style={{ width: 56 }} onChange={(v) => setD({ purge_every_n_layers: v })} /></span></div>}
+        </div>
+
+        <div className="rp-card">
+          <h4>carbon &amp; exposure</h4>
+          <div className="rp-row"><span>target carbon (wt)</span><span className="rv"><NumberField step="0.01" value={d.target_carbon_wt} disabled={!ok} onChange={(v) => setD({ target_carbon_wt: v })} /></span></div>
+          <div className="rp-row"><span>part area (mm²)</span><span className="rv"><NumberField value={d.part_area_mm2} disabled={!ok} onChange={(v) => setD({ part_area_mm2: v })} /></span></div>
+          <div className="rp-row"><span>heater power (W)</span><span className="rv"><NumberField value={d.heater_section_power_w} disabled={!ok} onChange={(v) => setD({ heater_section_power_w: v })} /></span></div>
+          <div className="rp-readout">IPA exposure — {exp ? <>energy <b>{rnd(exp.energy_j)} J</b> · dwell <b>{rnd(exp.time_s)} s</b> · sweep <b>{rnd(exp.sweep_speed_mm_s)} mm/s</b></> : "unavailable"}</div>
+        </div>
       </div>
-      <div className="kv" style={{ marginTop: 10 }}>
-        <span>IPA exposure</span><span>{exp ? `energy ${rnd(exp.energy_j)} J · dwell ${rnd(exp.time_s)} s · sweep ${rnd(exp.sweep_speed_mm_s)} mm/s` : "exposure unavailable"}</span>
-      </div>
-      <div className="actions one tight" style={{ marginTop: 8 }}>
+      <div className="actions one tight" style={{ marginTop: 12 }}>
         <button className="cta" disabled={!ok || !dirty} onClick={save}>SET ROUTINE</button>
       </div>
       {!ok && <div className="lock">{gates.printActive ? "print in progress — parameters locked" : gates.connected ? "read-only · take control from the connection pill" : "connect a controller to edit"}</div>}

@@ -14,9 +14,9 @@ Base = the real app (not the mockup). Verify each slice live at http://localhost
 - Readability: fix `.tune` spread, measure-cap kv rows, size-to-content buttons.
 
 ## Phases
-- [ ] **Slice 1 (now)**: wordmark rename; grouped "Build" tabs; Toggle component + CSS; replace confusing heater/postcoat checkboxes in Job/Print/Routine. Build + verify live.
-- [ ] Slice 2: Control readability (tune rows, button sizing) — keep grouping.
-- [ ] Slice 3: RoutinePanel → grouped cards w/ proper packing + toggles + drawer.
+- [x] **Slice 1**: wordmark → VENTION PRINTER INTERFACE; grouped "Build" tabs; Toggle component; replace confusing heater/postcoat checkboxes. (commit 1d42734; wordmark finalized in slice 2/3 commit)
+- [x] Slice 2: Control readability — tune rows pack left; cards size to content height (no tall-empty modules). Grouping kept.
+- [x] Slice 3: RoutinePanel → grouped cards (powder handling / multipass / heat / nozzle purge / carbon&exposure) + toggles.
 - [ ] Slice 4: Print state-aware (command strip + state bodies + routine drawer).
 - [ ] Slice 5: light theme tokens + toggle in header.
 - [ ] Slice 6: dock (resizable machine monitor) + ribbon.
