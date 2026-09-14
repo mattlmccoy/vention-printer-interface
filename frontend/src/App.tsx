@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState, type CSSProperties, type PointerEvent as ReactPointerEvent } from "react";
 import { api, operatorBase, setOperatorBase, SITE_MODE, type VisionStatus } from "./lib/api.ts";
 import { formatError, gates as computeGates } from "./lib/format.ts";
 import { checkHandshake, saveOperatorBase, UI_API_VERSION, wsUrl } from "./lib/operator.ts";
@@ -8,6 +8,7 @@ import { dismissQuickStart, shouldShowQuickStart } from "./lib/vision.ts";
 import type { StatusPayload } from "./lib/telemetry.ts";
 import { ErrorBoundary } from "./components/ErrorBoundary.tsx";
 import { StatusBar } from "./components/StatusBar.tsx";
+import { MachineDock } from "./components/MachineDock.tsx";
 import { QuickStartVision } from "./components/QuickStartVision.tsx";
 import { PrintView } from "./components/views/PrintView.tsx";
 import { JobView } from "./components/views/JobView.tsx";
@@ -49,6 +50,21 @@ export function App() {
     document.documentElement.dataset.theme = theme;
     try { storage?.setItem("vpi.theme", theme); } catch { /* ignore */ }
   }, [theme]);
+
+  // Persistent machine dock (right side): width + open state, remembered locally.
+  const [dock, setDock] = useState<{ w: number; open: boolean }>(() => {
+    try { const j = JSON.parse(storage?.getItem("vpi.dock") ?? "") as { w?: number; open?: boolean }; if (j && typeof j.w === "number") return { w: j.w, open: j.open !== false }; } catch { /* ignore */ }
+    return { w: 320, open: true };
+  });
+  useEffect(() => { try { storage?.setItem("vpi.dock", JSON.stringify(dock)); } catch { /* ignore */ } }, [dock]);
+  const dockDrag = (e: ReactPointerEvent) => {
+    e.preventDefault();
+    const startX = e.clientX; const startW = dock.w;
+    const move = (ev: PointerEvent) => { const w = Math.max(262, Math.min(560, startW + (startX - ev.clientX))); setDock((d) => ({ ...d, w })); };
+    const up = () => { window.removeEventListener("pointermove", move); window.removeEventListener("pointerup", up);
+      setDock((d) => { const SNAP = [288, 320, 400, 460]; const w = SNAP.reduce((a, b) => (Math.abs(b - d.w) < Math.abs(a - d.w) ? b : a)); return { ...d, w }; }); };
+    window.addEventListener("pointermove", move); window.addEventListener("pointerup", up);
+  };
 
   // Camera auto-connect + quick-start (A7): poll /api/vision/status while the operator is
   // reachable so shouldShowQuickStart can gate the first-run/re-assign wizard on roles_resolved.
@@ -149,6 +165,7 @@ export function App() {
           {handshake && <span className="pill warn">{handshake}</span>}
           <span className="spacer" />
           {busy && <span className="muted mono">{busy}…</span>}
+          <button className={`pill themebtn${dock.open ? " on" : ""}`} onClick={() => setDock((d) => ({ ...d, open: !d.open }))} title="Toggle machine dock" aria-label="toggle machine dock" aria-pressed={dock.open}>▥</button>
           <button className="pill themebtn" onClick={() => setTheme((t) => (t === "dark" ? "light" : "dark"))} title={`Switch to ${theme === "dark" ? "light" : "dark"} theme`} aria-label="toggle theme">{theme === "dark" ? "☀" : "☾"}</button>
           <button className="estop" disabled={!g.connected} onClick={() => call("e-stop", api.estop)}>■ E-STOP</button>
         </header>
@@ -234,14 +251,22 @@ export function App() {
             </ol>
           </div>
         )}
-        {!showHelp && (<>
-        {ui.view === "print" && <PrintView status={status} gates={g} call={call} base={base} order={ui.order.print} sizes={ui.sizes.print} onOrder={setOrder("print")} onResize={setResize("print")} onJob={() => setView("job")} />}
-        {ui.view === "job" && <JobView status={status} gates={g} call={call} order={ui.order.job} sizes={ui.sizes.job} onOrder={setOrder("job")} onResize={setResize("job")} onStarted={() => setView("print")} />}
-        {ui.view === "control" && <ControlView status={status} gates={g} call={call} base={base} gantryStep={ui.gantryStep} pistonStep={ui.pistonStep} setGantryStep={(s) => setUi((u) => ({ ...u, gantryStep: s }))} setPistonStep={(s) => setUi((u) => ({ ...u, pistonStep: s }))} order={ui.order.control} sizes={ui.sizes.control} onOrder={setOrder("control")} onResize={setResize("control")} />}
-        {ui.view === "priming" && <PrimingView status={status} gates={g} call={call} base={base} onJob={() => setView("job")} onPrint={() => setView("print")} />}
-        {ui.view === "runs" && <RunsView status={status} gates={g} call={call} order={ui.order.runs} sizes={ui.sizes.runs} onOrder={setOrder("runs")} onResize={setResize("runs")} />}
-        {ui.view === "cameras" && <CamerasView status={status} gates={g} call={call} base={base} order={ui.order.cameras} sizes={ui.sizes.cameras} onOrder={setOrder("cameras")} onResize={setResize("cameras")} onOpenQuickStart={() => setQuickStartOpen(true)} />}
-        </>)}
+        {!showHelp && (
+          <div className="bodywrap">
+            <div className="viewhost">
+              {ui.view === "print" && <PrintView status={status} gates={g} call={call} base={base} order={ui.order.print} sizes={ui.sizes.print} onOrder={setOrder("print")} onResize={setResize("print")} onJob={() => setView("job")} />}
+              {ui.view === "job" && <JobView status={status} gates={g} call={call} order={ui.order.job} sizes={ui.sizes.job} onOrder={setOrder("job")} onResize={setResize("job")} onStarted={() => setView("print")} />}
+              {ui.view === "control" && <ControlView status={status} gates={g} call={call} gantryStep={ui.gantryStep} pistonStep={ui.pistonStep} setGantryStep={(s) => setUi((u) => ({ ...u, gantryStep: s }))} setPistonStep={(s) => setUi((u) => ({ ...u, pistonStep: s }))} order={ui.order.control} sizes={ui.sizes.control} onOrder={setOrder("control")} onResize={setResize("control")} />}
+              {ui.view === "priming" && <PrimingView status={status} gates={g} call={call} base={base} onJob={() => setView("job")} onPrint={() => setView("print")} />}
+              {ui.view === "runs" && <RunsView status={status} gates={g} call={call} order={ui.order.runs} sizes={ui.sizes.runs} onOrder={setOrder("runs")} onResize={setResize("runs")} />}
+              {ui.view === "cameras" && <CamerasView status={status} gates={g} call={call} base={base} order={ui.order.cameras} sizes={ui.sizes.cameras} onOrder={setOrder("cameras")} onResize={setResize("cameras")} onOpenQuickStart={() => setQuickStartOpen(true)} />}
+            </div>
+            <aside className={`dock${dock.open ? "" : " collapsed"}`} style={{ "--dock-w": `${dock.w}px` } as CSSProperties}>
+              <div className="dock-resize" onPointerDown={dockDrag} title="drag to resize · snaps" />
+              <MachineDock status={status} base={base} gates={g} call={call} view={ui.view} />
+            </aside>
+          </div>
+        )}
         <StatusBar state={c?.state ?? "disconnected"} backend={c?.backend ?? "none"} pollHz={pollHz} reachable={reachable}
           estop={c?.telemetry?.estop_triggered ?? null} drivesReady={c?.telemetry?.drives_ready ?? null} heaterOn={c?.heater.on ?? null} heaterOnS={c?.heater.on_s ?? 0} heaterMaxS={c?.heater.max_on_s ?? 0}
           recActive={status?.recording.active ?? false} recRun={status?.recording.run ?? null} printState={r?.state ?? "idle"} version={version} />

@@ -4,7 +4,6 @@ import { JOG_STEPS } from "../../lib/console.ts";
 import { fmtAccel, fmtSecs, fmtSpeed, gantryJogLabels, tri, type Gates } from "../../lib/format.ts";
 import { AXIS_NAMES, GANTRY_HOME_SIDE, type AxisNo, type StatusPayload } from "../../lib/telemetry.ts";
 import { ModuleGrid, type Module } from "../Modules.tsx";
-import { OverviewCameraPanel } from "../OverviewCameraPanel.tsx";
 import type { Call } from "./types.ts";
 
 const SW: Record<AxisNo, string> = { 1: "sw-part", 2: "sw-feed", 3: "sw-ph", 4: "sw-rc" };
@@ -50,7 +49,7 @@ function Axis({ a, status, ok, call, step }: { a: AxisNo; status: StatusPayload 
   );
 }
 
-export function ControlView({ status, gates, call, base, gantryStep, pistonStep, setGantryStep, setPistonStep, order, sizes, onOrder, onResize }: { status: StatusPayload | null; gates: Gates; call: Call; base: string; gantryStep: number; pistonStep: number; setGantryStep: (s: number) => void; setPistonStep: (s: number) => void; order?: string[]; sizes?: Record<string, import("../../lib/console.ts").ModuleSize>; onOrder: (ids: string[]) => void; onResize: (id: string, size: import("../../lib/console.ts").ModuleSize) => void }) {
+export function ControlView({ status, gates, call, gantryStep, pistonStep, setGantryStep, setPistonStep, order, sizes, onOrder, onResize }: { status: StatusPayload | null; gates: Gates; call: Call; gantryStep: number; pistonStep: number; setGantryStep: (s: number) => void; setPistonStep: (s: number) => void; order?: string[]; sizes?: Record<string, import("../../lib/console.ts").ModuleSize>; onOrder: (ids: string[]) => void; onResize: (id: string, size: import("../../lib/console.ts").ModuleSize) => void }) {
   const c = status?.controller;
   const t = c?.telemetry;
   const ok = gates.controllable && !gates.printActive;
@@ -88,5 +87,5 @@ export function ControlView({ status, gates, call, base, gantryStep, pistonStep,
       </div>
     ) },
   ];
-  return <div className="view modules-view"><OverviewCameraPanel base={base} view="control" /><ModuleGrid modules={modules} order={order} sizes={sizes} onOrder={onOrder} onResize={onResize} /></div>;
+  return <div className="view modules-view"><ModuleGrid modules={modules} order={order} sizes={sizes} onOrder={onOrder} onResize={onResize} /></div>;
 }

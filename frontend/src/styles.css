@@ -372,6 +372,36 @@ button.small { height: 34px; padding: 0 12px; border: 1px solid var(--line-contr
 .rp-readout { border-top: 1px dashed var(--line); margin-top: 10px; padding-top: 9px; font: 12px var(--font-mono); color: var(--muted); line-height: 1.5; }
 .rp-readout b { color: var(--fg-strong); }
 
+/* ---- persistent machine dock (right side, resizable) ---- */
+.bodywrap { display: flex; min-height: 0; min-width: 0; overflow: hidden; }
+.viewhost { flex: 1; min-width: 0; display: flex; min-height: 0; }
+.viewhost > .view, .viewhost > .modules-view { flex: 1; min-width: 0; }
+.dock { position: relative; flex: 0 0 var(--dock-w, 320px); width: var(--dock-w, 320px); border-left: 1px solid var(--line); background: var(--bg-deep); overflow: auto; display: flex; flex-direction: column; }
+.dock.collapsed { display: none; }
+.dock-resize { position: absolute; left: 0; top: 0; bottom: 0; width: 8px; cursor: ew-resize; z-index: 6; touch-action: none; }
+.dock-resize::after { content: ""; position: absolute; left: 0; top: 0; bottom: 0; width: 3px; background: transparent; }
+.dock-resize:hover::after, .dock-resize.drag::after { background: var(--accent); }
+.dock-head { display: flex; align-items: center; justify-content: space-between; padding: 10px 14px; border-bottom: 1px solid var(--line); position: sticky; top: 0; background: var(--bg-deep); z-index: 2; }
+.dock-title { font: 12px var(--font-mono); letter-spacing: .1em; text-transform: uppercase; color: var(--label); }
+.dock-body { padding: 14px; display: flex; flex-direction: column; gap: 14px; }
+.dock-machine { background: var(--image-bg); border: 1px solid var(--line); border-radius: var(--radius); padding: 6px; }
+.dock-machine .machine svg, .dock-machine svg { max-height: 34vh; }
+.dock-axes { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
+.dock-axis { border: 1px solid var(--line); border-radius: var(--radius); background: var(--panel); padding: 7px 10px; }
+.dock-axis .k { display: flex; align-items: center; gap: 7px; font: 11px var(--font-mono); letter-spacing: .06em; text-transform: uppercase; color: var(--label); }
+.dock-axis .k i { width: 9px; height: 9px; border-radius: 2px; }
+.dock-axis .v { display: block; font: 600 18px var(--font-mono); color: var(--accent); margin-top: 3px; }
+.dock-axis .v.unref { color: var(--muted); opacity: .6; font-style: italic; }
+.dock-axis .v small { font-size: 11px; color: var(--muted); font-weight: 400; }
+.dock-mini { display: flex; gap: 8px; }
+.dock-mini .dm { flex: 1; border: 1px solid var(--line); border-radius: var(--radius); background: var(--panel); padding: 7px 10px; }
+.dock-mini .dm .k { font: 11px var(--font-mono); letter-spacing: .06em; text-transform: uppercase; color: var(--label); }
+.dock-mini .dm .v { display: block; font: 600 15px var(--font-mono); color: var(--fg-strong); margin-top: 2px; }
+.dock-mini .dm.hot .v, .dock-mini .dm.bad .v { color: var(--err); }
+.dock-actions { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
+.dock-actions .cta { height: 42px; }
+.dock .cam-panel { margin: 0; }
+
 /* ---- machine image overlay ---- */
 .mimg svg { width: 100%; height: auto; display: block; background: var(--danger-ink); border-radius: var(--radius); }
 .mk-rail { stroke: var(--trace-rc); stroke-width: 2; stroke-dasharray: 6 6; opacity: .45; }
