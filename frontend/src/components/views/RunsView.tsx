@@ -59,6 +59,7 @@ export function RunsView({ status, gates, call, base }: { status: StatusPayload 
   const [dirty, setDirty] = useState(false);
   const [viewIdx, setViewIdx] = useState(-1); // index into `caps` of the open lightbox still, or -1
   const [viewJobFolder, setViewJobFolder] = useState<string | null>(null); // for the CAD-slice compare
+  const [viewCadErr, setViewCadErr] = useState(false); // CAD slice failed to load (e.g. archived job)
   const rec = status?.recording;
   const viewCap = viewIdx >= 0 && viewIdx < caps.length ? caps[viewIdx] : null;
 
@@ -74,6 +75,7 @@ export function RunsView({ status, gates, call, base }: { status: StatusPayload 
   // Lightbox: fetch the open capture's sidecar to learn its job folder, so we can show the matching
   // CAD slice beside the science-cam image (both are bed-plane-registered → a 1:1 comparison).
   useEffect(() => {
+    setViewCadErr(false);
     if (!viewCap?.sidecarUrl) { setViewJobFolder(null); return; }
     let live = true;
     fetch(`${base}${viewCap.sidecarUrl}`).then((r) => (r.ok ? r.json() : null))
@@ -81,9 +83,17 @@ export function RunsView({ status, gates, call, base }: { status: StatusPayload 
       .catch(() => { if (live) setViewJobFolder(null); });
     return () => { live = false; };
   }, [viewIdx, base]); // eslint-disable-line react-hooks/exhaustive-deps
-  useEffect(() => { // ?still=N deep-link / capture aid: open a specific capture once its run has loaded
-    const q = typeof location !== "undefined" ? Number(new URLSearchParams(location.search).get("still")) : NaN;
-    if (Number.isInteger(q) && q >= 0 && q < caps.length) setViewIdx(q);
+  useEffect(() => { // ?still=N deep-link / capture aid: open a capture ONCE, then strip the param so it
+    // doesn't re-open every time this view remounts (e.g. re-clicking the Runs tab).
+    if (typeof location === "undefined") return;
+    const params = new URLSearchParams(location.search);
+    const q = Number(params.get("still"));
+    if (Number.isInteger(q) && q >= 0 && q < caps.length) {
+      setViewIdx(q);
+      params.delete("still");
+      const qs = params.toString();
+      history.replaceState(null, "", `${location.pathname}${qs ? `?${qs}` : ""}${location.hash}`);
+    }
   }, [caps.length]);
   useEffect(() => {
     if (viewIdx < 0) return;
@@ -203,9 +213,9 @@ export function RunsView({ status, gates, call, base }: { status: StatusPayload 
               <div className="cmp"><div className="cmp-h">science cam</div>
                 <img className="cmp-img" src={`${base}${viewCap.url}`} alt={`science cam layer ${viewCap.layer} ${viewCap.stage}`} /></div>
               <div className="cmp"><div className="cmp-h">CAD slice</div>
-                {viewJobFolder
-                  ? <img className="cmp-img" src={api.jobLayerUrl(viewCap.layer, viewJobFolder)} alt={`CAD layer ${viewCap.layer}`} onError={(e) => { (e.currentTarget as HTMLImageElement).style.visibility = "hidden"; }} />
-                  : <div className="cmp-img chart-empty" style={{ display: "grid", placeItems: "center" }}>CAD slice unavailable for this run</div>}
+                {viewJobFolder && !viewCadErr
+                  ? <img className="cmp-img" src={api.jobLayerUrl(viewCap.layer, viewJobFolder)} alt={`CAD layer ${viewCap.layer}`} onError={() => setViewCadErr(true)} />
+                  : <div className="cmp-img chart-empty" style={{ display: "grid", placeItems: "center", textAlign: "center", padding: 16 }}>{viewJobFolder ? "CAD slice unavailable — its sliced job isn't loaded" : "CAD slice unavailable for this run"}</div>}
               </div>
             </div>
             <div className="lb-nav">
