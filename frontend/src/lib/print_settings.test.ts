@@ -9,6 +9,15 @@ test("defaults match V1.py and the backend", () => {
   assert.deepEqual(validate(DEFAULT_PLAN), []);
 });
 
+test("postcoat counts as N layers, just like precoats", () => {
+  // Regression: the Job page postcoat control used to hardcode n_layers:1, so multiple
+  // postcoats collapsed to a single layer in the counter. totalLayers must count them all.
+  const p = { ...DEFAULT_PLAN, postcoat: { ...DEFAULT_PLAN.postcoat, n_layers: 3 } };
+  // base 13 = thin 2 + printing 10 + postcoat 1; bumping postcoat 1->3 adds 2 => 15.
+  assert.equal(totalLayers(p), 15);
+  assert.equal(compilePrint(p).filter((s) => s.phase === "postcoat" && s.kind === "mark" && s.label === "layer_start").length, 3);
+});
+
 test("printability and travel reasons", () => {
   const bad = { ...DEFAULT_PLAN, printing: { ...DEFAULT_PLAN.printing, n_layers: 100 } };
   assert.match(validate(bad)[0], /thickness/);
