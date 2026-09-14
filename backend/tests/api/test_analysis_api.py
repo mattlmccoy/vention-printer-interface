@@ -45,16 +45,21 @@ def _make_run(exp: Path, name: str, *, with_capture: bool = True) -> Path:
     d.mkdir(parents=True)
     dot = cv2.imread(str(FX / "dot_roi.png"))
     cv2.imwrite(str(d / "post_jet.png"), dot)
-    (d / "post_jet.json").write_text(
-        json.dumps({"layer": 1, "stage": "post_jet", "registered_space": {"mm_per_px": FIXTURE_MM_PER_PX}}),
-        encoding="utf-8",
-    )
-    (run / "vision" / "manifest.json").write_text(
-        json.dumps(
-            [{"run_id": name, "layer": 1, "stage": "post_jet", "registered": "vision/layer_0001/post_jet.png"}]
-        ),
-        encoding="utf-8",
-    )
+    sidecar = {
+        "layer": 1,
+        "stage": "post_jet",
+        "registered_space": {"mm_per_px": FIXTURE_MM_PER_PX},
+    }
+    (d / "post_jet.json").write_text(json.dumps(sidecar), encoding="utf-8")
+    manifest = [
+        {
+            "run_id": name,
+            "layer": 1,
+            "stage": "post_jet",
+            "registered": "vision/layer_0001/post_jet.png",
+        }
+    ]
+    (run / "vision" / "manifest.json").write_text(json.dumps(manifest), encoding="utf-8")
     return run
 
 

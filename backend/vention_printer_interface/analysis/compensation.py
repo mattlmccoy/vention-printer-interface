@@ -16,7 +16,7 @@ from __future__ import annotations
 
 import math
 from dataclasses import dataclass, field
-from typing import Any, Optional
+from typing import Any
 
 DEFAULT_DEADBAND_PCT = 0.05  # 0.05% -> 1 part in 2000 (matches the vendored tool)
 
@@ -43,7 +43,7 @@ class Compensation:
 
     scale_x: float
     scale_y: float
-    yaw_deg: Optional[float]
+    yaw_deg: float | None
     human: str
     notes: list[str] = field(default_factory=list)
     deadband_pct: float = DEFAULT_DEADBAND_PCT
@@ -70,7 +70,7 @@ def _scale_from_error(err_pct: Any, deadband_pct: float) -> tuple[float, bool]:
     return 1.0 / (1.0 + e / 100.0), False
 
 
-def _yaw_from_checkerboard(checkerboard: Optional[dict[str, Any]]) -> Optional[float]:
+def _yaw_from_checkerboard(checkerboard: dict[str, Any] | None) -> float | None:
     """Yaw error in degrees from the checkerboard, or None when unavailable.
 
     Prefers the wrapped ``checkerboard_angle_error_deg`` (the small nozzle/stage sliver),
@@ -92,7 +92,7 @@ def _yaw_from_checkerboard(checkerboard: Optional[dict[str, Any]]) -> Optional[f
 def _human_lines(
     scale_x: float,
     scale_y: float,
-    yaw_deg: Optional[float],
+    yaw_deg: float | None,
     deadband_pct: float,
 ) -> tuple[str, list[str]]:
     """Build the operator-facing recommendation text + diagnostic notes."""
@@ -139,8 +139,8 @@ def _human_lines(
 
 
 def to_compensation(
-    dot: Optional[dict[str, Any]] = None,
-    checkerboard: Optional[dict[str, Any]] = None,
+    dot: dict[str, Any] | None = None,
+    checkerboard: dict[str, Any] | None = None,
     *,
     deadband_pct: float = DEFAULT_DEADBAND_PCT,
 ) -> Compensation:

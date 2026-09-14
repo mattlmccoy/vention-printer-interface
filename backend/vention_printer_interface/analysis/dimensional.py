@@ -23,9 +23,9 @@ from __future__ import annotations
 import json
 import logging
 from dataclasses import asdict, dataclass, field
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
-from typing import Any, Callable, Optional
+from typing import Any
 
 import cv2
 import numpy as np
@@ -83,19 +83,19 @@ class DimensionalReport:
     status: str  # "ok" | "no_capture" | "no_calibration" | "roi_failed"
     generated_utc: str
     message: str = ""
-    captured_from: Optional[dict[str, Any]] = None
-    px_per_mm: Optional[float] = None
-    mm_per_px: Optional[float] = None
-    rois: Optional[dict[str, list[int]]] = None
+    captured_from: dict[str, Any] | None = None
+    px_per_mm: float | None = None
+    mm_per_px: float | None = None
+    rois: dict[str, list[int]] | None = None
     features: dict[str, Any] = field(default_factory=dict)
-    compensation: Optional[dict[str, Any]] = None
+    compensation: dict[str, Any] | None = None
     tool_provenance: dict[str, Any] = field(default_factory=dict)
 
     def to_dict(self) -> dict[str, Any]:
         return asdict(self)
 
     @classmethod
-    def from_dict(cls, data: dict[str, Any]) -> "DimensionalReport":
+    def from_dict(cls, data: dict[str, Any]) -> DimensionalReport:
         return cls(**data)
 
 
@@ -123,7 +123,7 @@ def _report_path(run_dir: Path) -> Path:
     return Path(run_dir) / _ANALYSIS_SUBDIR / _REPORT_NAME
 
 
-def load_report(run_dir: Path) -> Optional[dict[str, Any]]:
+def load_report(run_dir: Path) -> dict[str, Any] | None:
     """Return the persisted report dict for a run, or None if it hasn't been analyzed."""
     p = _report_path(run_dir)
     if not p.exists():
@@ -141,7 +141,7 @@ def _provenance() -> dict[str, Any]:
 
 
 def _now_utc() -> str:
-    return datetime.now(timezone.utc).isoformat()
+    return datetime.now(UTC).isoformat()
 
 
 def _fail(run: str, status: str, message: str, **extra: Any) -> DimensionalReport:
@@ -157,8 +157,8 @@ def _fail(run: str, status: str, message: str, **extra: Any) -> DimensionalRepor
 
 
 def _select_capture(
-    records: list[dict[str, Any]], layer: Optional[int], stage: str
-) -> Optional[dict[str, Any]]:
+    records: list[dict[str, Any]], layer: int | None, stage: str
+) -> dict[str, Any] | None:
     """Pick the gold-standard capture: prefer (layer, stage); else first available image.
 
     A caller-specified ``layer`` is honored strictly — we never silently substitute a
@@ -187,7 +187,7 @@ def _sidecar_path_for(run_dir: Path, registered_rel: str) -> Path:
     return Path(run_dir) / f"{stem or registered_rel}.json"
 
 
-def _read_mm_per_px(sidecar_path: Path) -> Optional[float]:
+def _read_mm_per_px(sidecar_path: Path) -> float | None:
     if not sidecar_path.exists():
         return None
     try:
@@ -209,7 +209,7 @@ def _read_mm_per_px(sidecar_path: Path) -> Optional[float]:
 
 def _locate_outer_circle(
     gray: np.ndarray, px_per_mm: float, diameter_mm: float
-) -> Optional[tuple[float, float]]:
+) -> tuple[float, float] | None:
     """Best-effort: find the Ø``diameter_mm`` outer circle center via HoughCircles.
 
     Returns (cx, cy) in pixels, or None when no plausible circle is found.
@@ -235,7 +235,7 @@ def _locate_outer_circle(
     return (float(cx), float(cy))
 
 
-def _crop(image: np.ndarray, rect: list[int] | tuple[int, int, int, int]) -> Optional[np.ndarray]:
+def _crop(image: np.ndarray, rect: list[int] | tuple[int, int, int, int]) -> np.ndarray | None:
     """Clamp a rect to the image and return the crop, or None if it is empty."""
     h, w = image.shape[:2]
     x, y, rw, rh = (int(rect[0]), int(rect[1]), int(rect[2]), int(rect[3]))
@@ -281,7 +281,7 @@ def _run_analyzer(feature: str, crop: np.ndarray, px_per_mm: float, nominals: di
 
 def _auto_rois(
     image: np.ndarray, px_per_mm: float, nominals: dict
-) -> Optional[dict[str, list[int]]]:
+) -> dict[str, list[int]] | None:
     """Auto-locate feature ROIs off the outer circle. None if the anchor can't be found."""
     gray = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY) if image.ndim == 3 else image
     center = _locate_outer_circle(gray, px_per_mm, nominals["outer_circle"]["diameter_mm"])
@@ -296,9 +296,9 @@ def _auto_rois(
 def analyze_run(
     run_dir: Path | str,
     *,
-    layer: Optional[int] = None,
+    layer: int | None = None,
     stage: str = "post_jet",
-    rois: Optional[dict[str, list[int]]] = None,
+    rois: dict[str, list[int]] | None = None,
     nominals: dict[str, Any] = DEFAULTS,
 ) -> DimensionalReport:
     """Analyze one recorded run's gold-standard capture and persist the report.
