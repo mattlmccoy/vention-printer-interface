@@ -53,6 +53,7 @@ export interface VisionDevice { index: number; stable_id: string | null; name: s
 // vention_printer_interface/vision/cameras.py's camera_access_state (ok/denied/no_devices).
 export interface VisionDevicesResponse { devices: VisionDevice[]; camera_access: "ok" | "denied" | "no_devices" }
 // GET/PUT /api/vision/roles body/response shape: a stable_id -> role ("overview"/"science") map.
+export interface RunMeta { run: string; complete: boolean; size_bytes: number; name?: string; notes?: string; started_at?: string | number | null; layer_count?: number | null; duration_s?: number | null }
 export type VisionRoleMap = Record<string, string>;
 export interface CameraSettings { resolution?: [number, number] | string | null; fps?: number | null; format?: string | null; exposure?: number | null }
 export interface VisionRolesPutResult { mapping: VisionRoleMap; roles_resolved: boolean; unresolved: string[] }
@@ -148,7 +149,8 @@ export const api = {
   printSeek: (index: number) => req<StatusPayload["print"]>("POST", "/api/print/seek", { index }),
   recordingStart: (body: { name: string; notes: string }) => req<{ run: string }>("POST", "/api/recording/start", body),
   recordingStop: () => req<{ run: string | null; stopped: boolean }>("POST", "/api/recording/stop"),
-  recordings: () => req<{ runs: Array<{ run: string; complete: boolean; size_bytes: number }> }>("GET", "/api/recordings"),
+  recordings: () => req<{ runs: RunMeta[] }>("GET", "/api/recordings"),
+  recordingSetMeta: (run: string, body: { name?: string; notes?: string }) => req<{ name: string; notes: string }>("PUT", `/api/recordings/${encodeURIComponent(run)}/meta`, body),
   jobs: () => req<{ jobs: Array<Omit<StatusPayload["job"] & object, "current_layer">>; roots: string[] }>("GET", "/api/jobs"),
   selectJob: (path: string) => req<{ job: StatusPayload["job"]; print_settings: PrintSettingsPayload }>("POST", "/api/jobs/select", { path }),
   clearJob: () => req<{ job: null }>("POST", "/api/jobs/clear"),

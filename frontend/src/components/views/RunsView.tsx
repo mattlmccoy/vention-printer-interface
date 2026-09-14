@@ -1,5 +1,5 @@
-import { useEffect, useMemo, useState } from "react";
-import { api } from "../../lib/api.ts";
+import { useEffect, useState } from "react";
+import { api, type RunMeta } from "../../lib/api.ts";
 import type { Gates } from "../../lib/format.ts";
 import type { StatusPayload } from "../../lib/telemetry.ts";
 import { parseCaptures, type Capture } from "../../lib/vision.ts";
@@ -8,14 +8,18 @@ import type { Call } from "./types.ts";
 
 const STAGE_LABEL: Record<string, string> = { pre_jet: "pre-jet", post_jet: "post-jet", post_heat: "post-heat" };
 const fmtSize = (b: number) => (b > 1e9 ? `${(b / 1e9).toFixed(1)} GB` : b > 1e6 ? `${(b / 1e6).toFixed(0)} MB` : `${(b / 1e3).toFixed(0)} kB`);
+const fmtDur = (s?: number | null) => {
+  if (s == null || !Number.isFinite(s)) return "—";
+  const h = Math.floor(s / 3600), m = Math.floor((s % 3600) / 60), sec = Math.floor(s % 60);
+  return h ? `${h} h ${String(m).padStart(2, "0")} m` : m ? `${m} m ${String(sec).padStart(2, "0")} s` : `${sec} s`;
+};
 
-/** Parse motion_profiles.csv into a per-axis velocity series for the chart. Columns:
- *  host_timestamp_ns, pos_1..4, vel_1..4, accel_1..4. Blank cells (uncomputable) are skipped. */
+/** motion_profiles.csv → per-axis velocity series for the chart. Columns:
+ *  host_timestamp_ns, pos_1..4, vel_1..4, accel_1..4. Blank cells are skipped. */
 function parseVel(csv: string, axis: number): number[] {
   const lines = csv.trim().split("\n");
   if (lines.length < 2) return [];
-  const cols = lines[0].split(",");
-  const idx = cols.indexOf(`vel_${axis}`);
+  const idx = lines[0].split(",").indexOf(`vel_${axis}`);
   if (idx < 0) return [];
   const out: number[] = [];
   for (const line of lines.slice(1)) {
@@ -27,16 +31,16 @@ function parseVel(csv: string, axis: number): number[] {
 }
 
 function VelChart({ series }: { series: number[] }) {
-  if (series.length < 2) return <div className="hint" style={{ marginTop: 0 }}>no motion profile for this run yet</div>;
-  const W = 520, H = 130, padL = 34, padB = 18, padT = 10;
+  if (series.length < 2) return <div className="chart-empty">no motion profile for this run yet</div>;
+  const W = 520, H = 150, padL = 34, padB = 20, padT = 10;
   const max = Math.max(1, ...series.map(Math.abs));
   const step = (W - padL) / (series.length - 1);
   const y = (v: number) => padT + (1 - Math.abs(v) / max) * (H - padT - padB);
   const pts = series.map((v, i) => `${padL + i * step},${y(v)}`).join(" ");
   return (
-    <svg viewBox={`0 0 ${W} ${H}`} style={{ width: "100%", height: "auto" }} role="img" aria-label="recoater velocity profile">
-      <line x1={padL} y1={padT} x2={padL} y2={H - padB} stroke="var(--line)" />
-      <line x1={padL} y1={H - padB} x2={W} y2={H - padB} stroke="var(--line)" />
+    <svg className="mchart" viewBox={`0 0 ${W} ${H}`} style={{ width: "100%", height: "auto" }} role="img" aria-label="recoater velocity profile">
+      <line x1={padL} y1={padT} x2={padL} y2={H - padB} />
+      <line x1={padL} y1={H - padB} x2={W} y2={H - padB} />
       <text x={padL - 6} y={padT + 6} fontSize="9" fill="var(--faint)" textAnchor="end" fontFamily="var(--font-mono)">{Math.round(max)}</text>
       <text x={padL - 6} y={H - padB} fontSize="9" fill="var(--faint)" textAnchor="end" fontFamily="var(--font-mono)">0</text>
       <polyline points={pts} fill="none" stroke="var(--trace-rc)" strokeWidth="2" />
@@ -46,18 +50,23 @@ function VelChart({ series }: { series: number[] }) {
 }
 
 export function RunsView({ status, gates, call, base }: { status: StatusPayload | null; gates: Gates; call: Call; base: string }) {
-  const [runs, setRuns] = useState<Array<{ run: string; complete: boolean; size_bytes: number }>>([]);
+  const [runs, setRuns] = useState<RunMeta[]>([]);
   const [sel, setSel] = useState<string>("");
   const [caps, setCaps] = useState<Capture[]>([]);
   const [vel, setVel] = useState<number[]>([]);
+  const [name, setName] = useState("");
+  const [notes, setNotes] = useState("");
+  const [dirty, setDirty] = useState(false);
   const rec = status?.recording;
 
-  useEffect(() => {
-    api.recordings().then((r) => {
-      setRuns(r.runs);
-      setSel((cur) => cur || (r.runs.length ? r.runs[r.runs.length - 1].run : ""));
-    }).catch(() => undefined);
-  }, [status?.recording.active, gates.reachable]);
+  const refresh = () => api.recordings().then((r) => {
+    setRuns(r.runs);
+    setSel((cur) => cur || (r.runs.length ? r.runs[r.runs.length - 1].run : ""));
+  }).catch(() => undefined);
+  useEffect(() => { refresh(); }, [status?.recording.active, gates.reachable]);
+
+  const selRun = runs.find((r) => r.run === sel) ?? null;
+  useEffect(() => { setName(selRun?.name ?? ""); setNotes(selRun?.notes ?? ""); setDirty(false); }, [sel]); // eslint-disable-line react-hooks/exhaustive-deps
 
   useEffect(() => {
     if (!sel) { setCaps([]); setVel([]); return; }
@@ -68,9 +77,9 @@ export function RunsView({ status, gates, call, base }: { status: StatusPayload 
     return () => { live = false; };
   }, [sel, base]);
 
-  const selRun = runs.find((r) => r.run === sel) ?? null;
-  const layers = useMemo(() => [...new Set(caps.map((c) => c.layer))].sort((a, b) => a - b), [caps]);
   const label = (run: string) => `${run.slice(0, 8)} ${run.slice(9, 11)}:${run.slice(11, 13)}`;
+  const dispName = (r: RunMeta) => r.name || r.run.slice(16) || r.run;
+  const saveMeta = () => call("save run name/notes", () => api.recordingSetMeta(sel, { name, notes }).then(() => { setDirty(false); return refresh(); }));
 
   return (
     <div className="view fixed-page runs-view">
@@ -85,8 +94,8 @@ export function RunsView({ status, gates, call, base }: { status: StatusPayload 
         <div className="runlist">
           {[...runs].reverse().map((r) => (
             <button key={r.run} className={`runitem${r.run === sel ? " on" : ""}`} onClick={() => setSel(r.run)}>
-              <span className="rn">{r.run.slice(16) || r.run}</span>
-              <span className="rd">{label(r.run)} · {fmtSize(r.size_bytes)}{r.complete ? "" : " · incomplete"}</span>
+              <span className="rn">{dispName(r)}</span>
+              <span className="rd">{label(r.run)} · {r.layer_count != null ? `${r.layer_count} L` : fmtSize(r.size_bytes)}{r.complete ? "" : " · incomplete"}</span>
             </button>
           ))}
           {runs.length === 0 && <div className="hint">no runs yet</div>}
@@ -96,30 +105,46 @@ export function RunsView({ status, gates, call, base }: { status: StatusPayload 
           {selRun ? (
             <>
               <div className="card">
-                <h3>{selRun.run.slice(16) || selRun.run} · {label(selRun.run)}
+                <h3>{dispName(selRun)} · {label(selRun.run)}
                   <a className="cta primary sm" href={`${base}/api/recordings/${encodeURIComponent(selRun.run)}/archive.zip`} target="_blank" rel="noreferrer" style={{ textDecoration: "none", display: "inline-flex", alignItems: "center" }}>⬇ Download run (.zip)</a>
                 </h3>
                 <div className="statrow">
                   <div className="stat"><span className="k">Status</span><span className="v">{selRun.complete ? "complete" : "incomplete"}</span></div>
-                  <div className="stat"><span className="k">Size</span><span className="v">{fmtSize(selRun.size_bytes)}</span></div>
-                  <div className="stat"><span className="k">Layers</span><span className="v">{layers.length}</span></div>
+                  <div className="stat"><span className="k">Layers</span><span className="v">{selRun.layer_count ?? "—"}</span></div>
+                  <div className="stat"><span className="k">Duration</span><span className="v">{fmtDur(selRun.duration_s)}</span></div>
                   <div className="stat"><span className="k">Stills</span><span className="v">{caps.length}</span></div>
+                  <div className="stat"><span className="k">Size</span><span className="v">{fmtSize(selRun.size_bytes)}</span></div>
                 </div>
                 <div className="zipwrap">{selRun.run}.zip ⟶ vision/ (stills + .json sidecars) · telemetry.csv · motion_profiles.csv · events.json · manifest.json · layers.csv</div>
               </div>
 
               <div className="card">
+                <h3>name &amp; notes</h3>
+                <div className="fields" style={{ marginTop: 0, maxWidth: "none", gridTemplateColumns: "auto minmax(0,1fr)" }}>
+                  <span>run name</span>
+                  <input type="text" placeholder={selRun.run.slice(16) || "run name"} value={name} onChange={(e) => { setName(e.target.value); setDirty(true); }} />
+                  <span>notes</span>
+                  <textarea rows={3} placeholder="observations for this run…" value={notes} onChange={(e) => { setNotes(e.target.value); setDirty(true); }} style={{ resize: "vertical", fontFamily: "var(--font-ui)" }} />
+                </div>
+                <div className="btnrow" style={{ marginTop: 12 }}>
+                  <button className="cta primary sm" disabled={!dirty || !gates.reachable} onClick={saveMeta}>Save name &amp; notes</button>
+                </div>
+              </div>
+
+              <div className="card">
                 <h3>science-cam stills<span className="hint" style={{ textTransform: "none", letterSpacing: 0, fontWeight: 400 }}>layer × stage</span></h3>
-                {caps.length === 0 ? <div className="hint" style={{ marginTop: 0 }}>no science-cam captures for this run</div> : (
-                  <div className="stills">
-                    {caps.slice(0, 24).map((c) => (
-                      <div key={`${c.layer}-${c.stage}`} className="still">
-                        <img src={`${base}${c.url}`} alt={`layer ${c.layer} ${c.stage}`} onError={(e) => { (e.currentTarget as HTMLImageElement).style.display = "none"; }} />
-                        <span className="ll">L{c.layer}</span><span className="lb">{STAGE_LABEL[c.stage] ?? c.stage}</span>
-                      </div>
-                    ))}
-                  </div>
-                )}
+                <div className="stills-wrap">
+                  {caps.length === 0 ? <div className="chart-empty">no science-cam captures for this run</div> : (
+                    <div className="stills">
+                      {caps.slice(0, 24).map((c) => (
+                        <div key={`${c.layer}-${c.stage}`} className="still">
+                          <img src={`${base}${c.url}`} alt={`layer ${c.layer} ${c.stage}`} onError={(e) => { (e.currentTarget as HTMLImageElement).style.display = "none"; }} />
+                          <span className="ll">L{c.layer}</span><span className="lb">{STAGE_LABEL[c.stage] ?? c.stage}</span>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                </div>
               </div>
 
               <div className="card">
@@ -127,11 +152,11 @@ export function RunsView({ status, gates, call, base }: { status: StatusPayload 
                 <VelChart series={vel} />
               </div>
             </>
-          ) : <div className="card"><div className="hint" style={{ marginTop: 0 }}>select a run to see its stills, motion profile, and download.</div></div>}
+          ) : <div className="card"><div className="chart-empty">select a run to see its stills, motion profile, and download.</div></div>}
 
           <div className="card">
             <h3>event log</h3>
-            <EventLog events={status?.events ?? []} title="" />
+            <div className="stills-wrap"><EventLog events={status?.events ?? []} title="" /></div>
           </div>
         </div>
       </div>

@@ -10,6 +10,7 @@ body { margin: 0; background: var(--bg); color: var(--fg); font-family: var(--fo
 button, select, input { font: inherit; }
 :focus-visible { outline: 2px solid var(--focus); outline-offset: 2px; }
 input[type=number], input[type=text], select { background: var(--bg-deep); border: 1px solid var(--line-control); color: var(--fg-strong); padding: 8px 10px; font: 14px var(--font-mono); border-radius: var(--radius); }
+textarea { background: var(--bg-deep); border: 1px solid var(--line-control); color: var(--fg-strong); padding: 8px 10px; font: 14px var(--font-ui); border-radius: var(--radius); width: 100%; }
 input[type=number] { width: 96px; }
 input:disabled, button:disabled { opacity: .35; cursor: default; }
 .muted { color: var(--muted); }
@@ -505,6 +506,9 @@ button.small { height: 34px; padding: 0 12px; border: 1px solid var(--line-contr
 .still .ll { position: absolute; top: 5px; left: 6px; font: 9px var(--font-mono); color: var(--label); background: var(--scrim); padding: 1px 5px; border-radius: 5px; }
 .still .lb { position: absolute; bottom: 5px; left: 6px; font: 9px var(--font-mono); color: var(--label); background: var(--scrim); padding: 1px 5px; border-radius: 5px; }
 .mchart line { stroke: var(--line); }
+/* staged/fixed-size sections so switching runs never resizes the boxes */
+.chart-empty { min-height: 130px; display: grid; place-items: center; color: var(--muted); font-size: 13px; border: 1px dashed var(--line); border-radius: 10px; background: var(--bg-deep); }
+.stills-wrap { min-height: 150px; }
 
 /* ---- machine image overlay ---- */
 .mimg svg { width: 100%; height: auto; display: block; background: var(--danger-ink); border-radius: var(--radius); }
