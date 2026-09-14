@@ -267,6 +267,10 @@ def test_missing_estop_status_trips() -> None:
     try:
         tel(c)
         del t._topics[r.TOPIC_ESTOP_STATUS]
+        # drives NOT ready (as at startup / while e-stopped): only then is a missing e-stop status
+        # genuinely unknown. When drives ARE ready, drives_ready proves the e-stop is clear and
+        # dominates a missing/stale flag (see printer.read_telemetry).
+        t._topics[r.TOPIC_DRIVES_READY] = "false"
         assert wait(lambda: c.state == ControllerState.FAULT)
         assert any("unknown" in x for x in c.snapshot()["fault_reasons"])
     finally:

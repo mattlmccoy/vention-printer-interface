@@ -80,6 +80,19 @@ def test_estop_cycle() -> None:
     assert d.read_telemetry().drives_ready is True
 
 
+def test_drives_ready_overrides_stale_estop_flag() -> None:
+    """Hardware invariant: drives are ready ONLY after the physical E-STOP was released and the
+    machine RESET was pressed by hand. So a lingering estop/status or /health e-stop flag while
+    drives_ready is true is stale and must not read as asserted (else the fault can never clear)."""
+    d, t = make()
+    d.identify()
+    t.machine.estop = True          # stale e-stop status / health still says asserted…
+    t.machine.drives_ready = True   # …but drives are ready (released + reset by hand)
+    tel = d.read_telemetry(refresh_health=True)
+    assert tel.drives_ready is True
+    assert tel.estop_triggered is False
+
+
 def test_endstops_and_stop() -> None:
     d, t = make()
     d.home_all()

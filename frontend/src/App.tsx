@@ -146,7 +146,10 @@ export function App() {
   const clearFault = () => call("clear fault", async () => { await api.clearFault(); if (!ui.readOnlyConnect) await api.arm(); });
   const dotCls = !reachable ? "err" : g.faulted ? "err" : g.armed ? "live" : g.connected ? "warn" : "warn";
   const pillLabel = !reachable ? "operator unreachable" : !g.connected ? "connect" : `${c?.backend === "simulated" ? "simulator" : "MachineMotion"}${g.armed ? "" : g.faulted ? " · faulted" : " · read-only"}`;
-  const estopStillAsserted = c?.telemetry?.estop_triggered !== false;
+  // drives_ready is only true after the physical E-STOP is released + the machine reset by hand, so
+  // it proves the E-STOP is clear and dominates a stale/lingering estop_triggered flag (matches the
+  // backend printer.read_telemetry invariant). Without this the recovery gets stuck on step 1.
+  const estopStillAsserted = c?.telemetry?.drives_ready !== true && c?.telemetry?.estop_triggered !== false;
   // Incremental drives read ~0 after a power-cycle until homed. If any axis is unreferenced the
   // diagram's positions are not true position — warn globally and point at homing (Control tab).
   const refMap = c?.telemetry?.referenced;

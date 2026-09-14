@@ -109,6 +109,12 @@ class PrinterDevice:
         health_ok = health is not None and health.motion_controller_reachable is not False
         if health is not None and health.estop_triggered:
             estop = True  # /health cross-check (MachineMotion.py:1418) dominates a stale MQTT value
+        if ready is True:
+            # Hardware invariant: the drives only become ready after the physical E-STOP is
+            # released AND the machine RESET is pressed by hand. So drives_ready dominates a stale
+            # e-stop status / health flag that lingers "asserted" — without this, the fault can
+            # never be cleared (safety.evaluate keeps tripping on the stale flag).
+            estop = False
         return Telemetry(
             host_timestamp_ns=time.time_ns(),
             positions=positions,
