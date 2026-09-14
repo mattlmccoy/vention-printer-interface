@@ -57,7 +57,10 @@ export function RunsView({ status, gates, call, base }: { status: StatusPayload 
   const [name, setName] = useState("");
   const [notes, setNotes] = useState("");
   const [dirty, setDirty] = useState(false);
+  const [viewIdx, setViewIdx] = useState(-1); // index into `caps` of the open lightbox still, or -1
+  const [viewJobFolder, setViewJobFolder] = useState<string | null>(null); // for the CAD-slice compare
   const rec = status?.recording;
+  const viewCap = viewIdx >= 0 && viewIdx < caps.length ? caps[viewIdx] : null;
 
   const refresh = () => api.recordings().then((r) => {
     setRuns(r.runs);
@@ -66,7 +69,32 @@ export function RunsView({ status, gates, call, base }: { status: StatusPayload 
   useEffect(() => { refresh(); }, [status?.recording.active, gates.reachable]);
 
   const selRun = runs.find((r) => r.run === sel) ?? null;
-  useEffect(() => { setName(selRun?.name ?? ""); setNotes(selRun?.notes ?? ""); setDirty(false); }, [sel]); // eslint-disable-line react-hooks/exhaustive-deps
+  useEffect(() => { setName(selRun?.name ?? ""); setNotes(selRun?.notes ?? ""); setDirty(false); setViewIdx(-1); }, [sel]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  // Lightbox: fetch the open capture's sidecar to learn its job folder, so we can show the matching
+  // CAD slice beside the science-cam image (both are bed-plane-registered → a 1:1 comparison).
+  useEffect(() => {
+    if (!viewCap?.sidecarUrl) { setViewJobFolder(null); return; }
+    let live = true;
+    fetch(`${base}${viewCap.sidecarUrl}`).then((r) => (r.ok ? r.json() : null))
+      .then((j) => { if (live) setViewJobFolder(j?.job?.folder ?? null); })
+      .catch(() => { if (live) setViewJobFolder(null); });
+    return () => { live = false; };
+  }, [viewIdx, base]); // eslint-disable-line react-hooks/exhaustive-deps
+  useEffect(() => { // ?still=N deep-link / capture aid: open a specific capture once its run has loaded
+    const q = typeof location !== "undefined" ? Number(new URLSearchParams(location.search).get("still")) : NaN;
+    if (Number.isInteger(q) && q >= 0 && q < caps.length) setViewIdx(q);
+  }, [caps.length]);
+  useEffect(() => {
+    if (viewIdx < 0) return;
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === "Escape") setViewIdx(-1);
+      else if (e.key === "ArrowRight") setViewIdx((i) => Math.min(caps.length - 1, i + 1));
+      else if (e.key === "ArrowLeft") setViewIdx((i) => Math.max(0, i - 1));
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [viewIdx, caps.length]);
 
   useEffect(() => {
     if (!sel) { setCaps([]); setVel([]); return; }
@@ -136,8 +164,11 @@ export function RunsView({ status, gates, call, base }: { status: StatusPayload 
                 <div className="stills-wrap">
                   {caps.length === 0 ? <div className="chart-empty">no science-cam captures for this run</div> : (
                     <div className="stills">
-                      {caps.slice(0, 24).map((c) => (
-                        <div key={`${c.layer}-${c.stage}`} className="still">
+                      {caps.slice(0, 24).map((c, i) => (
+                        <div key={`${c.layer}-${c.stage}`} className="still" role="button" tabIndex={0}
+                          title="open — compare with the CAD layer"
+                          onClick={() => setViewIdx(i)}
+                          onKeyDown={(e) => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); setViewIdx(i); } }}>
                           <img src={`${base}${c.url}`} alt={`layer ${c.layer} ${c.stage}`} onError={(e) => { (e.currentTarget as HTMLImageElement).style.display = "none"; }} />
                           <span className="ll">L{c.layer}</span><span className="lb">{STAGE_LABEL[c.stage] ?? c.stage}</span>
                         </div>
@@ -160,6 +191,31 @@ export function RunsView({ status, gates, call, base }: { status: StatusPayload 
           </div>
         </div>
       </div>
+
+      {viewCap && (
+        <div className="lightbox" role="dialog" aria-modal="true" aria-label="science-cam still" onClick={() => setViewIdx(-1)}>
+          <div className="lb-body" onClick={(e) => e.stopPropagation()}>
+            <div className="lb-h">
+              <span>layer {viewCap.layer} · {STAGE_LABEL[viewCap.stage] ?? viewCap.stage}</span>
+              <button className="iconbtn" onClick={() => setViewIdx(-1)} aria-label="close">✕</button>
+            </div>
+            <div className="lb-compare">
+              <div className="cmp"><div className="cmp-h">science cam</div>
+                <img className="cmp-img" src={`${base}${viewCap.url}`} alt={`science cam layer ${viewCap.layer} ${viewCap.stage}`} /></div>
+              <div className="cmp"><div className="cmp-h">CAD slice</div>
+                {viewJobFolder
+                  ? <img className="cmp-img" src={api.jobLayerUrl(viewCap.layer, viewJobFolder)} alt={`CAD layer ${viewCap.layer}`} onError={(e) => { (e.currentTarget as HTMLImageElement).style.visibility = "hidden"; }} />
+                  : <div className="cmp-img chart-empty" style={{ display: "grid", placeItems: "center" }}>CAD slice unavailable for this run</div>}
+              </div>
+            </div>
+            <div className="lb-nav">
+              <button className="small" disabled={viewIdx <= 0} onClick={() => setViewIdx((i) => Math.max(0, i - 1))}>← prev</button>
+              <span>{viewIdx + 1} / {caps.length}</span>
+              <button className="small" disabled={viewIdx >= caps.length - 1} onClick={() => setViewIdx((i) => Math.min(caps.length - 1, i + 1))}>next →</button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

@@ -184,6 +184,15 @@ button.small { height: 34px; padding: 0 12px; border: 1px solid var(--line-contr
 .cards-2 { display: grid; grid-template-columns: repeat(auto-fit, minmax(340px, 1fr)); gap: 16px; align-items: start; }
 .cards-3 { display: grid; grid-template-columns: repeat(auto-fit, minmax(280px, 1fr)); gap: 16px; align-items: start; }
 .grid-gap { display: flex; flex-direction: column; gap: 16px; min-width: 0; }
+/* science-cam still lightbox (Runs): enlarged still beside its CAD slice, prev/next navigable */
+.still { cursor: pointer; }
+.still:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+.lightbox { position: fixed; inset: 0; z-index: 50; display: grid; place-items: center; padding: 24px; background: var(--scrim); }
+.lb-body { background: var(--panel); border: 1px solid var(--line); border-radius: 12px; padding: 16px; width: 100%; max-width: 900px; max-height: 90vh; overflow: auto; }
+.lb-h { display: flex; align-items: center; justify-content: space-between; margin-bottom: 12px; font: 12px var(--font-mono); letter-spacing: .09em; text-transform: uppercase; color: var(--label); }
+.lb-compare { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; align-items: start; }
+@media (max-width: 640px) { .lb-compare { grid-template-columns: 1fr; } }
+.lb-nav { display: flex; align-items: center; justify-content: center; gap: 16px; margin-top: 14px; font: 12px var(--font-mono); color: var(--muted); }
 .axis-sep { height: 1px; background: var(--line); margin: 16px 0; }
 /* guided-step rail (Setup walkthrough) */
 .setup-grid { display: grid; grid-template-columns: 300px minmax(0, 1fr); gap: 16px; align-items: start; }
