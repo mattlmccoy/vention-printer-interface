@@ -243,7 +243,8 @@ def _parse_macos_cameras(data: dict[str, Any]) -> list[dict[str, Any]]:
         name = cam.get("_name")
         uid = cam.get("spcamera_unique-id") or cam.get("spcamera_model-id")
         stable_id = f"macos-uid:{uid}" if uid else f"idx:{index}"
-        out.append({"index": index, "stable_id": stable_id, "name": name, "has_frame": None, "probed": False})
+        out.append({"index": index, "stable_id": stable_id, "name": name,
+                    "has_frame": None, "probed": False})
     return out
 
 

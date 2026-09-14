@@ -1120,7 +1120,8 @@ def create_app(
     def job_layer_by_folder(folder: str, layer: int) -> Response:
         """Serve a layer PNG from a SPECIFIC job folder (incl. _archive), regardless of the
         selected job — the Runs/Analysis stills-vs-CAD compare needs any run's job layer.
-        `folder` is matched against scanned job folders only (no path traversal / arbitrary reads)."""
+        `folder` is matched against scanned job folders only (no path traversal /
+        arbitrary reads)."""
         job = next((j for j in jobs.scan() if j.dir.name == folder), None)
         if job is None:
             raise HTTPException(404, f"no job folder {folder!r}")
