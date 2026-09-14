@@ -30,6 +30,7 @@ from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 
 from vention_printer_interface import __version__
+from vention_printer_interface.analysis.dimensional import DEFAULTS, analyze_run, load_report
 from vention_printer_interface.control.controller import REFERENCE_MATCH_TOL_MM, Controller
 from vention_printer_interface.control.events import EventLog
 from vention_printer_interface.control.heater_model import exposure
@@ -403,6 +404,19 @@ def _tcp_open(ip: str, port: int, timeout_s: float = 0.5) -> bool:
             return True
     except OSError:
         return False
+
+
+class DimensionalAnalyzeRequest(BaseModel):
+    """Optional body for POST /api/analysis/{run}/dimensional.
+
+    All fields optional: an empty POST analyzes the default (post_jet) gold-standard
+    capture with auto-located ROIs and the default nominals.
+    """
+
+    layer: int | None = None
+    stage: str = "post_jet"
+    rois: dict[str, list[int]] | None = None
+    nominals: dict[str, Any] | None = None
 
 
 def _resolve_run_dir(root: Path, run: str) -> Path:
@@ -1791,6 +1805,33 @@ def create_app(
                 record["url"] = _vision_file_url(run, registered)
                 record["sidecar_url"] = _vision_file_url(run, _sidecar_rel_path(registered))
         return records
+
+    @app.post("/api/analysis/{run}/dimensional")
+    def analysis_dimensional_run(
+        run: str, body: DimensionalAnalyzeRequest | None = None
+    ) -> dict[str, Any]:
+        """Run (or re-run) Lane A dimensional analysis on a recorded run and persist it.
+
+        Returns the report dict. Non-ok statuses (no_capture / no_calibration / roi_failed)
+        are honest 200 reports, not HTTP errors; only a bad run name (400) or unknown run
+        (404) are errors, via the shared run-path validation.
+        """
+        run_dir = _resolve_run_dir(root, run)
+        req = body or DimensionalAnalyzeRequest()
+        nominals = {**DEFAULTS, **req.nominals} if req.nominals else DEFAULTS
+        report = analyze_run(
+            run_dir, layer=req.layer, stage=req.stage, rois=req.rois, nominals=nominals
+        )
+        return report.to_dict()
+
+    @app.get("/api/analysis/{run}/dimensional")
+    def analysis_dimensional_get(run: str) -> dict[str, Any]:
+        """Return a run's persisted dimensional report, or {status: "not_run"} if absent."""
+        run_dir = _resolve_run_dir(root, run)
+        report = load_report(run_dir)
+        if report is None:
+            return {"status": "not_run", "run": run}
+        return report
 
     @app.get("/api/vision/runs/{run}/file")
     def vision_run_file(run: str, path: str) -> FileResponse:
