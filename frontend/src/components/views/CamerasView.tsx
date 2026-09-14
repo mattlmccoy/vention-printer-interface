@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from "react";
-import { api, type VisionCalibrateResult, type VisionCaptureSidecar } from "../../lib/api.ts";
+import { api, type CameraSettings, type VisionCalibrateResult, type VisionCaptureSidecar } from "../../lib/api.ts";
 import type { Gates } from "../../lib/format.ts";
 import type { StatusPayload } from "../../lib/telemetry.ts";
 import { formatCaptureMetaValue, overviewStreamUrl, parseCaptures, type Capture } from "../../lib/vision.ts";
@@ -168,6 +168,41 @@ function CaptureBrowser({ base }: { base: string }) {
   );
 }
 
+/** Per-camera settings (resolution/fps/format/exposure), persisted per role via the backend and
+ *  applied the next time each camera opens. Fields left blank fall back to the built-in/config
+ *  default (never faked — the current overrides come from GET /api/vision/settings). */
+function CameraSettingsStep({ call, reachable }: { call: Call; reachable: boolean }) {
+  const [settings, setSettings] = useState<Record<string, CameraSettings>>({ overview: {}, science: {} });
+  const [dirty, setDirty] = useState(false);
+  useEffect(() => {
+    let live = true;
+    api.visionGetSettings().then((r) => { if (live && r?.settings) setSettings({ overview: {}, science: {}, ...r.settings }); }).catch(() => undefined);
+    return () => { live = false; };
+  }, []);
+  const edit = (role: string, patch: Partial<CameraSettings>) => { setSettings((s) => ({ ...s, [role]: { ...s[role], ...patch } })); setDirty(true); };
+  const save = () => call("save camera settings", () => api.visionSetSettings(settings).then((r) => { if (r?.settings) setSettings({ overview: {}, science: {}, ...r.settings }); setDirty(false); }));
+  const iw = { width: 118 } as const;
+  const roleCard = (role: string, title: string, resOpts: string[], fmtOpts: string[], fps: string) => (
+    <div className="rp-card">
+      <h4>{title}</h4>
+      <div className="rp-row"><span>resolution</span><span className="rv"><select style={iw} value={settings[role]?.resolution ?? ""} onChange={(e) => edit(role, { resolution: e.target.value || undefined })}><option value="">default</option>{resOpts.map((o) => <option key={o} value={o}>{o}</option>)}</select></span></div>
+      <div className="rp-row"><span>fps</span><span className="rv"><input type="text" style={iw} placeholder={fps} value={settings[role]?.fps ?? ""} onChange={(e) => edit(role, { fps: e.target.value === "" ? undefined : Number(e.target.value) })} /></span></div>
+      <div className="rp-row"><span>format</span><span className="rv"><select style={iw} value={settings[role]?.format ?? ""} onChange={(e) => edit(role, { format: e.target.value || undefined })}><option value="">default</option>{fmtOpts.map((o) => <option key={o} value={o}>{o}</option>)}</select></span></div>
+      <div className="rp-row"><span>exposure</span><span className="rv"><input type="text" style={iw} placeholder="auto" value={settings[role]?.exposure ?? ""} onChange={(e) => edit(role, { exposure: e.target.value || undefined })} /></span></div>
+    </div>
+  );
+  return (
+    <div className="grid-gap">
+      <div className="cols-2">
+        {roleCard("overview", "Overview · ELP AR2020 (95° FOV)", ["1920×1080", "1280×720"], ["MJPEG", "YUY2"], "30")}
+        {roleCard("science", "Science · ELP CS 5-50mm", ["5120×3840", "2560×1440"], ["YUY2", "MJPEG"], "7.5")}
+      </div>
+      <div className="btnrow"><button className="cta primary" disabled={!reachable || !dirty} onClick={save}>Save &amp; continue</button></div>
+      <div className="hint" style={{ marginTop: 0 }}>Applied the next time each camera opens. A field left on "default" uses the built-in/config value.</div>
+    </div>
+  );
+}
+
 export function CamerasView({ status, gates, call, base, onOpenQuickStart }: {
   status: StatusPayload | null; gates: Gates; call: Call; base: string;
   /** A7: reopens the camera-role quick-start wizard any time (cameras swapped/replaced/re-cabled) */
@@ -191,9 +226,12 @@ export function CamerasView({ status, gates, call, base, onOpenQuickStart }: {
 
   const [step, setStep] = useState(0);
   const STEPS = [
-    { title: "Cameras & roles", sub: "identify · assign · permission" },
-    { title: "Print a board", sub: "ChArUco / checkerboard" },
-    { title: "Calibrate", sub: "intrinsics + bed plane" },
+    { title: "Connect controller", sub: "arm the machine" },
+    { title: "Identify & assign cameras", sub: "overview · science" },
+    { title: "Camera settings", sub: "res · fps · format · exposure" },
+    { title: "Generate & print board", sub: "ChArUco / checkerboard" },
+    { title: "Calibrate intrinsics", sub: "capture ≥3 board views" },
+    { title: "Set bed plane", sub: "bed correspondence" },
     { title: "Validate", sub: "dimensional ±0.1 mm" },
   ];
 
@@ -217,17 +255,38 @@ export function CamerasView({ status, gates, call, base, onOpenQuickStart }: {
 
           {step === 0 && (
             <div className="grid-gap">
-              <div className="hint" style={{ marginTop: 0 }}>Identify which detected camera is the overview (wide live view) and which is the science camera (bed stills). This is remembered and reconnects automatically. Nothing opens a camera until a page asks for it.</div>
-              <div className="cam-panel-body" style={{ borderRadius: "var(--radius)", border: "1px solid var(--line)" }}><CamImg className="cam-panel-img" src={overviewStreamUrl(base)} alt="overview camera live view" /></div>
+              <div className="hint" style={{ marginTop: 0 }}>Connect the controller from the connection pill in the top bar, then take control (arm) so calibration moves are allowed.</div>
+              <div className="chips" style={{ marginTop: 0 }}>
+                <span className={`chip ${gates.connected ? "" : "warn"}`}>{gates.connected ? "controller connected" : "not connected"}</span>
+                <span className={`chip ${gates.armed ? "" : "warn"}`}>{gates.armed ? "armed" : "read-only"}</span>
+              </div>
+            </div>
+          )}
+          {step === 1 && (
+            <div className="grid-gap">
+              <div className="note">📷 Nothing opens a camera until a page asks for it. Identify which detected camera is the overview (wide live view) and which is the science camera (bed stills) — it's remembered and reconnects automatically. If a camera doesn't appear, use Rescan.</div>
+              <div className="cam-panel-body" style={{ borderRadius: 10, border: "1px solid var(--line)" }}><CamImg className="cam-panel-img" src={overviewStreamUrl(base)} alt="overview camera live view" /></div>
               <div className="btnrow">
                 <button className="cta primary" onClick={onOpenQuickStart}>Identify &amp; assign cameras…</button>
                 <button className="small" disabled={!gates.reachable} onClick={() => call("rescan cameras", () => api.visionDevices())}>Rescan devices</button>
               </div>
             </div>
           )}
-          {step === 1 && <CalibrationBoardPanel base={base} />}
-          {step === 2 && <CalibrationWizard call={call} printing={gates.printActive} />}
-          {step === 3 && <ValidationPanel call={call} printing={gates.printActive} />}
+          {step === 2 && <CameraSettingsStep call={call} reachable={gates.reachable} />}
+          {step === 3 && <CalibrationBoardPanel base={base} />}
+          {step === 4 && (
+            <div className="grid-gap">
+              <div className="hint" style={{ marginTop: 0 }}>Start a session against your laser-engraved ChArUco board and capture at least 3 views from different bed positions / tilts.</div>
+              <CalibrationWizard call={call} printing={gates.printActive} />
+            </div>
+          )}
+          {step === 5 && (
+            <div className="grid-gap">
+              <div className="hint" style={{ marginTop: 0 }}>Finalize the calibration with "use the last board view as the bed reference" ticked — this sets the bed plane so mm map to the bed, not the camera.</div>
+              <CalibrationWizard call={call} printing={gates.printActive} />
+            </div>
+          )}
+          {step === 6 && <ValidationPanel call={call} printing={gates.printActive} />}
 
           <div className="step-nav">
             <button className="small" disabled={step === 0} onClick={() => setStep((n) => Math.max(0, n - 1))}>Back</button>

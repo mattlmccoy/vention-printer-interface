@@ -56,7 +56,7 @@
   --font-read: "Helvetica Neue", Helvetica, "IBM Plex Sans", Arial, system-ui, sans-serif;
   --fs: 13px;
   --space: 4px;
-  --radius: 3px;
+  --radius: 8px;
   --strip-w: 40px;
   --rail-w: 400px;
   --shadow: 0 12px 40px rgba(0, 0, 0, 0.55);
