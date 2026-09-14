@@ -87,7 +87,8 @@ export function RunsView({ status, gates, call, base }: { status: StatusPayload 
     // doesn't re-open every time this view remounts (e.g. re-clicking the Runs tab).
     if (typeof location === "undefined") return;
     const params = new URLSearchParams(location.search);
-    const q = Number(params.get("still"));
+    const raw = params.get("still"); // NOTE: Number(null) === 0, so guard the missing param explicitly
+    const q = raw === null || raw === "" ? NaN : Number(raw);
     if (Number.isInteger(q) && q >= 0 && q < caps.length) {
       setViewIdx(q);
       params.delete("still");

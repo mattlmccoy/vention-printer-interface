@@ -240,7 +240,8 @@ export function CamerasView({ status, gates, call, base, onOpenQuickStart }: {
   const currentStills = layer === null ? [] : layerCaptures.filter((c) => c.layer === layer);
 
   const [step, setStep] = useState(() => {
-    const q = typeof location !== "undefined" ? Number(new URLSearchParams(location.search).get("step")) : NaN;
+    const raw = typeof location !== "undefined" ? new URLSearchParams(location.search).get("step") : null;
+    const q = raw === null || raw === "" ? NaN : Number(raw); // Number(null)===0 trap
     return Number.isInteger(q) && q >= 0 && q <= 6 ? q : 0; // capture/deep-link aid, matches STEPS below
   });
   const STEPS = [
