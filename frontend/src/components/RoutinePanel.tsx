@@ -130,12 +130,6 @@ export function RoutinePanel({ gates, call }: { gates: Gates; call: Call }) {
         </div>
 
         <div className="rp-card">
-          <h4>finish</h4>
-          <div className="rp-row"><span title="FINISH drives the part cylinder to this absolute position — the spill-safe depth.">part drop-to (mm)</span><span className="rv"><NumberField value={d.part_max_mm} disabled={!ok} onChange={(v) => setD({ part_max_mm: v })} /></span></div>
-          <div className="rp-note">Absolute position the part cylinder is driven to when the print finishes.</div>
-        </div>
-
-        <div className="rp-card">
           <h4>nozzle purge</h4>
           <div className="rp-row"><span title="Firing is external, so this holds the printhead for this many seconds before a jet pass — a window for the printhead controller to purge. 0 = off.">purge dwell (s)</span><span className="rv"><NumberField step="0.1" value={d.purge_dwell_s} disabled={!ok} style={{ width: 64 }} onChange={(v) => setD({ purge_dwell_s: v })} /></span></div>
           <div className="rp-row"><span title="Absolute printhead position (mm) where the purge dwell holds. Blank = use the printhead start position.">purge position (mm)</span><span className="rv"><input type="text" style={{ width: 80, textAlign: "right" }} placeholder={`${d.printhead_start_mm} (start)`} value={d.purge_position_mm ?? ""} disabled={!ok} onChange={(e) => setD({ purge_position_mm: e.target.value === "" ? null : Number(e.target.value) })} /></span></div>
@@ -149,6 +143,12 @@ export function RoutinePanel({ gates, call }: { gates: Gates; call: Call }) {
           <div className="rp-row"><span>part area (mm²)</span><span className="rv"><NumberField value={d.part_area_mm2} disabled={!ok} onChange={(v) => setD({ part_area_mm2: v })} /></span></div>
           <div className="rp-row"><span>heater power (W)</span><span className="rv"><NumberField value={d.heater_section_power_w} disabled={!ok} onChange={(v) => setD({ heater_section_power_w: v })} /></span></div>
           <div className="rp-readout">IPA exposure — {exp ? <>energy <b>{rnd(exp.energy_j)} J</b> · dwell <b>{rnd(exp.time_s)} s</b> · sweep <b>{rnd(exp.sweep_speed_mm_s)} mm/s</b></> : "unavailable"}</div>
+        </div>
+
+        <div className="rp-card">
+          <h4>finish</h4>
+          <div className="rp-row"><span title="FINISH drives the part cylinder to this absolute position — the spill-safe depth.">part drop-to (mm)</span><span className="rv"><NumberField value={d.part_max_mm} disabled={!ok} onChange={(v) => setD({ part_max_mm: v })} /></span></div>
+          <div className="rp-note">Absolute position the part cylinder is driven to when the print finishes.</div>
         </div>
       </div>
       <div className="actions one tight" style={{ marginTop: 12 }}>
