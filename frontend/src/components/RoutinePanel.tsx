@@ -124,7 +124,12 @@ export function RoutinePanel({ gates, call }: { gates: Gates; call: Call }) {
           <div className="rp-row"><span>heater start (mm)</span><span className="rv"><NumberField value={d.heater_start_mm} disabled={!ok} onChange={(v) => setD({ heater_start_mm: v })} /></span></div>
           <div className="rp-row"><span title="Manual recoater sweep speed during the heater pass — overrides the computed exposure sweep (unachievable on current hardware).">heater speed (mm/s)</span><span className="rv"><NumberField step="1" value={d.heater_speed} disabled={!ok} onChange={(v) => setD({ heater_speed: v })} /></span></div>
           <div className="rp-row"><span>pre-heater drop (mm)</span><span className="rv"><NumberField step="0.1" value={d.pre_heater_drop_mm} disabled={!ok} onChange={(v) => setD({ pre_heater_drop_mm: v })} /></span></div>
-          <div className="rp-row"><span title="FINISH drives the part cylinder to this absolute position — the spill-safe depth.">part max (mm)</span><span className="rv"><NumberField value={d.part_max_mm} disabled={!ok} onChange={(v) => setD({ part_max_mm: v })} /></span></div>
+        </div>
+
+        <div className="rp-card">
+          <h4>finish</h4>
+          <div className="rp-row"><span title="FINISH drives the part cylinder to this absolute position — the spill-safe depth.">part drop-to (mm)</span><span className="rv"><NumberField value={d.part_max_mm} disabled={!ok} onChange={(v) => setD({ part_max_mm: v })} /></span></div>
+          <div className="rp-note">Absolute position the part cylinder is driven to when the print finishes.</div>
         </div>
 
         <div className="rp-card">
