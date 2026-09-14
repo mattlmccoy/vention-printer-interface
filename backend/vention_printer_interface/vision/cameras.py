@@ -14,6 +14,7 @@ import json
 import logging
 import os
 import platform
+import subprocess
 from dataclasses import dataclass, replace
 from pathlib import Path
 from typing import Any
@@ -224,19 +225,85 @@ def _stable_id_for_index(index: int) -> str:
     return f"idx:{index}"
 
 
-def enumerate_devices(max_index: int = 4) -> list[dict[str, Any]]:
-    """Best-effort real camera enumerator: probe a small index range with `cv2.VideoCapture`.
+def _parse_macos_cameras(data: dict[str, Any]) -> list[dict[str, Any]]:
+    """Parse `system_profiler SPCameraDataType -json` output into device records.
 
-    Returns `{"index", "stable_id", "name", "has_frame"}` per device that opens successfully.
-    `has_frame` is a one-shot `read()` attempt on the just-opened device: on macOS, a camera
-    that isn't authorized under Privacy & Security still reports `isOpened() == True` but every
-    `read()` fails -- `has_frame=False` is exactly that "opened but permission-denied" signature,
-    which `camera_access_state` aggregates into the overall access state. Verified on hardware,
-    NOT exercised by unit tests beyond a stubbed `cv2.VideoCapture` (tests inject a fake
-    `device_enumerator` into `create_app` instead of calling this for API-level behavior). Never
-    raises -- a probe failure at one index is skipped, not propagated, so a missing/locked
-    camera can never block startup or a `GET /api/vision/devices` request.
+    Pure (no I/O) so it is unit-testable against captured real output. Each camera becomes
+    `{"index", "stable_id", "name", "has_frame": None, "probed": False}` — identity ONLY, no
+    frame probe (the camera is never opened, so its light never comes on). `index` is the
+    enumeration order (assumed to match AVFoundation's `cv2.VideoCapture` index; the operator
+    confirms the role mapping in the quick-start wizard). `stable_id` prefers the USB
+    unique/model id (survives reboot/USB reorder) over the bare index.
     """
+    cams = data.get("SPCameraDataType") or []
+    out: list[dict[str, Any]] = []
+    for index, cam in enumerate(cams):
+        if not isinstance(cam, dict):
+            continue
+        name = cam.get("_name")
+        uid = cam.get("spcamera_unique-id") or cam.get("spcamera_model-id")
+        stable_id = f"macos-uid:{uid}" if uid else f"idx:{index}"
+        out.append({"index": index, "stable_id": stable_id, "name": name, "has_frame": None, "probed": False})
+    return out
+
+
+def _metadata_devices() -> list[dict[str, Any]]:
+    """Identify cameras from OS metadata WITHOUT opening them (so no camera activates/lights up).
+
+    macOS: `system_profiler SPCameraDataType -json`. Linux: `/sys/class/video4linux/video*/name`
+    plus `/dev/v4l/by-id` for a stable id. Returns [] on any other OS or on failure (caller then
+    falls back to the cv2 probe). Never raises.
+    """
+    system = platform.system()
+    try:
+        if system == "Darwin":
+            proc = subprocess.run(
+                ["system_profiler", "SPCameraDataType", "-json"],
+                capture_output=True, text=True, timeout=8, check=False,
+            )
+            if proc.returncode != 0 or not proc.stdout.strip():
+                return []
+            return _parse_macos_cameras(json.loads(proc.stdout))
+        if system == "Linux":
+            devs: list[dict[str, Any]] = []
+            base = Path("/sys/class/video4linux")
+            if base.is_dir():
+                for node in sorted(base.iterdir(), key=lambda p: p.name):
+                    if not node.name.startswith("video"):
+                        continue
+                    try:
+                        index = int(node.name.removeprefix("video"))
+                    except ValueError:
+                        continue
+                    name = None
+                    try:
+                        name = (node / "name").read_text(encoding="utf-8").strip() or None
+                    except OSError:
+                        pass
+                    devs.append({"index": index, "stable_id": _stable_id_for_index(index),
+                                 "name": name, "has_frame": None, "probed": False})
+            return devs
+    except Exception as exc:  # noqa: BLE001 - identification must never crash enumeration
+        log.warning("metadata camera enumeration failed: %s", exc)
+    return []
+
+
+def enumerate_devices(max_index: int = 4, probe: bool = False) -> list[dict[str, Any]]:
+    """Enumerate cameras. By default IDENTIFIES devices from OS metadata WITHOUT opening any
+    camera (`_metadata_devices` — no camera light), returning `{"index","stable_id","name",
+    "has_frame":None,"probed":False}`. This is what the quick-start/identify step needs: list USB
+    cameras by name for role assignment without turning them all on.
+
+    Falls back to a `cv2.VideoCapture` index probe when metadata yields nothing, or when
+    `probe=True` (an explicit access/permission check): the probe opens each index and does a
+    one-shot `read()`, setting `has_frame` (macOS reports `isOpened()==True` but `read()` fails
+    when Privacy & Security hasn't authorized the camera → `has_frame=False`). Never raises.
+    """
+    if not probe:
+        meta = _metadata_devices()
+        if meta:
+            return meta
+
     import cv2
 
     backend = default_backend()
@@ -259,6 +326,7 @@ def enumerate_devices(max_index: int = 4) -> list[dict[str, Any]]:
                     "stable_id": _stable_id_for_index(index),
                     "name": None,
                     "has_frame": has_frame,
+                    "probed": True,
                 }
             )
         except Exception as exc:  # noqa: BLE001 - a probe failure must never crash enumeration
@@ -284,6 +352,10 @@ def camera_access_state(devices: list[dict[str, Any]]) -> str:
         return "no_devices"
     if any(bool(device.get("has_frame")) for device in devices):
         return "ok"
+    # Devices were IDENTIFIED from metadata but never opened (no frame probe) -> access is unknown,
+    # not denied. Only a real probe (probed=True) that yielded no frame is the "denied" signature.
+    if all(device.get("has_frame") is None and not device.get("probed") for device in devices):
+        return "unknown"
     return "denied"
 
 

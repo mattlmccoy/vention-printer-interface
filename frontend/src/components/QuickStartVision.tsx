@@ -96,13 +96,16 @@ export function QuickStartVision({ base, call, onSkip, onSaved }: {
         </span>
       </div>
       {devices === null && <div className="hint">detecting cameras…</div>}
-      {devices !== null && cameraAccess !== null && cameraAccess !== "ok" && (
+      {devices !== null && (cameraAccess === "denied" || cameraAccess === "no_devices") && (
         <div className="banner err" style={{ marginTop: 8 }}>
           <span className="reason">{cameraAccessMessage(cameraAccess)}</span>
           <button className="small" style={{ marginLeft: "auto" }} onClick={rescan}>rescan</button>
         </div>
       )}
-      {devices !== null && devices.length === 0 && cameraAccess === "ok" && <div className="hint">no cameras detected</div>}
+      {devices !== null && devices.length === 0 && (cameraAccess === "ok" || cameraAccess === "unknown") && <div className="hint">no cameras detected</div>}
+      {devices !== null && devices.length > 0 && cameraAccess === "unknown" && (
+        <div className="hint" style={{ marginTop: 8 }}>Identified from the OS by name — no camera was opened. Access is verified when a camera is first used.</div>
+      )}
       {devices !== null && devices.length > 0 && (
         <div style={{ display: "flex", flexWrap: "wrap", gap: 12, marginTop: 8 }}>
           {devices.map((dev) => {
