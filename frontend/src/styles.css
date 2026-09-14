@@ -167,6 +167,28 @@ button.small { height: 34px; padding: 0 12px; border: 1px solid var(--line-contr
 .timeline .tl-row.on { border-color: var(--accent); color: var(--fg-strong); background: var(--warn-bg); }
 .timeline .tl-row.on .n { color: var(--accent); }
 
+/* ---- clean fixed-layout pages (Print state-aware; reusable .card) ---- */
+.print-view { display: block; padding: 24px 28px; }
+.print-view > * { padding: 0; min-width: 0; }
+.print-view > * + * { margin-top: 16px; }
+.card { background: var(--panel); border: 1px solid var(--line); border-radius: var(--radius); padding: 16px; min-width: 0; }
+.card > h3 { margin: 0 0 12px; font: 12px var(--font-mono); letter-spacing: .09em; text-transform: uppercase; color: var(--label); font-weight: 600; display: flex; align-items: baseline; justify-content: space-between; gap: 12px; }
+.cmdbar { display: flex; align-items: center; gap: 14px; flex-wrap: wrap; background: var(--panel); border: 1px solid var(--line); border-radius: var(--radius); padding: 12px 16px; }
+.state-pill { font: 700 14px var(--font-mono); letter-spacing: .06em; padding: 6px 13px; border-radius: var(--radius); border: 1px solid var(--line-strong); color: var(--muted); white-space: nowrap; }
+.state-pill.run { color: var(--accent); border-color: var(--accent); background: var(--warn-bg); }
+.state-pill.fault { color: var(--err); border-color: var(--err); background: var(--err-bg); }
+.cmd-name { font: 600 15px var(--font-read); color: var(--fg-strong); }
+.cmd-prog { flex: 1 1 220px; min-width: 180px; }
+.cmd-actions { display: flex; gap: 8px; }
+.cta.sm { height: 38px; padding: 0 18px; }
+.print-grid { display: grid; grid-template-columns: minmax(0, 1fr) 340px; gap: 16px; align-items: start; }
+@media (max-width: 1000px) { .print-grid { grid-template-columns: minmax(0, 1fr); } }
+.imaging-card .xsec { height: 380px; }
+.manual-card { max-width: 620px; }
+.single-step-row { font-size: 13px; color: var(--fg); }
+.rp-drawer { border: 1px solid var(--line); border-radius: var(--radius); background: var(--panel); padding: 14px 16px; margin-top: 16px; }
+.rp-drawer[open] { padding-bottom: 16px; }
+
 /* run card */
 .state { display: flex; align-items: baseline; gap: 12px; margin: 6px 0 22px; flex-wrap: wrap; }
 .state .big { font: 700 34px/1 var(--font-mono); color: var(--fg-strong); letter-spacing: .02em; }
@@ -391,10 +413,19 @@ button.small { height: 34px; padding: 0 12px; border: 1px solid var(--line-contr
 .dock-head { display: flex; align-items: center; justify-content: space-between; padding: 10px 14px; border-bottom: 1px solid var(--line); position: sticky; top: 0; background: var(--bg-deep); z-index: 2; }
 .dock-title { font: 12px var(--font-mono); letter-spacing: .1em; text-transform: uppercase; color: var(--label); }
 .dock-body { padding: 14px; display: flex; flex-direction: column; gap: 14px; }
-/* LARGE machine schematic — the monitor's centrepiece (this was the real complaint: too small) */
-.dock-machine { background: var(--image-bg); border: 1px solid var(--line); border-radius: var(--radius); padding: 10px; }
-.dock-machine .machine { width: 100%; }
-.dock-machine .machine svg, .dock-machine svg { width: 100%; height: auto; max-height: 48vh; min-height: 300px; }
+/* compact dock machine diagram — purpose-built for the narrow panel (portrait ~5:4) */
+.dock-machine { background: var(--bg-deep); border: 1px solid var(--line); border-radius: var(--radius); padding: 10px; }
+.dockdiag { width: 100%; height: auto; display: block; }
+.dockdiag .frame { fill: none; stroke: var(--line-strong); }
+.dockdiag .rail { stroke: var(--line-control); stroke-width: 2; }
+.dockdiag .bed { stroke: var(--line); stroke-width: 1; stroke-dasharray: 4 4; }
+.dockdiag .bin { fill: var(--panel); stroke: var(--line-control); }
+.dockdiag .lbl { fill: var(--muted); font: 10px var(--font-mono); letter-spacing: .06em; }
+.dockdiag .lbl.dim { fill: var(--faint); }
+.dockdiag .ph { fill: var(--trace-ph); } .dockdiag .rc { fill: var(--trace-rc); }
+.dockdiag .build { fill: var(--trace-part); } .dockdiag .feed { fill: var(--trace-feed); }
+.dockdiag .mv { animation: vpi-blink .7s steps(1) infinite; }
+@media (prefers-reduced-motion: reduce) { .dockdiag .mv { animation: none; } }
 /* compact 2x2 axis chips (position readouts kept modest — they were fine before) */
 .dock-axes { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
 .dock-chip { border: 1px solid var(--line); border-left: 3px solid var(--line-control); border-radius: var(--radius); background: var(--panel); padding: 7px 11px; }

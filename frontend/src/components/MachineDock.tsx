@@ -2,7 +2,7 @@ import { api } from "../lib/api.ts";
 import { fmtSecs, type Gates } from "../lib/format.ts";
 import { type AxisNo, type StatusPayload } from "../lib/telemetry.ts";
 import type { View } from "../lib/console.ts";
-import { Elevation } from "./Elevation.tsx";
+import { DockMachine } from "./DockMachine.tsx";
 import { OverviewCameraPanel } from "./OverviewCameraPanel.tsx";
 import type { Call } from "./views/types.ts";
 
@@ -36,7 +36,7 @@ export function MachineDock({ status, base, gates, call, view }: {
         <span className={`dot ${t ? "live" : "warn"}`} />
       </div>
       <div className="dock-body">
-        <div className="dock-machine"><Elevation status={status} partZeroMm={r?.part_zero_mm ?? null} /></div>
+        <div className="dock-machine"><DockMachine status={status} /></div>
 
         {active && (
           <div className="dock-print">
