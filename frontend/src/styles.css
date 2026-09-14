@@ -179,6 +179,19 @@ button.small { height: 34px; padding: 0 12px; border: 1px solid var(--line-contr
 .cards-2 { display: grid; grid-template-columns: repeat(auto-fit, minmax(340px, 1fr)); gap: 16px; align-items: start; }
 .cards-3 { display: grid; grid-template-columns: repeat(auto-fit, minmax(280px, 1fr)); gap: 16px; align-items: start; }
 .axis-sep { height: 1px; background: var(--line); margin: 16px 0; }
+/* guided-step rail (Setup walkthrough) */
+.setup-grid { display: grid; grid-template-columns: 300px minmax(0, 1fr); gap: 16px; align-items: start; }
+@media (max-width: 960px) { .setup-grid { grid-template-columns: minmax(0, 1fr); } }
+.srail { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 2px; }
+.srail li { display: flex; gap: 12px; align-items: flex-start; padding: 10px; border: 1px solid transparent; border-radius: var(--radius); cursor: pointer; }
+.srail li:hover { background: var(--bg-deep); }
+.srail li.on { background: var(--bg-deep); border-color: var(--line); }
+.srail .n { flex: 0 0 24px; height: 24px; border-radius: 50%; display: grid; place-items: center; font: 12px var(--font-mono); border: 1px solid var(--line-control); color: var(--muted); }
+.srail li.on .n { background: var(--accent); color: var(--accent-ink); border-color: transparent; }
+.srail li.done .n { background: var(--live); color: var(--bg); border-color: transparent; }
+.srail .t { font-weight: 600; font-size: 14px; color: var(--fg-strong); }
+.srail li:not(.on):not(.done) .t { color: var(--muted); }
+.srail .sd { font-size: 11.5px; color: var(--faint); margin-top: 1px; }
 .card { background: var(--panel); border: 1px solid var(--line); border-radius: var(--radius); padding: 16px; min-width: 0; }
 .card > h3 { margin: 0 0 12px; font: 12px var(--font-mono); letter-spacing: .09em; text-transform: uppercase; color: var(--label); font-weight: 600; display: flex; align-items: baseline; justify-content: space-between; gap: 12px; }
 .cmdbar { display: flex; align-items: center; gap: 14px; flex-wrap: wrap; background: var(--panel); border: 1px solid var(--line); border-radius: var(--radius); padding: 12px 16px; }

@@ -158,7 +158,7 @@ export function App() {
               {(["job", "priming", "print"] as View[]).map((v) => <button key={v} className={`bt${ui.view === v ? " active" : ""}`} onClick={() => setView(v)}>{v}</button>)}
             </div>
             <div className="tabgroup">
-              {(["control", "runs", "cameras"] as View[]).map((v) => <button key={v} className={`bt${ui.view === v ? " active" : ""}`} onClick={() => setView(v)}>{v}</button>)}
+              {(["control", "runs", "cameras"] as View[]).map((v) => <button key={v} className={`bt${ui.view === v ? " active" : ""}`} onClick={() => setView(v)}>{v === "cameras" ? "setup" : v}</button>)}
             </div>
           </nav>
           <button className={`pill${g.faulted ? " err" : ""}`} onClick={() => setShowConnect((s) => !s)} title="connection">

@@ -189,16 +189,55 @@ export function CamerasView({ status, gates, call, base, onOpenQuickStart }: {
 
   const currentStills = layer === null ? [] : layerCaptures.filter((c) => c.layer === layer);
 
-  return (
-    <div className="view fixed-page cameras-view">
-      <div className="row"><button className="small" onClick={onOpenQuickStart}>camera setup…</button><span className="hint">re-run the guided camera-role setup anytime (cameras swapped / re-cabled)</span></div>
+  const [step, setStep] = useState(0);
+  const STEPS = [
+    { title: "Cameras & roles", sub: "identify · assign · permission" },
+    { title: "Print a board", sub: "ChArUco / checkerboard" },
+    { title: "Calibrate", sub: "intrinsics + bed plane" },
+    { title: "Validate", sub: "dimensional ±0.1 mm" },
+  ];
 
-      <div className="sec-h">live &amp; captures</div>
-      <div className="cards-2">
+  return (
+    <div className="view fixed-page setup-view">
+      <div className="setup-grid">
         <div className="card">
-          <h3>overview camera · live</h3>
-          <div className="cam-panel-body"><CamImg className="cam-panel-img" src={overviewStreamUrl(base)} alt="overview camera live view" /></div>
+          <h3>guided setup</h3>
+          <ol className="srail">
+            {STEPS.map((s, i) => (
+              <li key={s.title} className={i === step ? "on" : i < step ? "done" : ""} aria-current={i === step ? "step" : undefined} onClick={() => setStep(i)}>
+                <span className="n">{i < step ? "✓" : i + 1}</span>
+                <div><div className="t">{s.title}</div><div className="sd">{s.sub}</div></div>
+              </li>
+            ))}
+          </ol>
         </div>
+
+        <div className="card">
+          <h3>step {step + 1} · {STEPS[step].title}</h3>
+
+          {step === 0 && (
+            <div className="grid-gap">
+              <div className="hint" style={{ marginTop: 0 }}>Identify which detected camera is the overview (wide live view) and which is the science camera (bed stills). This is remembered and reconnects automatically. Nothing opens a camera until a page asks for it.</div>
+              <div className="cam-panel-body" style={{ borderRadius: "var(--radius)", border: "1px solid var(--line)" }}><CamImg className="cam-panel-img" src={overviewStreamUrl(base)} alt="overview camera live view" /></div>
+              <div className="btnrow">
+                <button className="cta primary" onClick={onOpenQuickStart}>Identify &amp; assign cameras…</button>
+                <button className="small" disabled={!gates.reachable} onClick={() => call("rescan cameras", () => api.visionDevices())}>Rescan devices</button>
+              </div>
+            </div>
+          )}
+          {step === 1 && <CalibrationBoardPanel base={base} />}
+          {step === 2 && <CalibrationWizard call={call} printing={gates.printActive} />}
+          {step === 3 && <ValidationPanel call={call} printing={gates.printActive} />}
+
+          <div className="step-nav">
+            <button className="small" disabled={step === 0} onClick={() => setStep((n) => Math.max(0, n - 1))}>Back</button>
+            <button className="small" disabled={step === STEPS.length - 1} onClick={() => setStep((n) => Math.min(STEPS.length - 1, n + 1))}>Next</button>
+          </div>
+        </div>
+      </div>
+
+      <div className="sec-h">review captures</div>
+      <div className="cards-2">
         <div className="card">
           <h3>{run ? `current layer stills · layer ${layer ?? "—"}` : "current layer stills"}</h3>
           {!run ? <div className="hint" style={{ marginTop: 0 }}>no active run — start a recording to capture layer stills</div> :
@@ -217,17 +256,6 @@ export function CamerasView({ status, gates, call, base, onOpenQuickStart }: {
               </div>
             )}
         </div>
-      </div>
-
-      <div className="sec-h">calibration</div>
-      <div className="cards-2">
-        <div className="card"><h3>calibration</h3><CalibrationWizard call={call} printing={gates.printActive} /></div>
-        <div className="card"><h3>validation</h3><ValidationPanel call={call} printing={gates.printActive} /></div>
-      </div>
-
-      <div className="sec-h">boards &amp; capture browser</div>
-      <div className="cards-2">
-        <div className="card"><h3>calibration boards (SVG / DXF)</h3><CalibrationBoardPanel base={base} /></div>
         <div className="card"><h3>capture browser</h3><CaptureBrowser base={base} /></div>
       </div>
 
