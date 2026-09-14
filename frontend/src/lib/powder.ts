@@ -35,3 +35,13 @@ export function fillDepthMm(i: FillInput): number {
 export function cavityFillPct(depthMm: number, feedTravelMm: number = FEED_TRAVEL_MM): number {
   return clamp(Math.round((100 * depthMm) / feedTravelMm), 0, 100);
 }
+
+/** Fraction of a piston well that is FILLED with material, 0-1, for the machine diagram.
+ *  Position mm is DEPTH below flush (0 = flush with the bed, travel = piston fully down), so the
+ *  well fills from the top down: flush -> full (1), deep -> empty (0); a cavity opens at the top as
+ *  the piston descends. Matches the front-elevation schematic (pistonTopY). Non-finite/null -> 0. */
+export function pistonMaterialFrac(mm: number | null | undefined, travelMm: number = FEED_TRAVEL_MM): number {
+  if (typeof mm !== "number" || !Number.isFinite(mm)) return 0;
+  const travel = travelMm > 0 ? travelMm : 1;
+  return clamp(1 - mm / travel, 0, 1);
+}

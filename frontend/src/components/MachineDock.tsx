@@ -8,8 +8,9 @@ import type { Call } from "./views/types.ts";
 
 const SHORT: Record<AxisNo, string> = { 1: "build", 2: "feed", 3: "printhead", 4: "recoater" };
 const AXCLS: Record<AxisNo, string> = { 1: "ax-build", 2: "ax-feed", 3: "ax-ph", 4: "ax-rc" };
-// Chip order matches the mockup: gantries first (printhead, recoater), then pistons (build, feed).
-const CHIP_ORDER: AxisNo[] = [3, 4, 1, 2];
+// Chip order: gantries first (printhead, recoater), then pistons FEED, BUILD — left-to-right the
+// same as the machine diagram and the physical machine, so the readouts never contradict the picture.
+const CHIP_ORDER: AxisNo[] = [3, 4, 2, 1];
 
 /** The persistent right-side machine monitor — mockup layout: a LARGE, clear machine schematic on
  *  top (the centrepiece), then compact 2x2 axis chips, an on-demand overview PIP, heater/health,

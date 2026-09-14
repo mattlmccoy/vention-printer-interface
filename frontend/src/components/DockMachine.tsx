@@ -1,4 +1,5 @@
 import { GANTRY_HOME_SIDE, TRAVEL_MM, type AxisNo, type StatusPayload } from "../lib/telemetry.ts";
+import { pistonMaterialFrac } from "../lib/powder.ts";
 
 /** Compact machine diagram purpose-built for the NARROW dock (portrait-ish ~5:4), unlike the wide
  *  Elevation schematic which can't fit a side panel. Gantries (printhead/recoater) ride horizontal
@@ -22,9 +23,11 @@ export function DockMachine({ status }: { status: StatusPayload | null }) {
   const carriageX = (a: 3 | 4) => (GANTRY_HOME_SIDE[a] === "right" ? railX1 - frac(a) * span : railX0 + frac(a) * span);
   const phX = carriageX(3);
   const rcX = carriageX(4);
-  // piston bins: vertical, fill grows from the bottom with position
+  // piston bins: vertical wells. Material fills from the TOP (bed line): flush (0 mm) = FULL well,
+  // and a cavity opens at the top as the piston descends (matches the front-elevation schematic).
   const binY0 = 132, binY1 = 214, binH = binY1 - binY0;
-  const buildFill = frac(1) * binH, feedFill = frac(2) * binH;
+  const feedFill = pistonMaterialFrac(t?.positions["2"], TRAVEL_MM[2]) * binH;
+  const buildFill = pistonMaterialFrac(t?.positions["1"], TRAVEL_MM[1]) * binH;
 
   return (
     <svg className="dockdiag" viewBox="0 0 300 244" role="img" aria-label="machine positions">
@@ -39,13 +42,13 @@ export function DockMachine({ status }: { status: StatusPayload | null }) {
       <rect className={`rc${mv(4) ? " mv" : ""}`} x={rcX - 11} y="85" width="22" height="14" rx="2" />
       {/* bed line */}
       <line className="bed" x1="20" y1="116" x2="280" y2="116" />
-      {/* pistons */}
+      {/* pistons — FEED left, BUILD right, matching the physical machine layout */}
       <rect className="bin" x="56" y={binY0} width="82" height={binH} rx="2" />
       <rect className="bin" x="162" y={binY0} width="82" height={binH} rx="2" />
-      <rect className={`build${mv(1) ? " mv" : ""}`} x="58" y={binY1 - buildFill} width="78" height={buildFill} />
-      <rect className={`feed${mv(2) ? " mv" : ""}`} x="164" y={binY1 - feedFill} width="78" height={feedFill} />
-      <text className="lbl" x="97" y="230" textAnchor="middle">BUILD</text>
-      <text className="lbl" x="203" y="230" textAnchor="middle">FEED</text>
+      <rect className={`feed${mv(2) ? " mv" : ""}`} x="58" y={binY1 - feedFill} width="78" height={feedFill} />
+      <rect className={`build${mv(1) ? " mv" : ""}`} x="164" y={binY1 - buildFill} width="78" height={buildFill} />
+      <text className="lbl" x="97" y="230" textAnchor="middle">FEED</text>
+      <text className="lbl" x="203" y="230" textAnchor="middle">BUILD</text>
       {!t && <text className="lbl dim" x="150" y="120" textAnchor="middle">no telemetry — connect a controller</text>}
     </svg>
   );
