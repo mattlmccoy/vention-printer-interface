@@ -239,7 +239,10 @@ export function CamerasView({ status, gates, call, base, onOpenQuickStart }: {
 
   const currentStills = layer === null ? [] : layerCaptures.filter((c) => c.layer === layer);
 
-  const [step, setStep] = useState(0);
+  const [step, setStep] = useState(() => {
+    const q = typeof location !== "undefined" ? Number(new URLSearchParams(location.search).get("step")) : NaN;
+    return Number.isInteger(q) && q >= 0 && q <= 6 ? q : 0; // capture/deep-link aid, matches STEPS below
+  });
   const STEPS = [
     { title: "Connect controller", sub: "arm the machine" },
     { title: "Identify & assign cameras", sub: "overview · science" },

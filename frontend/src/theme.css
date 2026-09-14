@@ -47,6 +47,9 @@
   /* Model / preview (dry-run) movement — distinct from every live axis colour. */
   --violet: #b98cff;
   --image-bg: #000;
+  /* Slice-preview letterbox: white in both themes so the padding matches the CAD slice's own
+     white field and reads as one clean build-envelope square. */
+  --slice-bg: #ffffff;
   --scrim: rgba(11, 14, 18, 0.85);
   --danger-ink: #ffffff;
   --font-ui: "IBM Plex Sans", system-ui, sans-serif;

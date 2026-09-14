@@ -43,7 +43,11 @@ export function App() {
   const samples = useRef<number[]>([]);
   const [visionStatus, setVisionStatus] = useState<VisionStatus | null>(null);
   const [quickStartOpen, setQuickStartOpen] = useState(false); // explicit re-open, e.g. from Settings
-  const [theme, setTheme] = useState<"dark" | "light">(() => (storage?.getItem("vpi.theme") === "light" ? "light" : "dark"));
+  const [theme, setTheme] = useState<"dark" | "light">(() => {
+    const q = typeof location !== "undefined" ? new URLSearchParams(location.search).get("theme") : null;
+    if (q === "light" || q === "dark") return q;
+    return storage?.getItem("vpi.theme") === "light" ? "light" : "dark";
+  });
 
   // Theme: dark is the default (bare :root); "light" stamps data-theme on <html> to swap tokens.
   useEffect(() => {

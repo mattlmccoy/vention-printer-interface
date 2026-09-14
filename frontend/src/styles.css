@@ -183,6 +183,7 @@ button.small { height: 34px; padding: 0 12px; border: 1px solid var(--line-contr
 .sec-h { font: 12px var(--font-mono); letter-spacing: .1em; text-transform: uppercase; color: var(--faint); margin: 4px 0 0; }
 .cards-2 { display: grid; grid-template-columns: repeat(auto-fit, minmax(340px, 1fr)); gap: 16px; align-items: start; }
 .cards-3 { display: grid; grid-template-columns: repeat(auto-fit, minmax(280px, 1fr)); gap: 16px; align-items: start; }
+.grid-gap { display: flex; flex-direction: column; gap: 16px; min-width: 0; }
 .axis-sep { height: 1px; background: var(--line); margin: 16px 0; }
 /* guided-step rail (Setup walkthrough) */
 .setup-grid { display: grid; grid-template-columns: 300px minmax(0, 1fr); gap: 16px; align-items: start; }
@@ -214,12 +215,14 @@ button.small { height: 34px; padding: 0 12px; border: 1px solid var(--line-contr
 .cta.sm { height: 38px; padding: 0 18px; }
 .print-grid { display: grid; grid-template-columns: minmax(0, 1fr) 340px; gap: 16px; align-items: start; }
 @media (max-width: 1000px) { .print-grid { grid-template-columns: minmax(0, 1fr); } }
-.imaging-card .xsec { height: 380px; }
-.compare-2 { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
+.imaging-card .xsec { max-width: 520px; }
+.compare-2 { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; align-items: start; }
 @media (max-width: 760px) { .compare-2 { grid-template-columns: 1fr; } }
-.compare-2 .xsec { height: 300px; }
+/* CAD and science-cam share one identical square envelope (both registered to the bed plane),
+   so the panels line up 1:1 for comparison. max-width:none lets each fill its own column. */
+.compare-2 .xsec, .compare-2 .cmp-img { max-width: none; }
 .cmp-h { font: 10px var(--font-mono); letter-spacing: .09em; text-transform: uppercase; color: var(--label); margin-bottom: 6px; }
-.cmp-img { display: block; width: 100%; max-height: 300px; object-fit: contain; border: 1px solid var(--line); border-radius: 10px; background: var(--image-bg); }
+.cmp-img { display: block; width: 100%; aspect-ratio: 1 / 1; object-fit: contain; border: 1px solid var(--line); border-radius: 10px; background: var(--slice-bg); }
 .manual-card { max-width: 620px; }
 .single-step-row { font-size: 13px; color: var(--fg); }
 .rp-drawer { border: 1px solid var(--line); border-radius: var(--radius); background: var(--panel); padding: 14px 16px; margin-top: 16px; }
@@ -367,7 +370,9 @@ button.small { height: 34px; padding: 0 12px; border: 1px solid var(--line-contr
 @media (prefers-reduced-motion: reduce) { .badge.rec, .el-moving, .mk-live.mk-moving, .mk-model.mk-moving { animation: none; } }
 
 /* ---- jobs / cross-section ---- */
-.xsec { position: relative; flex: 1; min-height: 0; display: grid; place-items: center; background: var(--bg-deep); border: 1px solid var(--line); border-radius: var(--radius); overflow: hidden; }
+/* square build-envelope: every part letterboxes into the same box, so the render size is
+   consistent across jobs and the caption sits in the bottom margin (no overlap, no dead space). */
+.xsec { position: relative; aspect-ratio: 1 / 1; width: 100%; max-width: 480px; margin-inline: auto; min-height: 0; display: grid; place-items: center; background: var(--slice-bg); border: 1px solid var(--line); border-radius: var(--radius); overflow: hidden; }
 .xsec img { max-width: 100%; max-height: 100%; image-rendering: auto; border: 1px solid var(--line-strong); }
 .xsec .cap { position: absolute; left: 14px; bottom: 10px; font: 12px var(--font-mono); color: var(--muted); background: var(--scrim); padding: 2px 6px; }
 .xsec .cap b { color: var(--fg-strong); }
