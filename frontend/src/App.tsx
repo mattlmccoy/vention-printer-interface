@@ -156,7 +156,7 @@ export function App() {
     <ErrorBoundary>
       <div className="console">
         <header className="top">
-          <span className="wordmark">VENTION PRINTER INTERFACE<span className="sub">MM2 · MetPrint</span></span>
+          <span className="wordmark">VENTION PRINTER INTERFACE<span className="sub">MachineMotion 2</span></span>
           <nav className="tabs">
             <div className="tabgroup build">
               <span className="tglabel">BUILD</span>
@@ -189,8 +189,10 @@ export function App() {
               <b>FAULT</b>
               <span className="reason" title={c?.fault_reasons.join("; ")}>{c?.fault_reasons.join("; ")}</span>
               <span className={`rstep${estopStillAsserted ? "" : " done"}`}
-                title="An E-STOP can only be released by hand at the machine (ISO 13850). Software cannot release it.">
-                <span className="n">1</span>{estopStillAsserted ? <>release <b>E-STOP</b> by hand</> : <>E-STOP released</>}
+                title="Release the physical E-STOP by hand first (ISO 13850 — software can't release the button). Then Acknowledge, which tells the controller to clear the latched E-STOP (it only succeeds once the button is physically released, so it can't bypass a live E-STOP).">
+                <span className="n">1</span>{estopStillAsserted
+                  ? <>release <b>E-STOP</b> by hand, then <button className="small" disabled={!g.connected} onClick={() => call("acknowledge e-stop release", api.estopRelease)}>acknowledge</button></>
+                  : <>E-STOP released</>}
               </span>
               <span className={`rstep${c?.telemetry?.drives_ready === true ? " done" : ""}`}>
                 <span className="n">2</span>{c?.telemetry?.drives_ready === true
