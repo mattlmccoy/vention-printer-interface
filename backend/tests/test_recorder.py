@@ -138,6 +138,41 @@ def test_motion_profiles_csv_finite_differences(tmp_path: Path) -> None:
     assert "motion_profiles.csv" in manifest["checksums"]
 
 
+def test_list_runs_enriched_fields(tmp_path: Path) -> None:
+    rec = Recorder(tmp_path)
+    run = rec.start("Rich Run", notes="hello there", metadata={"backend": "simulated"})
+    rec.record(_snap_at(0, 0.0))
+    rec.record(_snap_at(2_000_000_000, 1.0))  # 2.0 s after the first telemetry row
+    rec.record_layer({"layer": 1, "phase": "printing", "part_height_mm": 1.0, "elapsed_s": 1.0})
+    rec.record_layer({"layer": 2, "phase": "printing", "part_height_mm": 2.0, "elapsed_s": 2.0})
+    rec.stop()
+    item = rec.list_runs()[0]
+    # Existing fields are preserved.
+    assert item["run"] == run.name
+    assert item["complete"] is True
+    assert item["size_bytes"] > 0
+    # Enriched fields, read back from the durable run record.
+    assert item["name"] == "Rich Run"
+    assert item["notes"] == "hello there"
+    assert isinstance(item["started_at"], str) and item["started_at"]
+    assert item["layer_count"] == 2  # two layer rows recorded (layers.csv minus header)
+    assert item["duration_s"] == 2.0  # (last - first) host_timestamp_ns / 1e9
+
+
+def test_list_runs_bare_run_reports_nulls_without_error(tmp_path: Path) -> None:
+    # A crashed/bare run dir (no metadata/telemetry/layers) must not raise.
+    (tmp_path / "20260101_000000_bare").mkdir(parents=True)
+    rec = Recorder(tmp_path)
+    item = rec.list_runs()[0]
+    assert item["run"] == "20260101_000000_bare"
+    assert item["complete"] is False
+    assert item["name"] == ""
+    assert item["notes"] == ""
+    assert item["started_at"] is None
+    assert item["layer_count"] is None
+    assert item["duration_s"] is None
+
+
 def test_layers_csv(tmp_path: Path) -> None:
     rec = Recorder(tmp_path)
     run = rec.start("layers")

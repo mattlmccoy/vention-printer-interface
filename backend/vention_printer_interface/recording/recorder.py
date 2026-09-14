@@ -116,6 +116,43 @@ def _write_motion_profiles(run: Path) -> None:
             writer.writerow(["" if v is None else v for v in row])
 
 
+def _read_run_meta(run: Path) -> dict[str, Any]:
+    """Best-effort read of a run's metadata.json; ``{}`` when missing or unreadable."""
+    try:
+        loaded = json.loads((run / "metadata.json").read_text())
+    except (OSError, ValueError):
+        return {}
+    return loaded if isinstance(loaded, dict) else {}
+
+
+def _layer_count(run: Path) -> int | None:
+    """Recorded layer rows (layers.csv rows minus the header), or ``None`` when unreadable.
+
+    A missing/empty file (no header) yields ``None`` -- unknown, never a false ``0``.
+    """
+    try:
+        with (run / "layers.csv").open(newline="") as f:
+            rows = sum(1 for _ in csv.reader(f))
+    except OSError:
+        return None
+    return rows - 1 if rows else None
+
+
+def _telemetry_duration_s(run: Path) -> float | None:
+    """(last - first) ``host_timestamp_ns`` / 1e9 from telemetry.csv, or ``None`` when < 2 rows."""
+    try:
+        with (run / "telemetry.csv").open(newline="") as f:
+            stamps = [
+                t for row in csv.DictReader(f) if (t := _to_float(row.get("host_timestamp_ns")))
+                is not None
+            ]
+    except OSError:
+        return None
+    if len(stamps) < 2:
+        return None
+    return round((stamps[-1] - stamps[0]) / 1e9, 3)
+
+
 def _sha256(path: Path) -> str:
     h = hashlib.sha256()
     with path.open("rb") as f:
@@ -272,7 +309,19 @@ class Recorder:
         dirs = sorted(p for p in self.root.iterdir() if p.is_dir() and not p.name.startswith("."))
         for d in dirs:
             size = sum(f.stat().st_size for f in d.rglob("*") if f.is_file())
+            meta = _read_run_meta(d)
+            raw_experiment = meta.get("experiment")
+            experiment: dict[str, Any] = raw_experiment if isinstance(raw_experiment, dict) else {}
             out.append(
-                {"run": d.name, "complete": (d / "manifest.json").exists(), "size_bytes": size}
+                {
+                    "run": d.name,
+                    "complete": (d / "manifest.json").exists(),
+                    "size_bytes": size,
+                    "name": experiment.get("name", ""),
+                    "notes": experiment.get("notes", ""),
+                    "started_at": meta.get("started_utc"),
+                    "layer_count": _layer_count(d),
+                    "duration_s": _telemetry_duration_s(d),
+                }
             )
         return out
