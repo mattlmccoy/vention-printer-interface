@@ -38,7 +38,11 @@ Mockups: detailed screens `94ba7d61`, layout study `f997cdbc`, visual directions
 ## 5. Page layouts
 Each page's main = its task; the dock is the live monitor.
 
-**Print (Layout B):** main = imaging left (CAD-slice vs captured compare: side-by-side + overlay/diff, stage selector pre/**post_jet**/post_heat, layer scrub, Δ metrics, recent-layers filmstrip) | narrow right column (This-print progress + **grouped routine-params cards**, always visible). Advanced: dry-run / single-step / seek. Source toggle job/manual.
+**Print (state-aware, monitor-first — supersedes the earlier "Layout B"):** the page adapts to run state instead of stacking everything.
+- **Command strip** (always, top): state pill (IDLE / DRY RUN / PRINTING / PAUSED) · job name or "Manual print" · stage·layer badge · progress bar (active only) · primary actions (Start / Pause / Resume / Abort), all content-sized.
+- **Body switches by state:** *printing a job* → CAD-slice-vs-captured compare (stage tabs pre/**post_jet**/post_heat, Δ metrics, filmstrip) + timeline (jump-to-step while paused); *printing manual* → **captured still only, NO CAD compare** (no CAD reference exists) + timeline; *idle + job* → CAD cross-section preview + layer scrub + Ready-to-print (dry-run/single-step/record + Start); *idle + no job* → **Manual print setup card ONLY** (capped width). The CAD compare and the manual-print card are mutually-exclusive and state-gated — never both.
+- **Routine parameters** = a **collapsible drawer** (`<details>`, collapsed by default while printing), grouped cards flow wide when open; also editable on Job.
+Feature 9 note: `n_jet_passes`="passes/layer" (multipass), Finish=`part_max_mm` absolute position, purge position separate/settable. Grouped routine cards + ⓘ explainers per RoutinePanel.tsx.
 
 **Routine parameters — ground truth is `frontend/src/components/RoutinePanel.tsx` (do not invent/rename).** Real editable fields, grouped for the redesign:
 - *Powder handling*: `thin_precoat` (n_layers × layer_thickness_mm, feed_thickness_mm), `printing_feed_thickness_mm` (feed/layer), `recoater_return_mm`, `feed_backlash_mm` (anti-backlash), `postcoat_enabled`. (Thick precoats live in the **Priming** routine, not here.)
