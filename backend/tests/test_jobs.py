@@ -98,3 +98,47 @@ def test_job_to_print_settings_patch(tmp_path: Path) -> None:
     assert patch == {"printing": {"n_layers": 50}}
     assert "layer_thickness_mm" not in patch["printing"]
     assert job.layer_height_mm == pytest.approx(0.1)  # still available for the "slicer: X mm" label
+
+
+# Captured 2026-09-14 from a real RIP _archive/.../job_info.json in the hot folder.
+# A RIP (2D multi-pass) job: NO layer_count, NO bbox, TIFFs named <name>_Pass<N>_Page1_Clr1.tif.
+RIP_INFO = {
+    "generated_by": "Meteor RIP",
+    "source_file": "gold_standard_300dpi_20260319_233656.pdf",
+    "job_id": "9aa4788b",
+    "workflow": "rip",
+    "tiff_count": 4,
+    "tiff_files": [
+        "g_Pass1_Page1_Clr1.tif", "g_Pass2_Page1_Clr1.tif",
+        "g_Pass3_Page1_Clr1.tif", "g_Pass4_Page1_Clr1.tif",
+    ],
+    "dpi": 720, "bpp": 4, "compression": "lzw", "color_plane": 1,
+    "elapsed_sec": 56.7, "timestamp": "2026-09-14T19:22:32.940180",
+}
+
+
+def make_rip_job(root: Path, name: str = "20260914_192136_gold_standard", passes: int = 4) -> Path:
+    d = root / name
+    d.mkdir(parents=True)
+    (d / "job_info.json").write_text(json.dumps(RIP_INFO))
+    for p in range(1, passes + 1):  # all passes are Page1 — one printed layer, N jetting passes
+        im = Image.new("L", (300, 30), 255)
+        im.save(d / f"g_Pass{p}_Page1_Clr1.tif", compression="tiff_lzw")
+    return d
+
+
+def test_rip_job_is_loaded_as_single_layer(tmp_path: Path) -> None:
+    # Regression: a RIP manifest has no layer_count, so load_job raised KeyError and scan()
+    # silently dropped it — the job never appeared in the console. A RIP job is ONE printed
+    # layer (all pages are Page1); it must load, not crash.
+    job = load_job(make_rip_job(tmp_path))
+    assert job.layer_count == 1
+    assert len(job.pages) == 1
+    assert job.complete is True
+    assert job.dpi == 720 and job.bpp == 4
+
+
+def test_scan_finds_rip_job(tmp_path: Path) -> None:
+    make_rip_job(tmp_path / "hot", "20260914_192136_gold_standard")
+    jobs = JobStore([tmp_path / "hot"]).scan()
+    assert any(j.layer_count == 1 for j in jobs), "RIP job must be discoverable by scan()"

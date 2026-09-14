@@ -72,13 +72,18 @@ class JobInfo:
 
 def load_job(job_dir: Path) -> JobInfo:
     info = json.loads((job_dir / "job_info.json").read_text())
-    layer_count = int(info["layer_count"])
     height = float(info.get("height_mm") or (info.get("bbox_mm") or {}).get("z_mm") or 0.0)
     pages: dict[int, Path] = {}
     for f in job_dir.iterdir():
         m = _PAGE_RE.search(f.name)
         if m and int(m.group(2)) == int(info.get("color_plane", 1)):
             pages[int(m.group(1))] = f
+    # Slice jobs carry layer_count. A RIP (2D multi-pass) job does not: workflow "rip" writes
+    # N passes of one page (all _Page1_), so it is a SINGLE printed layer. Derive the count from
+    # the highest Page number present rather than crashing on the missing key.
+    layer_count = int(info["layer_count"]) if info.get("layer_count") is not None else (
+        max(pages) if pages else 0
+    )
     ordered = [pages[n] for n in sorted(pages) if n <= layer_count]
     missing = [n for n in range(1, layer_count + 1) if n not in pages]
     bbox = info.get("bbox_mm") or {}
