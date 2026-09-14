@@ -6,7 +6,17 @@ import pytest
 from fastapi.testclient import TestClient
 
 from tests.test_jobs import make_job
-from vention_printer_interface.api.app import create_app
+from vention_printer_interface.api.app import create_app, default_jobs_root
+
+
+def test_default_jobs_root_is_shared_hot_folder() -> None:
+    # When no --jobs-root is given, vpi-serve must default to the shared, script-relative
+    # Dropbox Hot Folder so the Mac and the Windows print PC read the SAME sliced jobs —
+    # not the empty backend/jobs fallback. Regression: Windows pulled from backend/jobs.
+    p = default_jobs_root()
+    assert p.name == "Hot Folder"
+    assert p.parent.name == "rfam-web"
+    assert p.parent.parent.name == "code"
 
 
 @pytest.fixture

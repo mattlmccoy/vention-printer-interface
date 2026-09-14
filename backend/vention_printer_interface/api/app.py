@@ -463,6 +463,17 @@ def _attach(app: FastAPI, backend: str, ip: str | None, heater_io: tuple[int, in
     app.state.reference_restored = True
 
 
+def default_jobs_root() -> Path:
+    """The shared sliced-jobs folder when no ``--jobs-root`` is given.
+
+    Resolved RELATIVE to this file so the Mac and the Windows print PC (same Dropbox account)
+    read the SAME folder without a per-machine launch argument: binderjet/code/rfam-web/Hot Folder
+    — the folder Meteor RIP writes sliced jobs into and the Mac launchd service points at. Before
+    this, an unset --jobs-root fell back to backend/jobs, so Windows pulled nothing.
+    """
+    return Path(__file__).resolve().parents[5] / "code" / "rfam-web" / "Hot Folder"
+
+
 def create_app(
     *,
     backend: str = "none",
@@ -481,7 +492,7 @@ def create_app(
     device_enumerator: Callable[[], list[dict[str, Any]]] | None = None,
 ) -> FastAPI:
     root = experiments_root or Path.cwd() / "experiments"
-    jobs = JobStore(jobs_roots or [root.parent / "jobs"])
+    jobs = JobStore(jobs_roots or [default_jobs_root()])
     vision_calibration_path = root / ".vision_calibration.json"
     vision_roles_path = root / ".vision_roles.json"
     vision_settings_path = root / ".vision_settings.json"
