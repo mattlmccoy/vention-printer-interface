@@ -1115,6 +1115,24 @@ def create_app(
             headers={"Cache-Control": "no-cache", "ETag": f'"{job.dir.name}-{layer}"'},
         )
 
+    @app.get("/api/jobs/by-folder/{folder}/layers/{layer}.png")
+    def job_layer_by_folder(folder: str, layer: int) -> Response:
+        """Serve a layer PNG from a SPECIFIC job folder (incl. _archive), regardless of the
+        selected job — the Runs/Analysis stills-vs-CAD compare needs any run's job layer.
+        `folder` is matched against scanned job folders only (no path traversal / arbitrary reads)."""
+        job = next((j for j in jobs.scan() if j.dir.name == folder), None)
+        if job is None:
+            raise HTTPException(404, f"no job folder {folder!r}")
+        try:
+            data = layer_png(job, layer)
+        except IndexError as exc:
+            raise HTTPException(404, str(exc)) from exc
+        return Response(
+            content=data,
+            media_type="image/png",
+            headers={"Cache-Control": "no-cache", "ETag": f'"{folder}-{layer}"'},
+        )
+
     @app.post("/api/macro/{name}")
     def run_macro(name: str) -> dict[str, Any]:
         if name not in MACROS:
