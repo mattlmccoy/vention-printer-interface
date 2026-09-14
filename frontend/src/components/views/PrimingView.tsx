@@ -101,11 +101,11 @@ export function PrimingView({ status, gates, call, base, onJob, onPrint }: { sta
         )}
 
         {/* walkthrough's OWN progress — never the compiled macro step count */}
-        <ol className="step-rail" aria-label="priming walkthrough steps">
+        <ol className="srail" aria-label="priming walkthrough steps" style={{ marginBottom: 16 }}>
           {WALKTHROUGH_STEPS.map((w, i) => (
             <li key={w.id} className={i === step ? "on" : i < step ? "done" : ""}
-              aria-current={i === step ? "step" : undefined}>
-              <span className="n">{i + 1}</span><span className="t">{w.title}</span>
+              aria-current={i === step ? "step" : undefined} onClick={() => setStep(i)}>
+              <span className="n">{i < step ? "✓" : i + 1}</span><div><div className="t">{w.title}</div></div>
             </li>
           ))}
         </ol>
