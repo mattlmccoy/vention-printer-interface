@@ -8,10 +8,12 @@ from __future__ import annotations
 
 import asyncio
 import dataclasses
+import io
 import logging
 import platform
 import socket
 import time
+import zipfile
 from collections.abc import AsyncIterator, Callable
 from contextlib import asynccontextmanager
 from datetime import UTC, datetime
@@ -1110,6 +1112,26 @@ def create_app(
     @app.get("/api/recordings")
     def recordings() -> dict[str, Any]:
         return {"runs": rec().list_runs()}
+
+    @app.get("/api/recordings/{run}/archive.zip")
+    def recording_archive(run: str) -> Response:
+        """Stream a zip of the whole run directory (telemetry, motion_profiles, events, manifest,
+        layers, metadata, and any nested vision/ stills+sidecars). Same run-name validation as the
+        run-file route: the resolved directory must sit directly under ``root`` (no traversal)."""
+        run_dir = (root / run).resolve()
+        if run_dir.parent != root.resolve() or not run_dir.is_dir():
+            raise HTTPException(400, "bad run")
+        buffer = io.BytesIO()
+        with zipfile.ZipFile(buffer, "w", zipfile.ZIP_DEFLATED) as zf:
+            for path in sorted(run_dir.rglob("*")):
+                if path.is_file():
+                    zf.write(path, arcname=str(path.relative_to(run_dir.parent).as_posix()))
+        buffer.seek(0)
+        return Response(
+            content=buffer.getvalue(),
+            media_type="application/zip",
+            headers={"Content-Disposition": f'attachment; filename="{run}.zip"'},
+        )
 
     @app.get("/api/recordings/{run}/{name}")
     def recording_file(run: str, name: str) -> FileResponse:

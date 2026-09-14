@@ -1,4 +1,6 @@
+import io
 import time
+import zipfile
 from collections.abc import Iterator
 from pathlib import Path
 from typing import Any
@@ -151,6 +153,32 @@ def test_recording_flow(client: TestClient) -> None:
     assert mp.text.splitlines()[0].startswith("host_timestamp_ns,pos_1")
     assert client.get(f"/api/recordings/{stop['run']}/secret.txt").status_code == 404
     assert client.get("/api/recordings/nope/telemetry.csv").status_code == 400
+
+
+def test_recording_archive_zip(client: TestClient) -> None:
+    connect(client, arm=False)
+    wait_tel(client)
+    client.post("/api/recording/start", json={"name": "zip run", "notes": ""})
+    time.sleep(0.2)
+    stop = client.post("/api/recording/stop").json()
+    run = stop["run"]
+
+    r = client.get(f"/api/recordings/{run}/archive.zip")
+    assert r.status_code == 200
+    assert r.headers["content-type"] == "application/zip"
+    zf = zipfile.ZipFile(io.BytesIO(r.content))
+    assert zf.testzip() is None  # valid zip
+    names = {n.split("/")[-1] for n in zf.namelist()}
+    assert {
+        "telemetry.csv",
+        "motion_profiles.csv",
+        "events.json",
+        "manifest.json",
+        "layers.csv",
+        "metadata.json",
+    } <= names
+    # traversal / unknown run is rejected the same way the run-file route rejects it.
+    assert client.get("/api/recordings/nope/archive.zip").status_code == 400
 
 
 def test_estop_reports_502_when_controller_unreachable(client: TestClient) -> None:
