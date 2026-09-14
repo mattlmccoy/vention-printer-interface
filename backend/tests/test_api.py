@@ -145,6 +145,10 @@ def test_recording_flow(client: TestClient) -> None:
     runs = client.get("/api/recordings").json()["runs"]
     assert runs[0]["run"] == stop["run"] and runs[0]["complete"] is True
     assert client.get(f"/api/recordings/{stop['run']}/telemetry.csv").status_code == 200
+    # motion_profiles.csv is derived at stop and served by the same run-file route.
+    mp = client.get(f"/api/recordings/{stop['run']}/motion_profiles.csv")
+    assert mp.status_code == 200
+    assert mp.text.splitlines()[0].startswith("host_timestamp_ns,pos_1")
     assert client.get(f"/api/recordings/{stop['run']}/secret.txt").status_code == 404
     assert client.get("/api/recordings/nope/telemetry.csv").status_code == 400
 

@@ -39,6 +39,7 @@ def test_layout_and_manifest_on_clean_stop(tmp_path: Path) -> None:
         "events.json",
         "telemetry.csv",
         "layers.csv",
+        "motion_profiles.csv",
     }
     lines = (run / "telemetry.csv").read_text().splitlines()
     assert lines[0].startswith("host_timestamp_ns,controller_state,armed,pos_1,pos_2,pos_3,pos_4")
@@ -94,6 +95,47 @@ def test_current_run_dir_tracks_active_run(tmp_path: Path) -> None:
     assert rec.current_run_dir is not None and rec.current_run_dir.exists()
     rec.stop()
     assert rec.current_run_dir is None
+
+
+def _snap_at(ts_ns: int, z: float) -> dict[str, Any]:
+    d = snap(z)
+    d["telemetry"]["host_timestamp_ns"] = ts_ns
+    return d
+
+
+def test_motion_profiles_csv_finite_differences(tmp_path: Path) -> None:
+    rec = Recorder(tmp_path)
+    run = rec.start("motion")
+    # Three telemetry rows 0.5 s apart; axis 1 moves 1 mm then 2 mm.
+    rec.record(_snap_at(0, 0.0))
+    rec.record(_snap_at(500_000_000, 1.0))  # +1 mm / 0.5 s -> vel 2.0 mm/s
+    rec.record(_snap_at(1_000_000_000, 3.0))  # +2 mm / 0.5 s -> vel 4.0; accel (4-2)/0.5 = 4.0
+    assert rec.stop() == run
+
+    lines = (run / "motion_profiles.csv").read_text().splitlines()
+    header = lines[0].split(",")
+    assert header[0] == "host_timestamp_ns"
+    for axis in (1, 2, 3, 4):
+        assert f"pos_{axis}" in header
+        assert f"vel_{axis}" in header
+        assert f"accel_{axis}" in header
+    # 3 telemetry rows -> 2 motion rows (the first is dropped; it has no prior row for Δ).
+    assert len(lines) == 3
+
+    def cell(row: list[str], col: str) -> str:
+        return row[header.index(col)]
+
+    r1 = lines[1].split(",")
+    r2 = lines[2].split(",")
+    assert float(cell(r1, "pos_1")) == 1.0
+    assert float(cell(r1, "vel_1")) == 2.0  # finite difference of positions
+    assert cell(r1, "accel_1") == ""  # no prior velocity yet
+    assert float(cell(r2, "pos_1")) == 3.0
+    assert float(cell(r2, "vel_1")) == 4.0
+    assert float(cell(r2, "accel_1")) == 4.0
+
+    manifest = json.loads((run / "manifest.json").read_text())
+    assert "motion_profiles.csv" in manifest["checksums"]
 
 
 def test_layers_csv(tmp_path: Path) -> None:

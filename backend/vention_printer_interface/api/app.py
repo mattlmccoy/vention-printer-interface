@@ -95,7 +95,14 @@ LOCAL_ORIGIN_RE = r"^https?://(localhost|127\.0\.0\.1)(:\d+)?$"
 CLIENT_HEADER = "x-vpi-client"
 SAFE_METHODS = frozenset({"GET", "HEAD", "OPTIONS"})
 RUN_FILES = frozenset(
-    {"telemetry.csv", "events.json", "metadata.json", "manifest.json", "layers.csv"}
+    {
+        "telemetry.csv",
+        "events.json",
+        "metadata.json",
+        "manifest.json",
+        "layers.csv",
+        "motion_profiles.csv",
+    }
 )
 VISION_FILE_MEDIA_TYPES = {".png": "image/png", ".json": "application/json"}
 _DEFAULT_FRONTEND_DIST = Path(__file__).resolve().parents[3] / "frontend" / "dist"
