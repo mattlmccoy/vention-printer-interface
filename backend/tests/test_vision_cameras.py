@@ -10,8 +10,10 @@ from vention_printer_interface.vision.cameras import (
     camera_access_state,
     default_backend,
     enumerate_devices,
+    load_camera_settings,
     load_role_map,
     resolve_roles,
+    save_camera_settings,
     save_role_map,
     unresolved_roles,
 )
@@ -175,6 +177,40 @@ def test_save_and_load_role_map_round_trips(tmp_path: Path):
 
 def test_load_role_map_returns_empty_dict_when_missing(tmp_path: Path):
     assert load_role_map(tmp_path / "does_not_exist.json") == {}
+
+
+def test_camera_spec_has_exposure_field_defaulting_none():
+    spec = CameraSpec(role="overview", model="m", asin="a")
+    assert spec.exposure is None
+    spec2 = CameraSpec(role="overview", model="m", asin="a", exposure=-6.0)
+    assert spec2.exposure == -6.0
+
+
+def test_from_dict_merges_settings_overrides():
+    cfg = CameraConfig.from_dict(
+        {"science": {"width": 2560, "height": 1440, "pixel_format": "MJPG", "fps": 15.0,
+                     "exposure": -4.0}}
+    )
+    assert (cfg.science.width, cfg.science.height) == (2560, 1440)
+    assert cfg.science.pixel_format == "MJPG"
+    assert cfg.science.fps == 15.0
+    assert cfg.science.exposure == -4.0
+    # overview keeps finalized defaults when not overridden
+    assert cfg.overview.width == 1920
+
+
+def test_save_and_load_camera_settings_round_trips(tmp_path: Path):
+    path = tmp_path / "camera_settings.json"
+    overrides = {
+        "overview": {"width": 1280, "height": 720, "fps": 60.0},
+        "science": {"pixel_format": "MJPG", "exposure": -5.0},
+    }
+    save_camera_settings(path, overrides)
+    assert load_camera_settings(path) == overrides
+
+
+def test_load_camera_settings_returns_empty_dict_when_missing(tmp_path: Path):
+    assert load_camera_settings(tmp_path / "nope.json") == {}
 
 
 # ---- unresolved_roles (A7: auto-connect + persistent roles) ---------------------------------

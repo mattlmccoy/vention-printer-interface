@@ -64,8 +64,10 @@ from vention_printer_interface.vision.cameras import (
     CameraSpec,
     camera_access_state,
     enumerate_devices,
+    load_camera_settings,
     load_role_map,
     resolve_roles,
+    save_camera_settings,
     save_role_map,
     unresolved_roles,
 )
@@ -122,6 +124,38 @@ def _sidecar_rel_path(registered_rel_path: str) -> str:
     (vision/store.py writes both `<stage>.png` and `<stage>.json` in the same directory)."""
     stem, _, _ext = registered_rel_path.rpartition(".")
     return f"{stem or registered_rel_path}.json"
+
+
+def _spec_to_settings(spec: CameraSpec) -> dict[str, Any]:
+    """The operator-facing settings view of a CameraSpec (GET /api/vision/settings)."""
+    return {
+        "resolution": [spec.width, spec.height],
+        "fps": spec.fps,
+        "format": spec.pixel_format,
+        "exposure": spec.exposure,
+    }
+
+
+def _parse_resolution(resolution: list[int] | str) -> tuple[int, int]:
+    """Accept [width, height] or a "WxH" string; return (width, height)."""
+    if isinstance(resolution, str):
+        w_str, _, h_str = resolution.lower().partition("x")
+        return int(w_str), int(h_str)
+    return int(resolution[0]), int(resolution[1])
+
+
+def _settings_to_override(settings: CameraRoleSettings) -> dict[str, Any]:
+    """Translate an operator settings payload into CameraSpec-field overrides (only set fields)."""
+    override: dict[str, Any] = {}
+    if settings.resolution is not None:
+        override["width"], override["height"] = _parse_resolution(settings.resolution)
+    if settings.fps is not None:
+        override["fps"] = float(settings.fps)
+    if settings.format is not None:
+        override["pixel_format"] = settings.format
+    if settings.exposure is not None:
+        override["exposure"] = float(settings.exposure)
+    return override
 
 
 def install_cross_origin_policy(app: FastAPI, *, site_origin: str | None) -> None:
@@ -246,6 +280,22 @@ class RoleMapBody(BaseModel):
     """PUT /api/vision/roles body: the operator-confirmed stable_id -> role assignment."""
 
     mapping: dict[str, str]
+
+
+class CameraRoleSettings(BaseModel):
+    """One role's operator-facing camera settings (PUT /api/vision/settings)."""
+
+    resolution: list[int] | str | None = None  # [width, height] or "WxH"
+    fps: float | None = None
+    format: str | None = None  # pixel format, e.g. "MJPG" / "YUY2"
+    exposure: float | None = None
+
+
+class CameraSettingsBody(BaseModel):
+    """PUT /api/vision/settings body: per-role camera overrides (every role/field optional)."""
+
+    overview: CameraRoleSettings | None = None
+    science: CameraRoleSettings | None = None
 
 
 class BoardSpecBody(BaseModel):
@@ -394,9 +444,25 @@ def create_app(
 ) -> FastAPI:
     root = experiments_root or Path.cwd() / "experiments"
     jobs = JobStore(jobs_roots or [root.parent / "jobs"])
-    camera_config = CameraConfig.from_env()
     vision_calibration_path = root / ".vision_calibration.json"
     vision_roles_path = root / ".vision_roles.json"
+    vision_settings_path = root / ".vision_settings.json"
+
+    def build_camera_config() -> CameraConfig:
+        """CameraConfig from env/defaults, merged with any persisted per-role setting overrides.
+
+        Overrides are stored in CameraSpec-field form, so from_dict layers them on top of the
+        env-resolved specs -- picked up here the next time a camera is opened / roles refresh."""
+        base = CameraConfig.from_env()
+        overrides = load_camera_settings(vision_settings_path)
+        if not overrides:
+            return base
+        merged: dict[str, dict[str, Any]] = {}
+        for role, spec in (("overview", base.overview), ("science", base.science)):
+            merged[role] = {**dataclasses.asdict(spec), **overrides.get(role, {})}
+        return CameraConfig.from_dict(merged)
+
+    camera_config = build_camera_config()
     enumerator = device_enumerator or enumerate_devices
 
     @asynccontextmanager
@@ -1201,6 +1267,32 @@ def create_app(
         return {
             "overview": dataclasses.asdict(camera_config.overview),
             "science": dataclasses.asdict(camera_config.science),
+        }
+
+    @app.get("/api/vision/settings")
+    def vision_get_settings() -> dict[str, Any]:
+        """Per-role camera settings (resolution/fps/format/exposure) from the current
+        CameraConfig -- env/defaults with any persisted overrides already merged in."""
+        return {
+            "overview": _spec_to_settings(camera_config.overview),
+            "science": _spec_to_settings(camera_config.science),
+        }
+
+    @app.put("/api/vision/settings")
+    def vision_put_settings(body: CameraSettingsBody) -> dict[str, Any]:
+        """Persist per-role camera-setting overrides (field-level merge) alongside the role map,
+        then rebuild the CameraConfig so the change takes effect the next time a camera opens."""
+        nonlocal camera_config
+        overrides = load_camera_settings(vision_settings_path)
+        for role, role_settings in (("overview", body.overview), ("science", body.science)):
+            if role_settings is None:
+                continue
+            overrides.setdefault(role, {}).update(_settings_to_override(role_settings))
+        save_camera_settings(vision_settings_path, overrides)
+        camera_config = build_camera_config()
+        return {
+            "overview": _spec_to_settings(camera_config.overview),
+            "science": _spec_to_settings(camera_config.science),
         }
 
     @app.get("/api/vision/devices")

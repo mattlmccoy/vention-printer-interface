@@ -68,6 +68,7 @@ class CameraSpec:
     height: int | None = None
     pixel_format: str | None = None
     fps: float | None = None
+    exposure: float | None = None
     backend: int | None = None
 
     def effective_backend(self) -> int:
@@ -297,4 +298,22 @@ def load_role_map(path: Path) -> dict[str, str]:
     if not p.exists():
         return {}
     data: dict[str, str] = json.loads(p.read_text(encoding="utf-8"))
+    return data
+
+
+def save_camera_settings(path: Path, overrides: dict[str, dict[str, Any]]) -> None:
+    """Persist per-role `CameraSpec`-field overrides (e.g. width/height/pixel_format/fps/exposure).
+
+    Stored in `CameraSpec`-field form so `CameraConfig.from_dict` can merge them directly on top
+    of the finalized ELP-camera defaults the next time a camera config is built.
+    """
+    Path(path).write_text(json.dumps(overrides, indent=2), encoding="utf-8")
+
+
+def load_camera_settings(path: Path) -> dict[str, dict[str, Any]]:
+    """Load per-role camera-setting overrides, or `{}` when `path` does not exist."""
+    p = Path(path)
+    if not p.exists():
+        return {}
+    data: dict[str, dict[str, Any]] = json.loads(p.read_text(encoding="utf-8"))
     return data
