@@ -1,12 +1,11 @@
 import { useEffect, useMemo, useState } from "react";
-import { api, type VisionCalibrateResult, type VisionCaptureSidecar } from "../../lib/api.ts";
+import { api, type CameraSettings, type VisionCalibrateResult, type VisionCaptureSidecar } from "../../lib/api.ts";
 import type { Gates } from "../../lib/format.ts";
 import type { StatusPayload } from "../../lib/telemetry.ts";
 import { formatCaptureMetaValue, overviewStreamUrl, parseCaptures, type Capture } from "../../lib/vision.ts";
 import { CalibrationBoardPanel } from "../CalibrationBoardPanel.tsx";
 import { CalibrationWizard } from "../CalibrationWizard.tsx";
 import { ValidationPanel } from "../ValidationPanel.tsx";
-import { ModuleGrid, type Module } from "../Modules.tsx";
 import type { Call } from "./types.ts";
 
 const STAGES = ["pre_jet", "post_jet", "post_heat"] as const;
@@ -169,10 +168,58 @@ function CaptureBrowser({ base }: { base: string }) {
   );
 }
 
-export function CamerasView({ status, gates, call, base, order, sizes, onOrder, onResize, onOpenQuickStart }: {
+/** Per-camera settings (resolution/fps/format/exposure), persisted per role via the backend and
+ *  applied the next time each camera opens. Fields left blank fall back to the built-in/config
+ *  default (never faked — the current overrides come from GET /api/vision/settings). */
+type CamForm = { resolution: string; fps: string; format: string; exposure: string };
+const emptyCamForm = (): CamForm => ({ resolution: "", fps: "", format: "", exposure: "" });
+function toCamForm(cs?: CameraSettings): CamForm {
+  const res = Array.isArray(cs?.resolution) ? `${cs!.resolution[0]}x${cs!.resolution[1]}` : (typeof cs?.resolution === "string" ? cs.resolution : "");
+  return { resolution: res, fps: cs?.fps != null ? String(cs.fps) : "", format: cs?.format ?? "", exposure: cs?.exposure != null ? String(cs.exposure) : "" };
+}
+function CameraSettingsStep({ call, reachable }: { call: Call; reachable: boolean }) {
+  const [form, setForm] = useState<Record<string, CamForm>>({ overview: emptyCamForm(), science: emptyCamForm() });
+  const [dirty, setDirty] = useState(false);
+  useEffect(() => {
+    let live = true;
+    api.visionGetSettings().then((r) => { if (live && r) setForm({ overview: toCamForm(r.overview), science: toCamForm(r.science) }); }).catch(() => undefined);
+    return () => { live = false; };
+  }, []);
+  const edit = (role: string, patch: Partial<CamForm>) => { setForm((f) => ({ ...f, [role]: { ...f[role], ...patch } })); setDirty(true); };
+  const save = () => {
+    const conv = (f: CamForm): CameraSettings => ({
+      resolution: f.resolution || undefined,
+      fps: f.fps === "" ? undefined : Number(f.fps),
+      format: f.format || undefined,
+      exposure: f.exposure === "" ? undefined : Number(f.exposure),
+    });
+    return call("save camera settings", () => api.visionSetSettings({ overview: conv(form.overview), science: conv(form.science) })
+      .then((r) => { if (r) setForm({ overview: toCamForm(r.overview), science: toCamForm(r.science) }); setDirty(false); }));
+  };
+  const iw = { width: 128 } as const;
+  const roleCard = (role: string, title: string, resOpts: [string, string][], fmtOpts: string[], fpsPh: string) => (
+    <div className="rp-card">
+      <h4>{title}</h4>
+      <div className="rp-row"><span>resolution</span><span className="rv"><select style={iw} value={form[role].resolution} onChange={(e) => edit(role, { resolution: e.target.value })}><option value="">default</option>{resOpts.map(([v, l]) => <option key={v} value={v}>{l}</option>)}</select></span></div>
+      <div className="rp-row"><span>fps</span><span className="rv"><input type="text" style={iw} placeholder={fpsPh} value={form[role].fps} onChange={(e) => edit(role, { fps: e.target.value })} /></span></div>
+      <div className="rp-row"><span>format</span><span className="rv"><select style={iw} value={form[role].format} onChange={(e) => edit(role, { format: e.target.value })}><option value="">default</option>{fmtOpts.map((o) => <option key={o} value={o}>{o}</option>)}</select></span></div>
+      <div className="rp-row"><span>exposure</span><span className="rv"><input type="text" style={iw} placeholder="auto" value={form[role].exposure} onChange={(e) => edit(role, { exposure: e.target.value })} /></span></div>
+    </div>
+  );
+  return (
+    <div className="grid-gap">
+      <div className="cols-2">
+        {roleCard("overview", "Overview · ELP AR2020 (95° FOV)", [["1920x1080", "1920×1080"], ["1280x720", "1280×720"]], ["MJPG", "YUY2"], "30")}
+        {roleCard("science", "Science · ELP CS 5-50mm", [["5120x3840", "5120×3840"], ["2560x1440", "2560×1440"]], ["MJPG", "YUY2"], "7.5")}
+      </div>
+      <div className="btnrow"><button className="cta primary" disabled={!reachable || !dirty} onClick={save}>Save &amp; continue</button></div>
+      <div className="hint" style={{ marginTop: 0 }}>Applied the next time each camera opens. A field left on "default" uses the built-in/config value.</div>
+    </div>
+  );
+}
+
+export function CamerasView({ status, gates, call, base, onOpenQuickStart }: {
   status: StatusPayload | null; gates: Gates; call: Call; base: string;
-  order?: string[]; sizes?: Record<string, import("../../lib/console.ts").ModuleSize>;
-  onOrder: (ids: string[]) => void; onResize: (id: string, size: import("../../lib/console.ts").ModuleSize) => void;
   /** A7: reopens the camera-role quick-start wizard any time (cameras swapped/replaced/re-cabled) */
   onOpenQuickStart: () => void;
 }) {
@@ -192,41 +239,107 @@ export function CamerasView({ status, gates, call, base, order, sizes, onOrder, 
 
   const currentStills = layer === null ? [] : layerCaptures.filter((c) => c.layer === layer);
 
-  const modules: Module[] = [
-    { id: "overview", title: "overview camera · live", size: "l", node: (
-      <div className="cam-panel-body">
-        <CamImg className="cam-panel-img" src={overviewStreamUrl(base)} alt="overview camera live view" />
-      </div>
-    ) },
-    { id: "layer-stills", title: run ? `current layer stills · ${run} · layer ${layer ?? "—"}` : "current layer stills", size: "l", node: (
-      !run ? <div className="hint" style={{ marginTop: 0 }}>no active run — start a recording to capture layer stills</div> :
-      currentStills.length === 0 ? <div className="hint" style={{ marginTop: 0 }}>no captures for the current layer yet</div> : (
-        <div className="cam-grid">
-          {STAGES.map((s) => {
-            const c = currentStills.find((x) => x.stage === s);
-            return (
-              <div key={s} className="cam-still">
-                <header>{STAGE_LABEL[s]}</header>
-                {c ? <CamImg src={`${base}${c.url}`} alt={STAGE_LABEL[s]} />
-                  : <div className="cam-panel-empty"><span className="cam-panel-ph" aria-hidden="true" /><span>not captured yet</span></div>}
-              </div>
-            );
-          })}
-        </div>
-      )
-    ) },
-    { id: "calibration-wizard", title: "calibration", size: "m", node: <CalibrationWizard call={call} printing={gates.printActive} /> },
-    { id: "validation", title: "validation", size: "m", node: <ValidationPanel call={call} printing={gates.printActive} /> },
-    { id: "board", title: "calibration boards (SVG/DXF)", size: "m", node: <CalibrationBoardPanel base={base} /> },
-    { id: "browser", title: "capture browser", size: "l", node: <CaptureBrowser base={base} /> },
-    { id: "calibration-manual", title: "manual calibration (raw points)", size: "m", node: <CalibrationForm call={call} disabled={!gates.reachable} /> },
+  const [step, setStep] = useState(() => {
+    const q = typeof location !== "undefined" ? Number(new URLSearchParams(location.search).get("step")) : NaN;
+    return Number.isInteger(q) && q >= 0 && q <= 6 ? q : 0; // capture/deep-link aid, matches STEPS below
+  });
+  const STEPS = [
+    { title: "Connect controller", sub: "arm the machine" },
+    { title: "Identify & assign cameras", sub: "overview · science" },
+    { title: "Camera settings", sub: "res · fps · format · exposure" },
+    { title: "Generate & print board", sub: "ChArUco / checkerboard" },
+    { title: "Calibrate intrinsics", sub: "capture ≥3 board views" },
+    { title: "Set bed plane", sub: "bed correspondence" },
+    { title: "Validate", sub: "dimensional ±0.1 mm" },
   ];
+
   return (
-    <div className="view modules-view">
-      <div className="actions one tight" style={{ marginBottom: 12 }}>
-        <button className="small" onClick={onOpenQuickStart}>camera setup…</button>
+    <div className="view fixed-page setup-view">
+      <div className="setup-grid">
+        <div className="card">
+          <h3>guided setup</h3>
+          <ol className="srail">
+            {STEPS.map((s, i) => (
+              <li key={s.title} className={i === step ? "on" : i < step ? "done" : ""} aria-current={i === step ? "step" : undefined} onClick={() => setStep(i)}>
+                <span className="n">{i < step ? "✓" : i + 1}</span>
+                <div><div className="t">{s.title}</div><div className="sd">{s.sub}</div></div>
+              </li>
+            ))}
+          </ol>
+        </div>
+
+        <div className="card">
+          <h3>step {step + 1} · {STEPS[step].title}</h3>
+
+          {step === 0 && (
+            <div className="grid-gap">
+              <div className="hint" style={{ marginTop: 0 }}>Connect the controller from the connection pill in the top bar, then take control (arm) so calibration moves are allowed.</div>
+              <div className="chips" style={{ marginTop: 0 }}>
+                <span className={`chip ${gates.connected ? "" : "warn"}`}>{gates.connected ? "controller connected" : "not connected"}</span>
+                <span className={`chip ${gates.armed ? "" : "warn"}`}>{gates.armed ? "armed" : "read-only"}</span>
+              </div>
+            </div>
+          )}
+          {step === 1 && (
+            <div className="grid-gap">
+              <div className="note">📷 Nothing opens a camera until a page asks for it. Identify which detected camera is the overview (wide live view) and which is the science camera (bed stills) — it's remembered and reconnects automatically. If a camera doesn't appear, use Rescan.</div>
+              <div className="cam-panel-body" style={{ borderRadius: 10, border: "1px solid var(--line)" }}><CamImg className="cam-panel-img" src={overviewStreamUrl(base)} alt="overview camera live view" /></div>
+              <div className="btnrow">
+                <button className="cta primary" onClick={onOpenQuickStart}>Identify &amp; assign cameras…</button>
+                <button className="small" disabled={!gates.reachable} onClick={() => call("rescan cameras", () => api.visionDevices())}>Rescan devices</button>
+              </div>
+            </div>
+          )}
+          {step === 2 && <CameraSettingsStep call={call} reachable={gates.reachable} />}
+          {step === 3 && <CalibrationBoardPanel base={base} />}
+          {step === 4 && (
+            <div className="grid-gap">
+              <div className="hint" style={{ marginTop: 0 }}>Start a session against your laser-engraved ChArUco board and capture at least 3 views from different bed positions / tilts.</div>
+              <CalibrationWizard call={call} printing={gates.printActive} />
+            </div>
+          )}
+          {step === 5 && (
+            <div className="grid-gap">
+              <div className="hint" style={{ marginTop: 0 }}>Finalize the calibration with "use the last board view as the bed reference" ticked — this sets the bed plane so mm map to the bed, not the camera.</div>
+              <CalibrationWizard call={call} printing={gates.printActive} />
+            </div>
+          )}
+          {step === 6 && <ValidationPanel call={call} printing={gates.printActive} />}
+
+          <div className="step-nav">
+            <button className="small" disabled={step === 0} onClick={() => setStep((n) => Math.max(0, n - 1))}>Back</button>
+            <button className="small" disabled={step === STEPS.length - 1} onClick={() => setStep((n) => Math.min(STEPS.length - 1, n + 1))}>Next</button>
+          </div>
+        </div>
       </div>
-      <ModuleGrid modules={modules} order={order} sizes={sizes} onOrder={onOrder} onResize={onResize} />
+
+      <div className="sec-h">review captures</div>
+      <div className="cards-2">
+        <div className="card">
+          <h3>{run ? `current layer stills · layer ${layer ?? "—"}` : "current layer stills"}</h3>
+          {!run ? <div className="hint" style={{ marginTop: 0 }}>no active run — start a recording to capture layer stills</div> :
+            currentStills.length === 0 ? <div className="hint" style={{ marginTop: 0 }}>no captures for the current layer yet</div> : (
+              <div className="cam-grid">
+                {STAGES.map((s) => {
+                  const c = currentStills.find((x) => x.stage === s);
+                  return (
+                    <div key={s} className="cam-still">
+                      <header>{STAGE_LABEL[s]}</header>
+                      {c ? <CamImg src={`${base}${c.url}`} alt={STAGE_LABEL[s]} />
+                        : <div className="cam-panel-empty"><span className="cam-panel-ph" aria-hidden="true" /><span>not captured yet</span></div>}
+                    </div>
+                  );
+                })}
+              </div>
+            )}
+        </div>
+        <div className="card"><h3>capture browser</h3><CaptureBrowser base={base} /></div>
+      </div>
+
+      <details className="rp-drawer">
+        <summary>manual calibration (raw points)</summary>
+        <div className="body"><CalibrationForm call={call} disabled={!gates.reachable} /></div>
+      </details>
     </div>
   );
 }

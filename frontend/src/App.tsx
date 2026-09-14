@@ -1,13 +1,14 @@
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState, type CSSProperties, type PointerEvent as ReactPointerEvent } from "react";
 import { api, operatorBase, setOperatorBase, SITE_MODE, type VisionStatus } from "./lib/api.ts";
 import { formatError, gates as computeGates } from "./lib/format.ts";
 import { checkHandshake, saveOperatorBase, UI_API_VERSION, wsUrl } from "./lib/operator.ts";
-import { clampSize, loadConsole, saveConsole, VIEWS, type ModuleSize, type View } from "./lib/console.ts";
+import { loadConsole, saveConsole, type View } from "./lib/console.ts";
 import { connectOptions, type Candidate } from "./lib/connect.ts";
 import { dismissQuickStart, shouldShowQuickStart } from "./lib/vision.ts";
 import type { StatusPayload } from "./lib/telemetry.ts";
 import { ErrorBoundary } from "./components/ErrorBoundary.tsx";
 import { StatusBar } from "./components/StatusBar.tsx";
+import { MachineDock } from "./components/MachineDock.tsx";
 import { QuickStartVision } from "./components/QuickStartVision.tsx";
 import { PrintView } from "./components/views/PrintView.tsx";
 import { JobView } from "./components/views/JobView.tsx";
@@ -42,6 +43,41 @@ export function App() {
   const samples = useRef<number[]>([]);
   const [visionStatus, setVisionStatus] = useState<VisionStatus | null>(null);
   const [quickStartOpen, setQuickStartOpen] = useState(false); // explicit re-open, e.g. from Settings
+  const [theme, setTheme] = useState<"dark" | "light">(() => {
+    const q = typeof location !== "undefined" ? new URLSearchParams(location.search).get("theme") : null;
+    if (q === "light" || q === "dark") return q;
+    return storage?.getItem("vpi.theme") === "light" ? "light" : "dark";
+  });
+
+  // Theme: dark is the default (bare :root); "light" stamps data-theme on <html> to swap tokens.
+  useEffect(() => {
+    document.documentElement.dataset.theme = theme;
+    try { storage?.setItem("vpi.theme", theme); } catch { /* ignore */ }
+  }, [theme]);
+
+  // Persistent machine dock (right side): width + open state, remembered locally.
+  const [dock, setDock] = useState<{ w: number; open: boolean }>(() => {
+    try { const j = JSON.parse(storage?.getItem("vpi.dock") ?? "") as { w?: number; open?: boolean }; if (j && typeof j.w === "number") return { w: j.w, open: j.open !== false }; } catch { /* ignore */ }
+    return { w: 380, open: true };
+  });
+  useEffect(() => { try { storage?.setItem("vpi.dock", JSON.stringify(dock)); } catch { /* ignore */ } }, [dock]);
+
+  // Deep-link the active view via URL hash (#control, #print, …) — also lets tooling target a page.
+  useEffect(() => {
+    const names = ["control", "job", "priming", "print", "runs", "cameras"];
+    const apply = () => { const h = location.hash.slice(1); if (names.includes(h)) setUi((u) => (u.view === h ? u : { ...u, view: h as View })); };
+    apply();
+    window.addEventListener("hashchange", apply);
+    return () => window.removeEventListener("hashchange", apply);
+  }, []);
+  const dockDrag = (e: ReactPointerEvent) => {
+    e.preventDefault();
+    const startX = e.clientX; const startW = dock.w;
+    const move = (ev: PointerEvent) => { const w = Math.max(262, Math.min(560, startW + (startX - ev.clientX))); setDock((d) => ({ ...d, w })); };
+    const up = () => { window.removeEventListener("pointermove", move); window.removeEventListener("pointerup", up);
+      setDock((d) => { const SNAP = [320, 380, 440, 520]; const w = SNAP.reduce((a, b) => (Math.abs(b - d.w) < Math.abs(a - d.w) ? b : a)); return { ...d, w }; }); };
+    window.addEventListener("pointermove", move); window.addEventListener("pointerup", up);
+  };
 
   // Camera auto-connect + quick-start (A7): poll /api/vision/status while the operator is
   // reachable so shouldShowQuickStart can gate the first-run/re-assign wizard on roles_resolved.
@@ -90,19 +126,13 @@ export function App() {
     try { await fn(); setErr(null); } catch (e) { setErr(`${label}: ${formatError(e)}`); } finally { setBusy(null); }
   }, []);
   const g = computeGates(status, reachable);
-  const showQuickStart = quickStartOpen || shouldShowQuickStart(visionStatus, storage);
+  const noWizard = typeof location !== "undefined" && new URLSearchParams(location.search).has("nowizard");
+  const showQuickStart = !noWizard && (quickStartOpen || shouldShowQuickStart(visionStatus, storage));
   const n = samples.current.length;
   const pollHz = n > 2 ? ((n - 1) * 1e9) / (samples.current[n - 1] - samples.current[0]) : null;
   const c = status?.controller;
   const r = status?.print;
   const setView = (view: View) => setUi((u) => ({ ...u, view }));
-  const setOrder = (view: View) => (ids: string[]) => setUi((u) => ({ ...u, order: { ...u.order, [view]: ids } }));
-  const setResize = (view: View) => (id: string, size: ModuleSize) => setUi((u) => {
-    const forView = { ...(u.sizes[view] ?? {}) };
-    if (size.w === 0 && size.h === 0) delete forView[id]; // reset to the class default
-    else forView[id] = clampSize(size.w, size.h);
-    return { ...u, sizes: { ...u.sizes, [view]: forView } };
-  });
   const applyBase = () => { saveOperatorBase(storage, baseInput); setOperatorBase(baseInput.trim().replace(/\/+$/, "")); setBase(operatorBase()); };
   const [dev, pin] = heaterIo.split(",").map((s) => parseInt(s.trim(), 10));
   const heaterOk = Number.isInteger(dev) && Number.isInteger(pin) && dev >= 1 && dev <= 8 && pin >= 0 && pin <= 3;
@@ -125,8 +155,16 @@ export function App() {
     <ErrorBoundary>
       <div className="console">
         <header className="top">
-          <span className="wordmark">BINDER JET CONSOLE</span>
-          <nav className="tabs">{VIEWS.map((v) => <button key={v} className={ui.view === v ? "active" : ""} onClick={() => setView(v)}>{v}</button>)}</nav>
+          <span className="wordmark">VENTION PRINTER INTERFACE<span className="sub">MM2 · MetPrint</span></span>
+          <nav className="tabs">
+            <div className="tabgroup build">
+              <span className="tglabel">BUILD</span>
+              {(["job", "priming", "print"] as View[]).map((v) => <button key={v} className={`bt${ui.view === v ? " active" : ""}`} onClick={() => setView(v)}>{v}</button>)}
+            </div>
+            <div className="tabgroup">
+              {(["control", "runs", "cameras"] as View[]).map((v) => <button key={v} className={`bt${ui.view === v ? " active" : ""}`} onClick={() => setView(v)}>{v === "cameras" ? "setup" : v}</button>)}
+            </div>
+          </nav>
           <button className={`pill${g.faulted ? " err" : ""}`} onClick={() => setShowConnect((s) => !s)} title="connection">
             <span className={`dot ${dotCls}`} />{pillLabel}
             {g.connected && !g.armed && !g.faulted && <svg className="lock" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><rect x="4" y="10" width="16" height="11" rx="2" /><path d="M8 10V7a4 4 0 0 1 8 0v3" /></svg>}
@@ -134,6 +172,14 @@ export function App() {
           {handshake && <span className="pill warn">{handshake}</span>}
           <span className="spacer" />
           {busy && <span className="muted mono">{busy}…</span>}
+          <button className={`iconbtn${dock.open ? " on" : ""}`} onClick={() => setDock((d) => ({ ...d, open: !d.open }))} title="Toggle machine dock" aria-label="toggle machine dock" aria-pressed={dock.open}>
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><rect x="3" y="4" width="18" height="16" rx="2" /><line x1="15" y1="4" x2="15" y2="20" /></svg>
+          </button>
+          <button className="iconbtn" onClick={() => setTheme((t) => (t === "dark" ? "light" : "dark"))} title={`Switch to ${theme === "dark" ? "light" : "dark"} theme`} aria-label="toggle theme">
+            {theme === "dark"
+              ? <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><circle cx="12" cy="12" r="4" /><path d="M12 2v2M12 20v2M4.9 4.9l1.4 1.4M17.7 17.7l1.4 1.4M2 12h2M20 12h2M4.9 19.1l1.4-1.4M17.7 6.3l1.4-1.4" /></svg>
+              : <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M21 12.8A9 9 0 1 1 11.2 3a7 7 0 0 0 9.8 9.8z" /></svg>}
+          </button>
           <button className="estop" disabled={!g.connected} onClick={() => call("e-stop", api.estop)}>■ E-STOP</button>
         </header>
         <div>
@@ -218,14 +264,22 @@ export function App() {
             </ol>
           </div>
         )}
-        {!showHelp && (<>
-        {ui.view === "print" && <PrintView status={status} gates={g} call={call} base={base} order={ui.order.print} sizes={ui.sizes.print} onOrder={setOrder("print")} onResize={setResize("print")} onJob={() => setView("job")} />}
-        {ui.view === "job" && <JobView status={status} gates={g} call={call} order={ui.order.job} sizes={ui.sizes.job} onOrder={setOrder("job")} onResize={setResize("job")} onStarted={() => setView("print")} />}
-        {ui.view === "control" && <ControlView status={status} gates={g} call={call} base={base} gantryStep={ui.gantryStep} pistonStep={ui.pistonStep} setGantryStep={(s) => setUi((u) => ({ ...u, gantryStep: s }))} setPistonStep={(s) => setUi((u) => ({ ...u, pistonStep: s }))} order={ui.order.control} sizes={ui.sizes.control} onOrder={setOrder("control")} onResize={setResize("control")} />}
-        {ui.view === "priming" && <PrimingView status={status} gates={g} call={call} base={base} onJob={() => setView("job")} onPrint={() => setView("print")} />}
-        {ui.view === "runs" && <RunsView status={status} gates={g} call={call} order={ui.order.runs} sizes={ui.sizes.runs} onOrder={setOrder("runs")} onResize={setResize("runs")} />}
-        {ui.view === "cameras" && <CamerasView status={status} gates={g} call={call} base={base} order={ui.order.cameras} sizes={ui.sizes.cameras} onOrder={setOrder("cameras")} onResize={setResize("cameras")} onOpenQuickStart={() => setQuickStartOpen(true)} />}
-        </>)}
+        {!showHelp && (
+          <div className="bodywrap">
+            <div className="viewhost">
+              {ui.view === "print" && <PrintView status={status} gates={g} call={call} base={base} onJob={() => setView("job")} />}
+              {ui.view === "job" && <JobView status={status} gates={g} call={call} onStarted={() => setView("print")} />}
+              {ui.view === "control" && <ControlView status={status} gates={g} call={call} gantryStep={ui.gantryStep} pistonStep={ui.pistonStep} setGantryStep={(s) => setUi((u) => ({ ...u, gantryStep: s }))} setPistonStep={(s) => setUi((u) => ({ ...u, pistonStep: s }))} />}
+              {ui.view === "priming" && <PrimingView status={status} gates={g} call={call} onJob={() => setView("job")} onPrint={() => setView("print")} />}
+              {ui.view === "runs" && <RunsView status={status} gates={g} call={call} base={base} />}
+              {ui.view === "cameras" && <CamerasView status={status} gates={g} call={call} base={base} onOpenQuickStart={() => setQuickStartOpen(true)} />}
+            </div>
+            <aside className={`dock${dock.open ? "" : " collapsed"}`} style={{ "--dock-w": `${dock.w}px` } as CSSProperties}>
+              <div className="dock-resize" onPointerDown={dockDrag} title="drag to resize · snaps" />
+              <MachineDock status={status} base={base} gates={g} call={call} view={ui.view} />
+            </aside>
+          </div>
+        )}
         <StatusBar state={c?.state ?? "disconnected"} backend={c?.backend ?? "none"} pollHz={pollHz} reachable={reachable}
           estop={c?.telemetry?.estop_triggered ?? null} drivesReady={c?.telemetry?.drives_ready ?? null} heaterOn={c?.heater.on ?? null} heaterOnS={c?.heater.on_s ?? 0} heaterMaxS={c?.heater.max_on_s ?? 0}
           recActive={status?.recording.active ?? false} recRun={status?.recording.run ?? null} printState={r?.state ?? "idle"} version={version} />

@@ -8,10 +8,13 @@ from __future__ import annotations
 
 import asyncio
 import dataclasses
+import io
+import json
 import logging
 import platform
 import socket
 import time
+import zipfile
 from collections.abc import AsyncIterator, Callable
 from contextlib import asynccontextmanager
 from datetime import UTC, datetime
@@ -62,8 +65,10 @@ from vention_printer_interface.vision.cameras import (
     CameraSpec,
     camera_access_state,
     enumerate_devices,
+    load_camera_settings,
     load_role_map,
     resolve_roles,
+    save_camera_settings,
     save_role_map,
     unresolved_roles,
 )
@@ -95,7 +100,14 @@ LOCAL_ORIGIN_RE = r"^https?://(localhost|127\.0\.0\.1)(:\d+)?$"
 CLIENT_HEADER = "x-vpi-client"
 SAFE_METHODS = frozenset({"GET", "HEAD", "OPTIONS"})
 RUN_FILES = frozenset(
-    {"telemetry.csv", "events.json", "metadata.json", "manifest.json", "layers.csv"}
+    {
+        "telemetry.csv",
+        "events.json",
+        "metadata.json",
+        "manifest.json",
+        "layers.csv",
+        "motion_profiles.csv",
+    }
 )
 VISION_FILE_MEDIA_TYPES = {".png": "image/png", ".json": "application/json"}
 _DEFAULT_FRONTEND_DIST = Path(__file__).resolve().parents[3] / "frontend" / "dist"
@@ -113,6 +125,38 @@ def _sidecar_rel_path(registered_rel_path: str) -> str:
     (vision/store.py writes both `<stage>.png` and `<stage>.json` in the same directory)."""
     stem, _, _ext = registered_rel_path.rpartition(".")
     return f"{stem or registered_rel_path}.json"
+
+
+def _spec_to_settings(spec: CameraSpec) -> dict[str, Any]:
+    """The operator-facing settings view of a CameraSpec (GET /api/vision/settings)."""
+    return {
+        "resolution": [spec.width, spec.height],
+        "fps": spec.fps,
+        "format": spec.pixel_format,
+        "exposure": spec.exposure,
+    }
+
+
+def _parse_resolution(resolution: list[int] | str) -> tuple[int, int]:
+    """Accept [width, height] or a "WxH" string; return (width, height)."""
+    if isinstance(resolution, str):
+        w_str, _, h_str = resolution.lower().partition("x")
+        return int(w_str), int(h_str)
+    return int(resolution[0]), int(resolution[1])
+
+
+def _settings_to_override(settings: CameraRoleSettings) -> dict[str, Any]:
+    """Translate an operator settings payload into CameraSpec-field overrides (only set fields)."""
+    override: dict[str, Any] = {}
+    if settings.resolution is not None:
+        override["width"], override["height"] = _parse_resolution(settings.resolution)
+    if settings.fps is not None:
+        override["fps"] = float(settings.fps)
+    if settings.format is not None:
+        override["pixel_format"] = settings.format
+    if settings.exposure is not None:
+        override["exposure"] = float(settings.exposure)
+    return override
 
 
 def install_cross_origin_policy(app: FastAPI, *, site_origin: str | None) -> None:
@@ -186,6 +230,13 @@ class RecordingStartBody(BaseModel):
     notes: str = ""
 
 
+class RecordingMetaBody(BaseModel):
+    """PUT /api/recordings/{run}/meta body: edit a run's name and/or notes (both optional)."""
+
+    name: str | None = None
+    notes: str | None = None
+
+
 class PrintStartBody(BaseModel):
     dry_run: bool = False
     single_step: bool = False
@@ -237,6 +288,22 @@ class RoleMapBody(BaseModel):
     """PUT /api/vision/roles body: the operator-confirmed stable_id -> role assignment."""
 
     mapping: dict[str, str]
+
+
+class CameraRoleSettings(BaseModel):
+    """One role's operator-facing camera settings (PUT /api/vision/settings)."""
+
+    resolution: list[int] | str | None = None  # [width, height] or "WxH"
+    fps: float | None = None
+    format: str | None = None  # pixel format, e.g. "MJPG" / "YUY2"
+    exposure: float | None = None
+
+
+class CameraSettingsBody(BaseModel):
+    """PUT /api/vision/settings body: per-role camera overrides (every role/field optional)."""
+
+    overview: CameraRoleSettings | None = None
+    science: CameraRoleSettings | None = None
 
 
 class BoardSpecBody(BaseModel):
@@ -338,6 +405,21 @@ def _tcp_open(ip: str, port: int, timeout_s: float = 0.5) -> bool:
         return False
 
 
+def _resolve_run_dir(root: Path, run: str) -> Path:
+    """Validate a recordings run name and return its directory.
+
+    Uses the same traversal guard as the other recordings routes (the resolved directory must sit
+    directly under ``root``): a traversal / bad name -> 400, an otherwise-valid but nonexistent
+    run -> 404.
+    """
+    run_dir = (root / run).resolve()
+    if run_dir.parent != root.resolve():
+        raise HTTPException(400, "bad run")
+    if not run_dir.is_dir():
+        raise HTTPException(404, "unknown run")
+    return run_dir
+
+
 def _fresh_axis_motion() -> dict[int, dict[str, float | None]]:
     return {n: {"max_speed": None, "max_accel": None} for n in (1, 2, 3, 4)}
 
@@ -385,9 +467,25 @@ def create_app(
 ) -> FastAPI:
     root = experiments_root or Path.cwd() / "experiments"
     jobs = JobStore(jobs_roots or [root.parent / "jobs"])
-    camera_config = CameraConfig.from_env()
     vision_calibration_path = root / ".vision_calibration.json"
     vision_roles_path = root / ".vision_roles.json"
+    vision_settings_path = root / ".vision_settings.json"
+
+    def build_camera_config() -> CameraConfig:
+        """CameraConfig from env/defaults, merged with any persisted per-role setting overrides.
+
+        Overrides are stored in CameraSpec-field form, so from_dict layers them on top of the
+        env-resolved specs -- picked up here the next time a camera is opened / roles refresh."""
+        base = CameraConfig.from_env()
+        overrides = load_camera_settings(vision_settings_path)
+        if not overrides:
+            return base
+        merged: dict[str, dict[str, Any]] = {}
+        for role, spec in (("overview", base.overview), ("science", base.science)):
+            merged[role] = {**dataclasses.asdict(spec), **overrides.get(role, {})}
+        return CameraConfig.from_dict(merged)
+
+    camera_config = build_camera_config()
     enumerator = device_enumerator or enumerate_devices
 
     @asynccontextmanager
@@ -1104,6 +1202,50 @@ def create_app(
     def recordings() -> dict[str, Any]:
         return {"runs": rec().list_runs()}
 
+    @app.get("/api/recordings/{run}/archive.zip")
+    def recording_archive(run: str) -> Response:
+        """Stream a zip of the whole run directory (telemetry, motion_profiles, events, manifest,
+        layers, metadata, and any nested vision/ stills+sidecars). Same run-name validation as the
+        run-file route: the resolved directory must sit directly under ``root`` (no traversal)."""
+        run_dir = (root / run).resolve()
+        if run_dir.parent != root.resolve() or not run_dir.is_dir():
+            raise HTTPException(400, "bad run")
+        buffer = io.BytesIO()
+        with zipfile.ZipFile(buffer, "w", zipfile.ZIP_DEFLATED) as zf:
+            for path in sorted(run_dir.rglob("*")):
+                if path.is_file():
+                    zf.write(path, arcname=str(path.relative_to(run_dir.parent).as_posix()))
+        buffer.seek(0)
+        return Response(
+            content=buffer.getvalue(),
+            media_type="application/zip",
+            headers={"Content-Disposition": f'attachment; filename="{run}.zip"'},
+        )
+
+    @app.put("/api/recordings/{run}/meta")
+    def recording_meta(run: str, body: RecordingMetaBody) -> dict[str, str]:
+        """Edit a run's human-readable name/notes in its metadata.json (all other keys preserved).
+
+        Writes the same ``experiment.name`` / ``experiment.notes`` keys the recorder writes at
+        start and the recordings list reads back, so an edit round-trips through the list.
+        """
+        run_dir = _resolve_run_dir(root, run)
+        meta_path = run_dir / "metadata.json"
+        try:
+            loaded = json.loads(meta_path.read_text())
+        except (OSError, ValueError):
+            loaded = {}
+        meta: dict[str, Any] = loaded if isinstance(loaded, dict) else {}
+        raw_experiment = meta.get("experiment")
+        experiment: dict[str, Any] = raw_experiment if isinstance(raw_experiment, dict) else {}
+        meta["experiment"] = experiment
+        if body.name is not None:
+            experiment["name"] = body.name
+        if body.notes is not None:
+            experiment["notes"] = body.notes
+        meta_path.write_text(json.dumps(meta, indent=2, default=str))
+        return {"name": experiment.get("name", ""), "notes": experiment.get("notes", "")}
+
     @app.get("/api/recordings/{run}/{name}")
     def recording_file(run: str, name: str) -> FileResponse:
         if name not in RUN_FILES:
@@ -1172,6 +1314,32 @@ def create_app(
         return {
             "overview": dataclasses.asdict(camera_config.overview),
             "science": dataclasses.asdict(camera_config.science),
+        }
+
+    @app.get("/api/vision/settings")
+    def vision_get_settings() -> dict[str, Any]:
+        """Per-role camera settings (resolution/fps/format/exposure) from the current
+        CameraConfig -- env/defaults with any persisted overrides already merged in."""
+        return {
+            "overview": _spec_to_settings(camera_config.overview),
+            "science": _spec_to_settings(camera_config.science),
+        }
+
+    @app.put("/api/vision/settings")
+    def vision_put_settings(body: CameraSettingsBody) -> dict[str, Any]:
+        """Persist per-role camera-setting overrides (field-level merge) alongside the role map,
+        then rebuild the CameraConfig so the change takes effect the next time a camera opens."""
+        nonlocal camera_config
+        overrides = load_camera_settings(vision_settings_path)
+        for role, role_settings in (("overview", body.overview), ("science", body.science)):
+            if role_settings is None:
+                continue
+            overrides.setdefault(role, {}).update(_settings_to_override(role_settings))
+        save_camera_settings(vision_settings_path, overrides)
+        camera_config = build_camera_config()
+        return {
+            "overview": _spec_to_settings(camera_config.overview),
+            "science": _spec_to_settings(camera_config.science),
         }
 
     @app.get("/api/vision/devices")

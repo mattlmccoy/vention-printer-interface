@@ -36,7 +36,7 @@ const REQUIRED_TOKENS = [
   "--err", "--err-bg",
   "--err-btn", "--rec",
   "--trace-part", "--trace-feed", "--trace-ph", "--trace-rc", "--violet",
-  "--image-bg", "--scrim", "--shadow", "--danger-ink",
+  "--image-bg", "--slice-bg", "--scrim", "--shadow", "--danger-ink",
   "--font-ui", "--font-mono", "--font-read",
   "--fs", "--space", "--radius",
   "--strip-w", "--rail-w", "--dock-h", "--topbar-h", "--statusbar-h",

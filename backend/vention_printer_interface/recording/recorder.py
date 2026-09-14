@@ -41,9 +41,116 @@ TELEMETRY_FIELDS = [
 ]
 LAYER_FIELDS = ["host_timestamp_ns", "layer", "phase", "part_height_mm", "elapsed_s"]
 
+# Axes match telemetry.csv's pos_1..pos_4 naming (spec §4 drive order).
+MOTION_AXES = (1, 2, 3, 4)
+MOTION_PROFILE_FIELDS = (
+    ["host_timestamp_ns"]
+    + [f"pos_{a}" for a in MOTION_AXES]
+    + [f"vel_{a}" for a in MOTION_AXES]
+    + [f"accel_{a}" for a in MOTION_AXES]
+)
+
 
 def _slug(name: str) -> str:
     return re.sub(r"[^A-Za-z0-9._-]+", "_", name).strip("_") or "run"
+
+
+def _to_float(value: Any) -> float | None:
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        return None
+
+
+def motion_profile_rows(
+    telemetry_rows: list[dict[str, Any]],
+) -> list[list[Any]]:
+    """Derive per-axis pos/vel/accel rows from streamed telemetry rows.
+
+    Velocity is the finite difference Δposition/Δt (mm/s) using the row ``host_timestamp_ns``
+    timestamps; acceleration is Δvelocity/Δt. The first telemetry row is dropped (a finite
+    difference needs a prior row), so N telemetry rows yield N-1 motion rows. A cell is left
+    blank (``None``) when it cannot be computed (missing position, non-increasing timestamps,
+    or no prior velocity for acceleration) -- unknown must never render as a real 0.0.
+    """
+    out: list[list[Any]] = []
+    prev_ts: float | None = None
+    prev_pos: dict[int, float | None] = dict.fromkeys(MOTION_AXES, None)
+    prev_vel: dict[int, float | None] = dict.fromkeys(MOTION_AXES, None)
+    for row in telemetry_rows:
+        ts = _to_float(row.get("host_timestamp_ns"))
+        pos = {a: _to_float(row.get(f"pos_{a}")) for a in MOTION_AXES}
+        if prev_ts is None or ts is None:
+            prev_ts, prev_pos = ts, pos
+            continue
+        dt = (ts - prev_ts) / 1e9
+        vel: dict[int, float | None] = {}
+        accel: dict[int, float | None] = {}
+        for a in MOTION_AXES:
+            p, pp = pos[a], prev_pos[a]
+            vel[a] = (p - pp) / dt if dt > 0 and p is not None and pp is not None else None
+            pv = prev_vel[a]
+            v = vel[a]
+            accel[a] = (v - pv) / dt if dt > 0 and v is not None and pv is not None else None
+        out.append(
+            [row.get("host_timestamp_ns")]
+            + [pos[a] for a in MOTION_AXES]
+            + [vel[a] for a in MOTION_AXES]
+            + [accel[a] for a in MOTION_AXES]
+        )
+        prev_ts, prev_pos, prev_vel = ts, pos, vel
+    return out
+
+
+def _write_motion_profiles(run: Path) -> None:
+    """Read the just-closed telemetry.csv and write the derived motion_profiles.csv beside it."""
+    telemetry = run / "telemetry.csv"
+    rows: list[dict[str, Any]] = []
+    if telemetry.exists():
+        with telemetry.open(newline="") as f:
+            rows = list(csv.DictReader(f))
+    with (run / "motion_profiles.csv").open("w", newline="") as f:
+        writer = csv.writer(f)
+        writer.writerow(MOTION_PROFILE_FIELDS)
+        for row in motion_profile_rows(rows):
+            writer.writerow(["" if v is None else v for v in row])
+
+
+def _read_run_meta(run: Path) -> dict[str, Any]:
+    """Best-effort read of a run's metadata.json; ``{}`` when missing or unreadable."""
+    try:
+        loaded = json.loads((run / "metadata.json").read_text())
+    except (OSError, ValueError):
+        return {}
+    return loaded if isinstance(loaded, dict) else {}
+
+
+def _layer_count(run: Path) -> int | None:
+    """Recorded layer rows (layers.csv rows minus the header), or ``None`` when unreadable.
+
+    A missing/empty file (no header) yields ``None`` -- unknown, never a false ``0``.
+    """
+    try:
+        with (run / "layers.csv").open(newline="") as f:
+            rows = sum(1 for _ in csv.reader(f))
+    except OSError:
+        return None
+    return rows - 1 if rows else None
+
+
+def _telemetry_duration_s(run: Path) -> float | None:
+    """(last - first) ``host_timestamp_ns`` / 1e9 from telemetry.csv, or ``None`` when < 2 rows."""
+    try:
+        with (run / "telemetry.csv").open(newline="") as f:
+            stamps = [
+                t for row in csv.DictReader(f) if (t := _to_float(row.get("host_timestamp_ns")))
+                is not None
+            ]
+    except OSError:
+        return None
+    if len(stamps) < 2:
+        return None
+    return round((stamps[-1] - stamps[0]) / 1e9, 3)
 
 
 def _sha256(path: Path) -> str:
@@ -172,6 +279,8 @@ class Recorder:
                 return None
             self._file.close()
             self._layers_file.close()
+            # Derive motion_profiles.csv from the streamed telemetry now that it is flushed/closed.
+            _write_motion_profiles(run)
             (run / "events.json").write_text(json.dumps(self._events, indent=2))
             manifest = {
                 "complete": True,
@@ -179,7 +288,13 @@ class Recorder:
                 "duration_s": round(time.time() - self._started, 3),
                 "checksums": {
                     n: _sha256(run / n)
-                    for n in ("metadata.json", "events.json", "telemetry.csv", "layers.csv")
+                    for n in (
+                        "metadata.json",
+                        "events.json",
+                        "telemetry.csv",
+                        "layers.csv",
+                        "motion_profiles.csv",
+                    )
                 },
             }
             (run / "manifest.json").write_text(json.dumps(manifest, indent=2))
@@ -194,7 +309,19 @@ class Recorder:
         dirs = sorted(p for p in self.root.iterdir() if p.is_dir() and not p.name.startswith("."))
         for d in dirs:
             size = sum(f.stat().st_size for f in d.rglob("*") if f.is_file())
+            meta = _read_run_meta(d)
+            raw_experiment = meta.get("experiment")
+            experiment: dict[str, Any] = raw_experiment if isinstance(raw_experiment, dict) else {}
             out.append(
-                {"run": d.name, "complete": (d / "manifest.json").exists(), "size_bytes": size}
+                {
+                    "run": d.name,
+                    "complete": (d / "manifest.json").exists(),
+                    "size_bytes": size,
+                    "name": experiment.get("name", ""),
+                    "notes": experiment.get("notes", ""),
+                    "started_at": meta.get("started_utc"),
+                    "layer_count": _layer_count(d),
+                    "duration_s": _telemetry_duration_s(d),
+                }
             )
         return out

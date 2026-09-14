@@ -3,8 +3,6 @@ import { api } from "../../lib/api.ts";
 import { JOG_STEPS } from "../../lib/console.ts";
 import { fmtAccel, fmtSecs, fmtSpeed, gantryJogLabels, tri, type Gates } from "../../lib/format.ts";
 import { AXIS_NAMES, GANTRY_HOME_SIDE, type AxisNo, type StatusPayload } from "../../lib/telemetry.ts";
-import { ModuleGrid, type Module } from "../Modules.tsx";
-import { OverviewCameraPanel } from "../OverviewCameraPanel.tsx";
 import type { Call } from "./types.ts";
 
 const SW: Record<AxisNo, string> = { 1: "sw-part", 2: "sw-feed", 3: "sw-ph", 4: "sw-rc" };
@@ -50,43 +48,63 @@ function Axis({ a, status, ok, call, step }: { a: AxisNo; status: StatusPayload 
   );
 }
 
-export function ControlView({ status, gates, call, base, gantryStep, pistonStep, setGantryStep, setPistonStep, order, sizes, onOrder, onResize }: { status: StatusPayload | null; gates: Gates; call: Call; base: string; gantryStep: number; pistonStep: number; setGantryStep: (s: number) => void; setPistonStep: (s: number) => void; order?: string[]; sizes?: Record<string, import("../../lib/console.ts").ModuleSize>; onOrder: (ids: string[]) => void; onResize: (id: string, size: import("../../lib/console.ts").ModuleSize) => void }) {
+export function ControlView({ status, gates, call, gantryStep, pistonStep, setGantryStep, setPistonStep }: { status: StatusPayload | null; gates: Gates; call: Call; gantryStep: number; pistonStep: number; setGantryStep: (s: number) => void; setPistonStep: (s: number) => void }) {
   const c = status?.controller;
   const t = c?.telemetry;
   const ok = gates.controllable && !gates.printActive;
   const lock = !gates.controllable ? (gates.connected ? "read-only · take control from the connection pill" : "connect a controller to jog") : gates.printActive ? "a print is running · manual motion is locked" : null;
   const stepper = (v: number, set: (s: number) => void) => <div className="stepper" style={{ marginBottom: 8 }}>step {JOG_STEPS.map((s) => <button key={s} className={s === v ? "on" : ""} onClick={() => set(s)}>{s} mm</button>)}</div>;
-  const modules: Module[] = [
-    { id: "gantries", title: "gantries", size: "m", node: <>{stepper(gantryStep, setGantryStep)}<Axis a={3} status={status} ok={ok} call={call} step={gantryStep} /><Axis a={4} status={status} ok={ok} call={call} step={gantryStep} />{lock && <div className="lock">{lock}</div>}</> },
-    { id: "pistons", title: "pistons", size: "m", node: <>{stepper(pistonStep, setPistonStep)}<Axis a={1} status={status} ok={ok} call={call} step={pistonStep} /><Axis a={2} status={status} ok={ok} call={call} step={pistonStep} /></> },
-    { id: "motion", title: "motion", size: "s", node: (
-      <>
-        <div className="actions" style={{ marginTop: 0 }}>
-          <button className="cta" disabled={!ok} onClick={() => { if (window.confirm("Home the printhead gantry?")) call("home printhead", () => api.home([3])); }}>HOME PRINTHEAD</button>
-          <button className="cta" disabled={!ok} onClick={() => { if (window.confirm("Home the recoater gantry?")) call("home recoater", () => api.home([4])); }}>HOME RECOATER</button>
-          <button className="cta danger" disabled={!gates.connected} onClick={() => call("stop", api.stop)}>STOP</button>
+  return (
+    <div className="view fixed-page control-view">
+      <div className="sec-h">axes</div>
+      <div className="cards-2">
+        <div className="card">
+          <h3>gantries</h3>
+          {stepper(gantryStep, setGantryStep)}
+          <Axis a={3} status={status} ok={ok} call={call} step={gantryStep} />
+          <div className="axis-sep" />
+          <Axis a={4} status={status} ok={ok} call={call} step={gantryStep} />
+          {lock && <div className="lock">{lock}</div>}
         </div>
-        <div className="hint" style={{ marginTop: 10 }}>Home one gantry at a time. Pistons are never auto-homed — homing a piston ejects powder.</div>
-      </>
-    ) },
-    { id: "heater", title: "heater", size: "s", node: (
-      <>
-        <div className="kv" style={{ marginTop: 0 }}><span>relay</span><span className={c?.heater.on ? "bad" : ""}>{tri(c?.heater.on, `ON ${fmtSecs(c?.heater.on_s)}`, "off", "not observed")}</span><span>watchdog</span><span>{fmtSecs(c?.heater.max_on_s)}</span><span>io module</span><span className="warnv">{Array.isArray(status?.device.heater_io) ? (status!.device.heater_io as number[]).join(" / ") : "—"} unverified</span></div>
-        <div className="actions tight">
-          <button className="cta danger" disabled={!ok} title={`Turns the IR heater ON; it switches off after ${fmtSecs(c?.heater.max_on_s)} or on any fault.`} onClick={() => call("heater on", api.heaterOn)}>HEATER ON</button>
-          <button className="cta" disabled={!gates.connected} onClick={() => call("heater off", api.heaterOff)}>HEATER OFF</button>
+        <div className="card">
+          <h3>pistons</h3>
+          {stepper(pistonStep, setPistonStep)}
+          <Axis a={1} status={status} ok={ok} call={call} step={pistonStep} />
+          <div className="axis-sep" />
+          <Axis a={2} status={status} ok={ok} call={call} step={pistonStep} />
         </div>
-      </>
-    ) },
-    { id: "io", title: "controller", size: "s", node: (
-      <div className="chips" style={{ marginTop: 0 }}>
-        <span className={`chip ${t?.estop_triggered ? "bad" : t?.estop_triggered === null ? "warn" : ""}`}>e-stop {tri(t?.estop_triggered, "asserted", "clear")}</span>
-        <span className={`chip ${t?.drives_ready === false ? "bad" : t?.drives_ready === null ? "warn" : ""}`}>drives {tri(t?.drives_ready, "ready", "not ready")}</span>
-        <span className={`chip ${t && !t.health_ok ? "bad" : ""}`}>health {t ? (t.health_ok ? "ok" : "bad") : "?"}</span>
-        <span className={`chip ${c?.read_error ? "bad" : ""}`}>read {c?.read_error ? "error" : "ok"}</span>
-        <span className="chip">{String((status?.device as { version?: string })?.version ?? "")} · {c?.backend ?? "none"}</span>
       </div>
-    ) },
-  ];
-  return <div className="view modules-view"><OverviewCameraPanel base={base} view="control" /><ModuleGrid modules={modules} order={order} sizes={sizes} onOrder={onOrder} onResize={onResize} /></div>;
+
+      <div className="sec-h">operations</div>
+      <div className="cards-3">
+        <div className="card">
+          <h3>motion</h3>
+          <div className="actions" style={{ marginTop: 0 }}>
+            <button className="cta" disabled={!ok} onClick={() => { if (window.confirm("Home the printhead gantry?")) call("home printhead", () => api.home([3])); }}>HOME PRINTHEAD</button>
+            <button className="cta" disabled={!ok} onClick={() => { if (window.confirm("Home the recoater gantry?")) call("home recoater", () => api.home([4])); }}>HOME RECOATER</button>
+            <button className="cta danger" disabled={!gates.connected} onClick={() => call("stop", api.stop)}>STOP</button>
+          </div>
+          <div className="hint" style={{ marginTop: 10 }}>Home one gantry at a time. Pistons are never auto-homed — homing a piston ejects powder.</div>
+        </div>
+        <div className="card">
+          <h3>heater</h3>
+          <div className="kv" style={{ marginTop: 0 }}><span>relay</span><span className={c?.heater.on ? "bad" : ""}>{tri(c?.heater.on, `ON ${fmtSecs(c?.heater.on_s)}`, "off", "not observed")}</span><span>watchdog</span><span>{fmtSecs(c?.heater.max_on_s)}</span><span>io module</span><span className="warnv">{Array.isArray(status?.device.heater_io) ? (status!.device.heater_io as number[]).join(" / ") : "—"} unverified</span></div>
+          <div className="actions tight">
+            <button className="cta danger" disabled={!ok} title={`Turns the IR heater ON; it switches off after ${fmtSecs(c?.heater.max_on_s)} or on any fault.`} onClick={() => call("heater on", api.heaterOn)}>HEATER ON</button>
+            <button className="cta" disabled={!gates.connected} onClick={() => call("heater off", api.heaterOff)}>HEATER OFF</button>
+          </div>
+        </div>
+        <div className="card">
+          <h3>controller</h3>
+          <div className="chips" style={{ marginTop: 0 }}>
+            <span className={`chip ${t?.estop_triggered ? "bad" : t?.estop_triggered === null ? "warn" : ""}`}>e-stop {tri(t?.estop_triggered, "asserted", "clear")}</span>
+            <span className={`chip ${t?.drives_ready === false ? "bad" : t?.drives_ready === null ? "warn" : ""}`}>drives {tri(t?.drives_ready, "ready", "not ready")}</span>
+            <span className={`chip ${t && !t.health_ok ? "bad" : ""}`}>health {t ? (t.health_ok ? "ok" : "bad") : "?"}</span>
+            <span className={`chip ${c?.read_error ? "bad" : ""}`}>read {c?.read_error ? "error" : "ok"}</span>
+            <span className="chip">{String((status?.device as { version?: string })?.version ?? "")} · {c?.backend ?? "none"}</span>
+          </div>
+        </div>
+      </div>
+    </div>
+  );
 }

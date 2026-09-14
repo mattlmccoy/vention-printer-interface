@@ -53,7 +53,9 @@ export interface VisionDevice { index: number; stable_id: string | null; name: s
 // vention_printer_interface/vision/cameras.py's camera_access_state (ok/denied/no_devices).
 export interface VisionDevicesResponse { devices: VisionDevice[]; camera_access: "ok" | "denied" | "no_devices" }
 // GET/PUT /api/vision/roles body/response shape: a stable_id -> role ("overview"/"science") map.
+export interface RunMeta { run: string; complete: boolean; size_bytes: number; name?: string; notes?: string; started_at?: string | number | null; layer_count?: number | null; duration_s?: number | null }
 export type VisionRoleMap = Record<string, string>;
+export interface CameraSettings { resolution?: [number, number] | string | null; fps?: number | null; format?: string | null; exposure?: number | null }
 export interface VisionRolesPutResult { mapping: VisionRoleMap; roles_resolved: boolean; unresolved: string[] }
 // Raw manifest record shape from GET /api/vision/captures — see backend
 // vention_printer_interface/vision/capture.py's append_manifest call (run_id..host_timestamp_ns)
@@ -147,7 +149,8 @@ export const api = {
   printSeek: (index: number) => req<StatusPayload["print"]>("POST", "/api/print/seek", { index }),
   recordingStart: (body: { name: string; notes: string }) => req<{ run: string }>("POST", "/api/recording/start", body),
   recordingStop: () => req<{ run: string | null; stopped: boolean }>("POST", "/api/recording/stop"),
-  recordings: () => req<{ runs: Array<{ run: string; complete: boolean; size_bytes: number }> }>("GET", "/api/recordings"),
+  recordings: () => req<{ runs: RunMeta[] }>("GET", "/api/recordings"),
+  recordingSetMeta: (run: string, body: { name?: string; notes?: string }) => req<{ name: string; notes: string }>("PUT", `/api/recordings/${encodeURIComponent(run)}/meta`, body),
   jobs: () => req<{ jobs: Array<Omit<StatusPayload["job"] & object, "current_layer">>; roots: string[] }>("GET", "/api/jobs"),
   selectJob: (path: string) => req<{ job: StatusPayload["job"]; print_settings: PrintSettingsPayload }>("POST", "/api/jobs/select", { path }),
   clearJob: () => req<{ job: null }>("POST", "/api/jobs/clear"),
@@ -157,6 +160,7 @@ export const api = {
   setPriming: (patch: Record<string, number>) => req<PrimingPayload>("PUT", "/api/priming", patch),
   primingRun: () => req<StatusPayload["print"]>("POST", "/api/priming/run"),
   primed: () => req<PrimedPayload>("GET", "/api/primed"),
+  // per-camera settings (res/fps/format/exposure), persisted per role; applied on next open.
   primedCapture: () => req<PrimedPayload>("POST", "/api/primed/capture"),
   events: () => req<{ events: StatusPayload["events"] }>("GET", "/api/events"),
   autoLog: () => req<{ enabled: boolean }>("GET", "/api/auto-log"),
@@ -166,6 +170,8 @@ export const api = {
   visionDevices: () => req<VisionDevicesResponse>("GET", "/api/vision/devices"),
   visionGetRoles: () => req<VisionRoleMap>("GET", "/api/vision/roles"),
   visionSetRoles: (mapping: VisionRoleMap) => req<VisionRolesPutResult>("PUT", "/api/vision/roles", { mapping }),
+  visionGetSettings: () => req<Record<string, CameraSettings>>("GET", "/api/vision/settings"),
+  visionSetSettings: (body: Record<string, CameraSettings>) => req<Record<string, CameraSettings>>("PUT", "/api/vision/settings", body),
   visionCaptures: (run: string) => req<VisionCaptureRecord[]>("GET", `/api/vision/captures?run=${encodeURIComponent(run)}`),
   visionCalibrate: (body: VisionCalibrateBody) => req<VisionCalibrateResult>("POST", "/api/vision/calibrate", body),
   visionCalibrateSessionStart: (spec?: VisionBoardSpecBody) => req<VisionCalibSession>("POST", "/api/vision/calibrate/session", { spec: spec ?? null }),

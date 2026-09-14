@@ -6,6 +6,7 @@ Mirrors ``test_api_priming.py``'s fixture style. A ``SimulatedFrameSource`` is i
 
 from __future__ import annotations
 
+import json
 import time
 from collections.abc import Iterator
 from pathlib import Path
@@ -1066,6 +1067,74 @@ def test_vision_roles_put_still_persists_a_valid_mapping(tmp_path: Path) -> None
             "usb-A-overview": "overview",
             "usb-B-science": "science",
         }
+
+
+def test_vision_settings_get_reports_defaults(tmp_path: Path) -> None:
+    app = _vision_app(tmp_path)
+    with TestClient(app) as c:
+        body = c.get("/api/vision/settings").json()
+        assert body["overview"]["resolution"] == [1920, 1080]
+        assert body["overview"]["format"] == "MJPG"
+        assert body["overview"]["exposure"] is None
+        assert body["science"]["resolution"] == [5120, 3840]
+        assert body["science"]["fps"] == 7.5
+
+
+def test_vision_settings_put_then_get_round_trips_and_persists(tmp_path: Path) -> None:
+    app = _vision_app(tmp_path)
+    with TestClient(app) as c:
+        r = c.put(
+            "/api/vision/settings",
+            json={
+                "science": {
+                    "resolution": [2560, 1440],
+                    "fps": 15.0,
+                    "format": "MJPG",
+                    "exposure": -4.0,
+                }
+            },
+        )
+        assert r.status_code == 200
+
+        got = c.get("/api/vision/settings").json()
+        assert got["science"]["resolution"] == [2560, 1440]
+        assert got["science"]["fps"] == 15.0
+        assert got["science"]["format"] == "MJPG"
+        assert got["science"]["exposure"] == -4.0
+        # overview untouched
+        assert got["overview"]["resolution"] == [1920, 1080]
+
+    # persisted alongside the role map, in CameraSpec-field form
+    persisted = tmp_path / ".vision_settings.json"
+    assert persisted.exists()
+    saved = json.loads(persisted.read_text())
+    assert saved["science"]["width"] == 2560 and saved["science"]["height"] == 1440
+    assert saved["science"]["pixel_format"] == "MJPG"
+
+    # CameraConfig reflects the override (via /api/vision/cameras)
+    with TestClient(app) as c:
+        cams = c.get("/api/vision/cameras").json()
+        assert cams["science"]["width"] == 2560 and cams["science"]["height"] == 1440
+        assert cams["science"]["exposure"] == -4.0
+
+
+def test_vision_settings_accepts_wxh_string_resolution(tmp_path: Path) -> None:
+    app = _vision_app(tmp_path)
+    with TestClient(app) as c:
+        r = c.put("/api/vision/settings", json={"overview": {"resolution": "1280x720"}})
+        assert r.status_code == 200
+        got = c.get("/api/vision/settings").json()
+        assert got["overview"]["resolution"] == [1280, 720]
+
+
+def test_vision_settings_survive_a_recreated_app_at_the_same_root(tmp_path: Path) -> None:
+    app = _vision_app(tmp_path)
+    with TestClient(app) as c:
+        c.put("/api/vision/settings", json={"science": {"fps": 12.0}})
+    # a fresh app at the same root merges the persisted override at build time
+    app2 = _vision_app(tmp_path)
+    with TestClient(app2) as c:
+        assert c.get("/api/vision/settings").json()["science"]["fps"] == 12.0
 
 
 # ---- guided calibration-capture session (A6b, /api/vision/calibrate/session|capture|finalize)
