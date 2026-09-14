@@ -34,8 +34,12 @@ if (-not $JobsRoot) {
   Write-Warning "The -JobsRoot path does not exist yet (Dropbox not synced?): $JobsRoot"
 }
 
-# Build the vpi-serve argument string.
-$argLine = "run --directory `"$BackendDir`" vpi-serve --host 127.0.0.1 --port $Port"
+# Build the argument string. Launch via the MODULE form (python -m ...) rather than the
+# installed `vpi-serve` console script: run from BackendDir, cwd is on sys.path[0], so Python
+# imports the CURRENT source tree — not a stale copied/cached wheel in .venv. This makes
+# `git pull` alone enough to update the served code; the console script could serve old code
+# forever if the install wasn't editable (the exact trap that hid RIP jobs on the Windows PC).
+$argLine = "run --directory `"$BackendDir`" python -m vention_printer_interface.api.server --host 127.0.0.1 --port $Port"
 if ($SiteOrigin) { $argLine += " --site-origin $SiteOrigin" }
 if ($Ip)         { $argLine += " --ip $Ip" }
 if ($JobsRoot)   { $argLine += " --jobs-root `"$JobsRoot`"" }
