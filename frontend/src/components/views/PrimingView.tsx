@@ -41,6 +41,10 @@ export function PrimingView({ status, gates, call, onJob, onPrint }: { status: S
   const [manualDepthMm, setManualDepthMm] = useState("");
   const [jobThicknessMm, setJobThicknessMm] = useState<number | null>(null);
   const [primed, setPrimed] = useState<{ part_mm: number; feed_mm: number; captured_at: number } | null>(null);
+  const [jogStep, setJogStep] = useState("20"); // recoater jog step (mm) for the leveling step
+  const [rcSpeed, setRcSpeed] = useState("");
+  const [rcAccel, setRcAccel] = useState("");
+  const am4 = status?.axis_motion?.["4"]; // recoater current max speed/accel
 
   useEffect(() => {
     let live = true;
@@ -185,6 +189,23 @@ export function PrimingView({ status, gates, call, onJob, onPrint }: { status: S
                   <button className="cta primary" disabled={!ok || target("level_recoat_start_mm") === null} onClick={() => call("move to start", () => api.move(4, "abs", target("level_recoat_start_mm") as number))}>Move to start</button>
                   <button className="cta" disabled={!ok || target("level_recoat_end_mm") === null} onClick={() => call("spread", () => api.move(4, "abs", target("level_recoat_end_mm") as number))}>Spread ▶</button>
                   <button className="cta" onClick={skip}>Next →</button>
+                </div>
+                {/* jog + rates for fine leveling — the recoater moves at these controller rates; watch the dock */}
+                <div className="sec-h" style={{ marginTop: 14 }}>recoater · jog &amp; rates <span className="hint" style={{ textTransform: "none", letterSpacing: 0, fontWeight: 400 }}>watch the machine in the dock →</span></div>
+                <div className="btnrow">
+                  <span className="hint" style={{ marginTop: 0 }}>jog step</span>
+                  <input type="number" inputMode="decimal" value={jogStep} onChange={(e) => setJogStep(e.target.value)} style={{ width: 70 }} />
+                  <span className="hint" style={{ marginTop: 0 }}>mm</span>
+                  <button className="cta" disabled={!ok || n(jogStep) <= 0} onClick={() => call("jog recoater away", () => api.move(4, "rel", n(jogStep)))}>◀ away</button>
+                  <button className="cta" disabled={!ok || n(jogStep) <= 0} onClick={() => call("jog recoater home", () => api.move(4, "rel", -n(jogStep)))}>home ▶</button>
+                </div>
+                <div className="btnrow">
+                  <span className="hint" style={{ marginTop: 0 }}>speed</span>
+                  <input type="number" inputMode="decimal" value={rcSpeed} placeholder={am4?.max_speed != null ? String(am4.max_speed) : "mm/s"} disabled={!ok} onChange={(e) => setRcSpeed(e.target.value)} style={{ width: 90 }} />
+                  <button className="small" disabled={!ok || rcSpeed === ""} onClick={() => call("set recoater speed", () => api.setAxisMotion(4, { max_speed: Number(rcSpeed) }).then(() => setRcSpeed("")))}>set</button>
+                  <span className="hint" style={{ marginTop: 0 }}>accel</span>
+                  <input type="number" inputMode="decimal" value={rcAccel} placeholder={am4?.max_accel != null ? String(am4.max_accel) : "mm/s²"} disabled={!ok} onChange={(e) => setRcAccel(e.target.value)} style={{ width: 90 }} />
+                  <button className="small" disabled={!ok || rcAccel === ""} onClick={() => call("set recoater accel", () => api.setAxisMotion(4, { max_accel: Number(rcAccel) }).then(() => setRcAccel("")))}>set</button>
                 </div>
               </>
             )}
