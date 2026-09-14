@@ -11,6 +11,7 @@ import dataclasses
 import io
 import json
 import logging
+import os
 import platform
 import shutil
 import socket
@@ -463,15 +464,44 @@ def _attach(app: FastAPI, backend: str, ip: str | None, heater_io: tuple[int, in
     app.state.reference_restored = True
 
 
-def default_jobs_root() -> Path:
-    """The shared sliced-jobs folder when no ``--jobs-root`` is given.
+def choose_jobs_root(
+    env_value: str | None, shared: Path, shared_exists: bool, fallback: Path
+) -> tuple[Path, str | None]:
+    """Pure decision for the default sliced-jobs folder. No filesystem I/O.
 
-    Resolved RELATIVE to this file so the Mac and the Windows print PC (same Dropbox account)
-    read the SAME folder without a per-machine launch argument: binderjet/code/rfam-web/Hot Folder
-    — the folder Meteor RIP writes sliced jobs into and the Mac launchd service points at. Before
-    this, an unset --jobs-root fell back to backend/jobs, so Windows pulled nothing.
+    Priority: an explicit ``VPI_JOBS_ROOT`` env value (per-machine override for a clone that
+    lives OUTSIDE Dropbox, e.g. the Windows print PC) → the script-relative shared Dropbox Hot
+    Folder, but only when it actually exists here (true on the Mac, where the code is inside
+    Dropbox) → a last-resort fallback with a loud warning. Never silently return a bogus
+    script-relative path: on the Windows standalone clone parents[5] resolves to
+    ``C:\\Users\\code\\rfam-web\\Hot Folder`` which does not exist, so we must warn, not pretend.
     """
-    return Path(__file__).resolve().parents[5] / "code" / "rfam-web" / "Hot Folder"
+    if env_value:
+        return Path(env_value), None
+    if shared_exists:
+        return shared, None
+    return fallback, (
+        f"No sliced-jobs folder found: the shared Dropbox Hot Folder ({shared}) is not next to "
+        f"this code (a clone outside Dropbox?), so falling back to {fallback}. Pass --jobs-root "
+        f"or set VPI_JOBS_ROOT to the machine's Hot Folder path."
+    )
+
+
+def default_jobs_root() -> Path:
+    """The sliced-jobs folder to use when no ``--jobs-root`` is given.
+
+    Wraps :func:`choose_jobs_root` with the real env var, the script-relative shared Dropbox Hot
+    Folder (binderjet/code/rfam-web/Hot Folder — what Meteor RIP writes to and the Mac service
+    points at), and a backend/jobs fallback. Logs the warning when it can't find a real folder.
+    """
+    shared = Path(__file__).resolve().parents[5] / "code" / "rfam-web" / "Hot Folder"
+    fallback = Path(__file__).resolve().parents[2] / "jobs"  # backend/jobs
+    path, warning = choose_jobs_root(
+        os.environ.get("VPI_JOBS_ROOT"), shared, shared.is_dir(), fallback
+    )
+    if warning:
+        log.warning(warning)
+    return path
 
 
 def create_app(

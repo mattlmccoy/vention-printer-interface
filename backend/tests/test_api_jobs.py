@@ -6,17 +6,36 @@ import pytest
 from fastapi.testclient import TestClient
 
 from tests.test_jobs import make_job
-from vention_printer_interface.api.app import create_app, default_jobs_root
+from vention_printer_interface.api.app import choose_jobs_root, create_app
+
+_SHARED = Path("/dropbox/binderjet/code/rfam-web/Hot Folder")
+_FALLBACK = Path("/repo/backend/jobs")
 
 
-def test_default_jobs_root_is_shared_hot_folder() -> None:
-    # When no --jobs-root is given, vpi-serve must default to the shared, script-relative
-    # Dropbox Hot Folder so the Mac and the Windows print PC read the SAME sliced jobs —
-    # not the empty backend/jobs fallback. Regression: Windows pulled from backend/jobs.
-    p = default_jobs_root()
-    assert p.name == "Hot Folder"
-    assert p.parent.name == "rfam-web"
-    assert p.parent.parent.name == "code"
+def test_env_var_overrides_everything() -> None:
+    # The Windows print PC (a standalone clone OUTSIDE Dropbox) sets VPI_JOBS_ROOT so it
+    # reads its local Dropbox Hot Folder without a --jobs-root argument.
+    p, warn = choose_jobs_root("/win/Dropbox/Hot Folder", _SHARED, shared_exists=False,
+                               fallback=_FALLBACK)
+    assert p == Path("/win/Dropbox/Hot Folder")
+    assert warn is None
+
+
+def test_shared_used_when_it_exists_here() -> None:
+    # On the Mac the code lives INSIDE Dropbox, so the script-relative shared folder is real.
+    p, warn = choose_jobs_root(None, _SHARED, shared_exists=True, fallback=_FALLBACK)
+    assert p == _SHARED
+    assert warn is None
+
+
+def test_falls_back_and_warns_when_shared_missing() -> None:
+    # Regression: on the Windows clone parents[5] resolved to C:\Users\code\rfam-web\Hot Folder,
+    # which does not exist. Must NOT silently return that bogus path — fall back and warn loudly.
+    p, warn = choose_jobs_root(None, Path("C:/Users/code/rfam-web/Hot Folder"),
+                               shared_exists=False, fallback=_FALLBACK)
+    assert p == _FALLBACK
+    assert warn is not None
+    assert "VPI_JOBS_ROOT" in warn and "--jobs-root" in warn
 
 
 @pytest.fixture
