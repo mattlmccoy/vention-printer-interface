@@ -65,5 +65,45 @@
   --statusbar-h: 28px;
 }
 
+/* Light theme — activated by data-theme="light" on <html> (header toggle). Overrides ONLY colour
+   tokens; layout tokens/fonts inherit from :root. Media wells (camera/pip) stay dark on purpose.
+   NOTE: this is not a bare `:root{` block, so theme.test.ts's single-source :root check is intact. */
+:root[data-theme="light"] {
+  color-scheme: light;
+  --bg: #eef1f5;
+  --bg-deep: #f7f9fb;
+  --panel: #ffffff;
+  --line: #e3e8ed;
+  --line-strong: #d3dae1;
+  --line-control: #b7c0ca;
+  --fg: #2a3540;
+  --fg-strong: #0f151b;
+  --muted: #5c6874;
+  --label: #6c7883;
+  --faint: #98a2ac;
+  --accent: #b06f14;
+  --accent-ink: #1c1204;
+  --focus: #b06f14;
+  --live: #1a7f37;
+  --live-glow: 0 0 8px rgba(26, 127, 55, 0.45);
+  --live-glow-dim: 0 0 3px rgba(26, 127, 55, 0.3);
+  --live-bg: rgba(26, 127, 55, 0.12);
+  --warn: #9a6700;
+  --warn-bg: rgba(154, 103, 0, 0.12);
+  --err: #cf222e;
+  --err-bg: rgba(207, 34, 46, 0.10);
+  --err-btn: #cf3b2e;
+  --rec: #cf3b2e;
+  --trace-part: #1a7f37;
+  --trace-feed: #b06f14;
+  --trace-ph: #cf222e;
+  --trace-rc: #1f6feb;
+  --violet: #7c3aed;
+  --image-bg: #0b0e13;
+  --scrim: rgba(11, 14, 18, 0.85);
+  --danger-ink: #ffffff;
+  --shadow: 0 8px 24px rgba(16, 22, 28, 0.12);
+}
+
 @keyframes vpi-glow { 0%, 100% { box-shadow: var(--live-glow); } 50% { box-shadow: var(--live-glow-dim); } }
 @keyframes vpi-blink { 0%, 60% { opacity: 1; } 61%, 100% { opacity: 0.25; } }

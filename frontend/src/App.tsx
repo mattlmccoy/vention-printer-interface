@@ -42,6 +42,13 @@ export function App() {
   const samples = useRef<number[]>([]);
   const [visionStatus, setVisionStatus] = useState<VisionStatus | null>(null);
   const [quickStartOpen, setQuickStartOpen] = useState(false); // explicit re-open, e.g. from Settings
+  const [theme, setTheme] = useState<"dark" | "light">(() => (storage?.getItem("vpi.theme") === "light" ? "light" : "dark"));
+
+  // Theme: dark is the default (bare :root); "light" stamps data-theme on <html> to swap tokens.
+  useEffect(() => {
+    document.documentElement.dataset.theme = theme;
+    try { storage?.setItem("vpi.theme", theme); } catch { /* ignore */ }
+  }, [theme]);
 
   // Camera auto-connect + quick-start (A7): poll /api/vision/status while the operator is
   // reachable so shouldShowQuickStart can gate the first-run/re-assign wizard on roles_resolved.
@@ -142,6 +149,7 @@ export function App() {
           {handshake && <span className="pill warn">{handshake}</span>}
           <span className="spacer" />
           {busy && <span className="muted mono">{busy}…</span>}
+          <button className="pill themebtn" onClick={() => setTheme((t) => (t === "dark" ? "light" : "dark"))} title={`Switch to ${theme === "dark" ? "light" : "dark"} theme`} aria-label="toggle theme">{theme === "dark" ? "☀" : "☾"}</button>
           <button className="estop" disabled={!g.connected} onClick={() => call("e-stop", api.estop)}>■ E-STOP</button>
         </header>
         <div>
