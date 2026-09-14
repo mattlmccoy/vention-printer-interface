@@ -6,7 +6,6 @@ import { formatCaptureMetaValue, overviewStreamUrl, parseCaptures, type Capture 
 import { CalibrationBoardPanel } from "../CalibrationBoardPanel.tsx";
 import { CalibrationWizard } from "../CalibrationWizard.tsx";
 import { ValidationPanel } from "../ValidationPanel.tsx";
-import { ModuleGrid, type Module } from "../Modules.tsx";
 import type { Call } from "./types.ts";
 
 const STAGES = ["pre_jet", "post_jet", "post_heat"] as const;
@@ -169,10 +168,8 @@ function CaptureBrowser({ base }: { base: string }) {
   );
 }
 
-export function CamerasView({ status, gates, call, base, order, sizes, onOrder, onResize, onOpenQuickStart }: {
+export function CamerasView({ status, gates, call, base, onOpenQuickStart }: {
   status: StatusPayload | null; gates: Gates; call: Call; base: string;
-  order?: string[]; sizes?: Record<string, import("../../lib/console.ts").ModuleSize>;
-  onOrder: (ids: string[]) => void; onResize: (id: string, size: import("../../lib/console.ts").ModuleSize) => void;
   /** A7: reopens the camera-role quick-start wizard any time (cameras swapped/replaced/re-cabled) */
   onOpenQuickStart: () => void;
 }) {
@@ -192,41 +189,52 @@ export function CamerasView({ status, gates, call, base, order, sizes, onOrder, 
 
   const currentStills = layer === null ? [] : layerCaptures.filter((c) => c.layer === layer);
 
-  const modules: Module[] = [
-    { id: "overview", title: "overview camera · live", size: "l", node: (
-      <div className="cam-panel-body">
-        <CamImg className="cam-panel-img" src={overviewStreamUrl(base)} alt="overview camera live view" />
-      </div>
-    ) },
-    { id: "layer-stills", title: run ? `current layer stills · ${run} · layer ${layer ?? "—"}` : "current layer stills", size: "l", node: (
-      !run ? <div className="hint" style={{ marginTop: 0 }}>no active run — start a recording to capture layer stills</div> :
-      currentStills.length === 0 ? <div className="hint" style={{ marginTop: 0 }}>no captures for the current layer yet</div> : (
-        <div className="cam-grid">
-          {STAGES.map((s) => {
-            const c = currentStills.find((x) => x.stage === s);
-            return (
-              <div key={s} className="cam-still">
-                <header>{STAGE_LABEL[s]}</header>
-                {c ? <CamImg src={`${base}${c.url}`} alt={STAGE_LABEL[s]} />
-                  : <div className="cam-panel-empty"><span className="cam-panel-ph" aria-hidden="true" /><span>not captured yet</span></div>}
-              </div>
-            );
-          })}
-        </div>
-      )
-    ) },
-    { id: "calibration-wizard", title: "calibration", size: "m", node: <CalibrationWizard call={call} printing={gates.printActive} /> },
-    { id: "validation", title: "validation", size: "m", node: <ValidationPanel call={call} printing={gates.printActive} /> },
-    { id: "board", title: "calibration boards (SVG/DXF)", size: "m", node: <CalibrationBoardPanel base={base} /> },
-    { id: "browser", title: "capture browser", size: "l", node: <CaptureBrowser base={base} /> },
-    { id: "calibration-manual", title: "manual calibration (raw points)", size: "m", node: <CalibrationForm call={call} disabled={!gates.reachable} /> },
-  ];
   return (
-    <div className="view modules-view">
-      <div className="actions one tight" style={{ marginBottom: 12 }}>
-        <button className="small" onClick={onOpenQuickStart}>camera setup…</button>
+    <div className="view fixed-page cameras-view">
+      <div className="row"><button className="small" onClick={onOpenQuickStart}>camera setup…</button><span className="hint">re-run the guided camera-role setup anytime (cameras swapped / re-cabled)</span></div>
+
+      <div className="sec-h">live &amp; captures</div>
+      <div className="cards-2">
+        <div className="card">
+          <h3>overview camera · live</h3>
+          <div className="cam-panel-body"><CamImg className="cam-panel-img" src={overviewStreamUrl(base)} alt="overview camera live view" /></div>
+        </div>
+        <div className="card">
+          <h3>{run ? `current layer stills · layer ${layer ?? "—"}` : "current layer stills"}</h3>
+          {!run ? <div className="hint" style={{ marginTop: 0 }}>no active run — start a recording to capture layer stills</div> :
+            currentStills.length === 0 ? <div className="hint" style={{ marginTop: 0 }}>no captures for the current layer yet</div> : (
+              <div className="cam-grid">
+                {STAGES.map((s) => {
+                  const c = currentStills.find((x) => x.stage === s);
+                  return (
+                    <div key={s} className="cam-still">
+                      <header>{STAGE_LABEL[s]}</header>
+                      {c ? <CamImg src={`${base}${c.url}`} alt={STAGE_LABEL[s]} />
+                        : <div className="cam-panel-empty"><span className="cam-panel-ph" aria-hidden="true" /><span>not captured yet</span></div>}
+                    </div>
+                  );
+                })}
+              </div>
+            )}
+        </div>
       </div>
-      <ModuleGrid modules={modules} order={order} sizes={sizes} onOrder={onOrder} onResize={onResize} />
+
+      <div className="sec-h">calibration</div>
+      <div className="cards-2">
+        <div className="card"><h3>calibration</h3><CalibrationWizard call={call} printing={gates.printActive} /></div>
+        <div className="card"><h3>validation</h3><ValidationPanel call={call} printing={gates.printActive} /></div>
+      </div>
+
+      <div className="sec-h">boards &amp; capture browser</div>
+      <div className="cards-2">
+        <div className="card"><h3>calibration boards (SVG / DXF)</h3><CalibrationBoardPanel base={base} /></div>
+        <div className="card"><h3>capture browser</h3><CaptureBrowser base={base} /></div>
+      </div>
+
+      <details className="rp-drawer">
+        <summary>manual calibration (raw points)</summary>
+        <div className="body"><CalibrationForm call={call} disabled={!gates.reachable} /></div>
+      </details>
     </div>
   );
 }

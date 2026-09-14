@@ -2,7 +2,7 @@ import { useCallback, useEffect, useRef, useState, type CSSProperties, type Poin
 import { api, operatorBase, setOperatorBase, SITE_MODE, type VisionStatus } from "./lib/api.ts";
 import { formatError, gates as computeGates } from "./lib/format.ts";
 import { checkHandshake, saveOperatorBase, UI_API_VERSION, wsUrl } from "./lib/operator.ts";
-import { clampSize, loadConsole, saveConsole, type ModuleSize, type View } from "./lib/console.ts";
+import { loadConsole, saveConsole, type View } from "./lib/console.ts";
 import { connectOptions, type Candidate } from "./lib/connect.ts";
 import { dismissQuickStart, shouldShowQuickStart } from "./lib/vision.ts";
 import type { StatusPayload } from "./lib/telemetry.ts";
@@ -129,13 +129,6 @@ export function App() {
   const c = status?.controller;
   const r = status?.print;
   const setView = (view: View) => setUi((u) => ({ ...u, view }));
-  const setOrder = (view: View) => (ids: string[]) => setUi((u) => ({ ...u, order: { ...u.order, [view]: ids } }));
-  const setResize = (view: View) => (id: string, size: ModuleSize) => setUi((u) => {
-    const forView = { ...(u.sizes[view] ?? {}) };
-    if (size.w === 0 && size.h === 0) delete forView[id]; // reset to the class default
-    else forView[id] = clampSize(size.w, size.h);
-    return { ...u, sizes: { ...u.sizes, [view]: forView } };
-  });
   const applyBase = () => { saveOperatorBase(storage, baseInput); setOperatorBase(baseInput.trim().replace(/\/+$/, "")); setBase(operatorBase()); };
   const [dev, pin] = heaterIo.split(",").map((s) => parseInt(s.trim(), 10));
   const heaterOk = Number.isInteger(dev) && Number.isInteger(pin) && dev >= 1 && dev <= 8 && pin >= 0 && pin <= 3;
@@ -274,8 +267,8 @@ export function App() {
               {ui.view === "job" && <JobView status={status} gates={g} call={call} onStarted={() => setView("print")} />}
               {ui.view === "control" && <ControlView status={status} gates={g} call={call} gantryStep={ui.gantryStep} pistonStep={ui.pistonStep} setGantryStep={(s) => setUi((u) => ({ ...u, gantryStep: s }))} setPistonStep={(s) => setUi((u) => ({ ...u, pistonStep: s }))} />}
               {ui.view === "priming" && <PrimingView status={status} gates={g} call={call} base={base} onJob={() => setView("job")} onPrint={() => setView("print")} />}
-              {ui.view === "runs" && <RunsView status={status} gates={g} call={call} order={ui.order.runs} sizes={ui.sizes.runs} onOrder={setOrder("runs")} onResize={setResize("runs")} />}
-              {ui.view === "cameras" && <CamerasView status={status} gates={g} call={call} base={base} order={ui.order.cameras} sizes={ui.sizes.cameras} onOrder={setOrder("cameras")} onResize={setResize("cameras")} onOpenQuickStart={() => setQuickStartOpen(true)} />}
+              {ui.view === "runs" && <RunsView status={status} gates={g} call={call} />}
+              {ui.view === "cameras" && <CamerasView status={status} gates={g} call={call} base={base} onOpenQuickStart={() => setQuickStartOpen(true)} />}
             </div>
             <aside className={`dock${dock.open ? "" : " collapsed"}`} style={{ "--dock-w": `${dock.w}px` } as CSSProperties}>
               <div className="dock-resize" onPointerDown={dockDrag} title="drag to resize · snaps" />

@@ -3,21 +3,21 @@ import { api } from "../../lib/api.ts";
 import type { Gates } from "../../lib/format.ts";
 import type { StatusPayload } from "../../lib/telemetry.ts";
 import { EventLog } from "../EventLog.tsx";
-import { ModuleGrid, type Module } from "../Modules.tsx";
 import type { Call } from "./types.ts";
 
-export function RunsView({ status, gates, call, order, sizes, onOrder, onResize }: { status: StatusPayload | null; gates: Gates; call: Call; order?: string[]; sizes?: Record<string, import("../../lib/console.ts").ModuleSize>; onOrder: (ids: string[]) => void; onResize: (id: string, size: import("../../lib/console.ts").ModuleSize) => void }) {
+export function RunsView({ status, gates, call }: { status: StatusPayload | null; gates: Gates; call: Call }) {
   const [runs, setRuns] = useState<Array<{ run: string; complete: boolean; size_bytes: number }>>([]);
   useEffect(() => { api.recordings().then((r) => setRuns(r.runs)).catch(() => undefined); }, [status?.recording.active, gates.reachable]);
   const rec = status?.recording;
-  const modules: Module[] = [
-    { id: "runs", title: "runs", size: "l", node: (
-      <>
-        <div className="row" style={{ marginBottom: 14 }}>
-          {rec?.active ? <button className="small" onClick={() => call("stop recording", api.recordingStop)}>■ stop recording {rec.run}</button>
+  return (
+    <div className="view fixed-page runs-view">
+      <div className="card">
+        <h3>runs
+          {rec?.active
+            ? <button className="small" onClick={() => call("stop recording", api.recordingStop)}>■ stop recording {rec.run}</button>
             : <button className="small" disabled={!gates.connected} onClick={() => call("record", () => api.recordingStart({ name: "manual", notes: "" }))}>● record now</button>}
-          <span className="hint">every print is recorded automatically</span>
-        </div>
+        </h3>
+        <div className="hint" style={{ marginTop: 0, marginBottom: 12 }}>Every print is recorded automatically — telemetry, layers, and events per run.</div>
         <div className="log run-log">
           <div className="tbl-scroll">
             <table><tbody>{[...runs].reverse().map((r) => (
@@ -26,9 +26,11 @@ export function RunsView({ status, gates, call, order, sizes, onOrder, onResize 
           </div>
           {runs.length === 0 && <div className="hint">no runs yet</div>}
         </div>
-      </>
-    ) },
-    { id: "events", title: "events", size: "l", node: <EventLog events={status?.events ?? []} title="" /> },
-  ];
-  return <div className="view modules-view"><ModuleGrid modules={modules} order={order} sizes={sizes} onOrder={onOrder} onResize={onResize} /></div>;
+      </div>
+      <div className="card">
+        <h3>event log</h3>
+        <EventLog events={status?.events ?? []} title="" />
+      </div>
+    </div>
+  );
 }
