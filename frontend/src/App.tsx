@@ -54,15 +54,24 @@ export function App() {
   // Persistent machine dock (right side): width + open state, remembered locally.
   const [dock, setDock] = useState<{ w: number; open: boolean }>(() => {
     try { const j = JSON.parse(storage?.getItem("vpi.dock") ?? "") as { w?: number; open?: boolean }; if (j && typeof j.w === "number") return { w: j.w, open: j.open !== false }; } catch { /* ignore */ }
-    return { w: 320, open: true };
+    return { w: 380, open: true };
   });
   useEffect(() => { try { storage?.setItem("vpi.dock", JSON.stringify(dock)); } catch { /* ignore */ } }, [dock]);
+
+  // Deep-link the active view via URL hash (#control, #print, …) — also lets tooling target a page.
+  useEffect(() => {
+    const names = ["control", "job", "priming", "print", "runs", "cameras"];
+    const apply = () => { const h = location.hash.slice(1); if (names.includes(h)) setUi((u) => (u.view === h ? u : { ...u, view: h as View })); };
+    apply();
+    window.addEventListener("hashchange", apply);
+    return () => window.removeEventListener("hashchange", apply);
+  }, []);
   const dockDrag = (e: ReactPointerEvent) => {
     e.preventDefault();
     const startX = e.clientX; const startW = dock.w;
     const move = (ev: PointerEvent) => { const w = Math.max(262, Math.min(560, startW + (startX - ev.clientX))); setDock((d) => ({ ...d, w })); };
     const up = () => { window.removeEventListener("pointermove", move); window.removeEventListener("pointerup", up);
-      setDock((d) => { const SNAP = [288, 320, 400, 460]; const w = SNAP.reduce((a, b) => (Math.abs(b - d.w) < Math.abs(a - d.w) ? b : a)); return { ...d, w }; }); };
+      setDock((d) => { const SNAP = [320, 380, 440, 520]; const w = SNAP.reduce((a, b) => (Math.abs(b - d.w) < Math.abs(a - d.w) ? b : a)); return { ...d, w }; }); };
     window.addEventListener("pointermove", move); window.addEventListener("pointerup", up);
   };
 
@@ -113,7 +122,8 @@ export function App() {
     try { await fn(); setErr(null); } catch (e) { setErr(`${label}: ${formatError(e)}`); } finally { setBusy(null); }
   }, []);
   const g = computeGates(status, reachable);
-  const showQuickStart = quickStartOpen || shouldShowQuickStart(visionStatus, storage);
+  const noWizard = typeof location !== "undefined" && new URLSearchParams(location.search).has("nowizard");
+  const showQuickStart = !noWizard && (quickStartOpen || shouldShowQuickStart(visionStatus, storage));
   const n = samples.current.length;
   const pollHz = n > 2 ? ((n - 1) * 1e9) / (samples.current[n - 1] - samples.current[0]) : null;
   const c = status?.controller;
@@ -165,8 +175,14 @@ export function App() {
           {handshake && <span className="pill warn">{handshake}</span>}
           <span className="spacer" />
           {busy && <span className="muted mono">{busy}…</span>}
-          <button className={`pill themebtn${dock.open ? " on" : ""}`} onClick={() => setDock((d) => ({ ...d, open: !d.open }))} title="Toggle machine dock" aria-label="toggle machine dock" aria-pressed={dock.open}>▥</button>
-          <button className="pill themebtn" onClick={() => setTheme((t) => (t === "dark" ? "light" : "dark"))} title={`Switch to ${theme === "dark" ? "light" : "dark"} theme`} aria-label="toggle theme">{theme === "dark" ? "☀" : "☾"}</button>
+          <button className={`iconbtn${dock.open ? " on" : ""}`} onClick={() => setDock((d) => ({ ...d, open: !d.open }))} title="Toggle machine dock" aria-label="toggle machine dock" aria-pressed={dock.open}>
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><rect x="3" y="4" width="18" height="16" rx="2" /><line x1="15" y1="4" x2="15" y2="20" /></svg>
+          </button>
+          <button className="iconbtn" onClick={() => setTheme((t) => (t === "dark" ? "light" : "dark"))} title={`Switch to ${theme === "dark" ? "light" : "dark"} theme`} aria-label="toggle theme">
+            {theme === "dark"
+              ? <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><circle cx="12" cy="12" r="4" /><path d="M12 2v2M12 20v2M4.9 4.9l1.4 1.4M17.7 17.7l1.4 1.4M2 12h2M20 12h2M4.9 19.1l1.4-1.4M17.7 6.3l1.4-1.4" /></svg>
+              : <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M21 12.8A9 9 0 1 1 11.2 3a7 7 0 0 0 9.8 9.8z" /></svg>}
+          </button>
           <button className="estop" disabled={!g.connected} onClick={() => call("e-stop", api.estop)}>■ E-STOP</button>
         </header>
         <div>

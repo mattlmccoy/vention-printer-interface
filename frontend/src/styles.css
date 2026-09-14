@@ -22,8 +22,8 @@ details[open] > summary::before { content: "▾ "; }
 details > .body { margin-top: 12px; }
 
 /* ---- shell ---- */
-.console { display: grid; grid-template-rows: 56px auto minmax(0, 1fr) 30px; height: 100vh; min-height: 640px; }
-.top { display: flex; align-items: center; gap: 24px; padding: 0 24px; background: var(--bg-deep); border-bottom: 1px solid var(--line); min-width: 0; }
+.console { display: flex; flex-direction: column; height: 100vh; min-height: 640px; }
+.top { flex: none; height: 56px; display: flex; align-items: center; gap: 24px; padding: 0 24px; background: var(--bg-deep); border-bottom: 1px solid var(--line); min-width: 0; }
 .wordmark { font-family: var(--font-mono); font-weight: 700; letter-spacing: .14em; font-size: 12px; color: var(--fg-strong); white-space: nowrap; }
 .tabs { display: flex; align-items: center; gap: 12px; height: 100%; }
 /* grouped tabs: the BUILD sequence (Job·Priming·Print) sits in an accent-capable pill group; the
@@ -47,7 +47,11 @@ details > .body { margin-top: 12px; }
 .toggle.danger.on .tg-switch { background: var(--err-btn); border-color: var(--err-btn); }
 .toggle.danger.on .tg-state { color: var(--err); }
 .wordmark .sub { color: var(--faint); font-weight: 400; letter-spacing: .04em; margin-left: 8px; }
-.themebtn { font-size: 15px; line-height: 1; padding: 6px 10px; }
+/* circular icon buttons (dock toggle, theme) — proper round targets, not tiny pills */
+.iconbtn { width: 40px; height: 40px; flex: none; border-radius: 50%; border: 1px solid var(--line-control); background: var(--panel); color: var(--fg); display: inline-grid; place-items: center; cursor: pointer; padding: 0; }
+.iconbtn:hover { border-color: var(--accent); color: var(--accent); }
+.iconbtn.on { border-color: var(--accent); color: var(--accent); background: var(--warn-bg); }
+.iconbtn svg { width: 19px; height: 19px; }
 .pill { display: inline-flex; align-items: center; gap: 8px; padding: 5px 11px; border-radius: 14px; font: 12px var(--font-mono); border: 1px solid var(--line-strong); color: var(--fg); white-space: nowrap; background: transparent; cursor: pointer; }
 .pill.warn { border-color: var(--warn); color: var(--warn); }
 .pill.err { border-color: var(--err); color: var(--err); }
@@ -294,7 +298,7 @@ button.small { height: 34px; padding: 0 12px; border: 1px solid var(--line-contr
 .run-log td.d { max-width: none; overflow: visible; text-overflow: clip; }
 
 /* status bar */
-.statusbar { display: flex; align-items: center; gap: 22px; padding: 0 24px; background: var(--bg-deep); border-top: 1px solid var(--line); font-family: var(--font-mono); font-size: 12px; color: var(--muted); overflow: hidden; }
+.statusbar { flex: none; height: 30px; display: flex; align-items: center; gap: 22px; padding: 0 24px; background: var(--bg-deep); border-top: 1px solid var(--line); font-family: var(--font-mono); font-size: 12px; color: var(--muted); overflow: hidden; }
 .statusbar b { color: var(--fg); font-weight: 500; }
 .statusbar .bad { color: var(--err); }
 .statusbar .warnv { color: var(--warn); }
@@ -373,7 +377,7 @@ button.small { height: 34px; padding: 0 12px; border: 1px solid var(--line-contr
 .rp-readout b { color: var(--fg-strong); }
 
 /* ---- persistent machine dock (right side, resizable) ---- */
-.bodywrap { display: flex; min-height: 0; min-width: 0; overflow: hidden; }
+.bodywrap { flex: 1; display: flex; min-height: 0; min-width: 0; overflow: hidden; }
 .viewhost { flex: 1; min-width: 0; display: flex; min-height: 0; }
 .viewhost > .view, .viewhost > .modules-view { flex: 1; min-width: 0; }
 .dock { position: relative; flex: 0 0 var(--dock-w, 320px); width: var(--dock-w, 320px); border-left: 1px solid var(--line); background: var(--bg-deep); overflow: auto; display: flex; flex-direction: column; }
@@ -384,21 +388,26 @@ button.small { height: 34px; padding: 0 12px; border: 1px solid var(--line-contr
 .dock-head { display: flex; align-items: center; justify-content: space-between; padding: 10px 14px; border-bottom: 1px solid var(--line); position: sticky; top: 0; background: var(--bg-deep); z-index: 2; }
 .dock-title { font: 12px var(--font-mono); letter-spacing: .1em; text-transform: uppercase; color: var(--label); }
 .dock-body { padding: 14px; display: flex; flex-direction: column; gap: 14px; }
-.dock-machine { background: var(--image-bg); border: 1px solid var(--line); border-radius: var(--radius); padding: 6px; }
-.dock-machine .machine svg, .dock-machine svg { max-height: 34vh; }
-.dock-axes { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
-.dock-axis { border: 1px solid var(--line); border-radius: var(--radius); background: var(--panel); padding: 7px 10px; }
-.dock-axis .k { display: flex; align-items: center; gap: 7px; font: 11px var(--font-mono); letter-spacing: .06em; text-transform: uppercase; color: var(--label); }
-.dock-axis .k i { width: 9px; height: 9px; border-radius: 2px; }
-.dock-axis .v { display: block; font: 600 18px var(--font-mono); color: var(--accent); margin-top: 3px; }
-.dock-axis .v.unref { color: var(--muted); opacity: .6; font-style: italic; }
-.dock-axis .v small { font-size: 11px; color: var(--muted); font-weight: 400; }
-.dock-mini { display: flex; gap: 8px; }
-.dock-mini .dm { flex: 1; border: 1px solid var(--line); border-radius: var(--radius); background: var(--panel); padding: 7px 10px; }
-.dock-mini .dm .k { font: 11px var(--font-mono); letter-spacing: .06em; text-transform: uppercase; color: var(--label); }
-.dock-mini .dm .v { display: block; font: 600 15px var(--font-mono); color: var(--fg-strong); margin-top: 2px; }
-.dock-mini .dm.hot .v, .dock-mini .dm.bad .v { color: var(--err); }
-.dock-actions { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
+.dock-machine { background: var(--image-bg); border: 1px solid var(--line); border-radius: var(--radius); padding: 8px; }
+.dock-machine .machine svg, .dock-machine svg { max-height: 40vh; min-height: 220px; }
+/* per-axis: name + live position + travel bar (fill = position within travel) */
+.dock-axes { display: flex; flex-direction: column; gap: 8px; }
+.dock-axis { border: 1px solid var(--line); border-radius: var(--radius); background: var(--panel); padding: 9px 12px; }
+.dock-axis .r1 { display: flex; align-items: baseline; justify-content: space-between; gap: 10px; }
+.dock-axis .k { display: flex; align-items: center; gap: 8px; font: 11px var(--font-mono); letter-spacing: .06em; text-transform: uppercase; color: var(--label); }
+.dock-axis .k i { width: 10px; height: 10px; border-radius: 2px; }
+.dock-axis .v { font: 600 21px var(--font-mono); color: var(--accent); white-space: nowrap; }
+.dock-axis .v.unref { color: var(--muted); opacity: .7; font-style: italic; font-size: 14px; }
+.dock-axis .v small { font-size: 11px; color: var(--muted); font-weight: 400; margin-left: 3px; }
+.dock-axis .trav { height: 6px; border-radius: 3px; background: var(--bg-deep); margin-top: 8px; position: relative; overflow: hidden; }
+.dock-axis .trav i { position: absolute; inset: 0 auto 0 0; opacity: .8; transition: width .3s; }
+.dock-axis .trav i.mv { opacity: 1; animation: vpi-glow 1s ease-in-out infinite; }
+.dock-status { display: flex; flex-wrap: wrap; gap: 6px; }
+.dock-print { border: 1px solid var(--accent); border-radius: var(--radius); background: var(--warn-bg); padding: 10px 12px; }
+.dock-print .dp-row { display: flex; align-items: baseline; justify-content: space-between; }
+.dock-print .dp-state { font: 700 14px var(--font-mono); letter-spacing: .06em; color: var(--accent); }
+.dock-print .dp-layer { font: 13px var(--font-mono); color: var(--fg); }
+.dock-actions { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; margin-top: 10px; }
 .dock-actions .cta { height: 42px; }
 .dock .cam-panel { margin: 0; }
 
