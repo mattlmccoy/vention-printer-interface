@@ -8,7 +8,11 @@ import { CrossSection } from "../CrossSection.tsx";
 import { RoutinePanel } from "../RoutinePanel.tsx";
 import { NumberField } from "../NumberField.tsx";
 import { Toggle } from "../Toggle.tsx";
+import { parseCaptures, type Capture } from "../../lib/vision.ts";
 import type { Call } from "./types.ts";
+
+const CMP_STAGES = ["pre_jet", "post_jet", "post_heat"] as const;
+const CMP_STAGE_LABEL: Record<string, string> = { pre_jet: "pre-jet", post_jet: "post-jet", post_heat: "post-heat" };
 
 const LAYER_HEIGHTS = [0.1, 0.15, 0.2];
 const PHASE_LABEL: Record<string, string> = { thin_precoat: "precoat", printing: "printing", postcoat: "postcoat", setup: "setup", finish: "finishing" };
@@ -32,7 +36,7 @@ export function phrase(step: ReturnType<typeof compilePrint>[number] | null, pla
   }
 }
 
-export function PrintView({ status, gates, call, onJob }: { status: StatusPayload | null; gates: Gates; call: Call; onJob: () => void }) {
+export function PrintView({ status, gates, call, base, onJob }: { status: StatusPayload | null; gates: Gates; call: Call; base: string; onJob: () => void }) {
   const c = status?.controller;
   const r = status?.print;
   const t = c?.telemetry ?? null;
@@ -42,6 +46,19 @@ export function PrintView({ status, gates, call, onJob }: { status: StatusPayloa
   const active = !!r && (r.state === "running" || r.state === "paused");
   const paused = r?.state === "paused";
   const isMacro = !!r?.macro;
+
+  // science-cam stills for the running recording, polled so the CAD-vs-actual compare fills in live.
+  const recRun = status?.recording.run ?? null;
+  const [caps, setCaps] = useState<Capture[]>([]);
+  const [cmpStage, setCmpStage] = useState<string>("post_jet");
+  useEffect(() => {
+    if (!recRun) { setCaps([]); return; }
+    let live = true;
+    const load = () => api.visionCaptures(recRun).then((rc) => { if (live) setCaps(parseCaptures(rc)); }).catch(() => undefined);
+    load();
+    const id = window.setInterval(load, 4000);
+    return () => { live = false; window.clearInterval(id); };
+  }, [recRun]);
 
   // ---- manual print (idle, no sliced job): reuses print-settings edit/save + api.printStart.
   const showManual = !active && !job;
@@ -116,13 +133,26 @@ export function PrintView({ status, gates, call, onJob }: { status: StatusPayloa
   }
 
   const stateCls = r?.state === "fault" ? "fault" : active ? "run" : "idle";
+  const shownCap = caps.find((c) => c.layer === shownLayer && c.stage === cmpStage) ?? null;
+  const layerHasCaps = caps.some((c) => c.layer === shownLayer);
   const imaging = (
     <div className="card imaging-card">
-      <h3>{job ? `${job.name} · layer ${shownLayer} of ${job.layer_count}` : "layer"}</h3>
-      <CrossSection job={job} layer={shownLayer} />
+      <h3>{job ? `${job.name} · layer ${shownLayer}${job.layer_count ? ` of ${job.layer_count}` : ""}` : "layer"}
+        {layerHasCaps && <span className="seg sm">{CMP_STAGES.map((s) => <button key={s} type="button" className={cmpStage === s ? "on" : ""} onClick={() => setCmpStage(s)}>{CMP_STAGE_LABEL[s]}</button>)}</span>}
+      </h3>
+      {shownCap ? (
+        <div className="compare-2">
+          <div className="cmp"><div className="cmp-h">CAD slice</div><CrossSection job={job} layer={shownLayer} /></div>
+          <div className="cmp"><div className="cmp-h">science cam · {CMP_STAGE_LABEL[cmpStage]}</div><img className="cam-panel-img cmp-img" src={`${base}${shownCap.url}`} alt={`science cam layer ${shownLayer} ${cmpStage}`} onError={(e) => { (e.currentTarget as HTMLImageElement).style.display = "none"; }} /></div>
+        </div>
+      ) : (
+        <>
+          <CrossSection job={job} layer={shownLayer} />
+          <div className="hint" style={{ marginTop: 10 }}>The science-cam still appears here beside the CAD slice once the science camera captures this layer/stage (during a recorded print).</div>
+        </>
+      )}
       <div className="bar" style={{ marginTop: 12 }}><i className="layer" style={{ width: `${job && job.layer_count ? Math.round((100 * (active ? Math.max(printLayer - 1, 0) : 0)) / job.layer_count) : 0}%` }} /></div>
       <div className="bar-lbl">{job ? `${active ? Math.max(printLayer - 1, 0) : 0} of ${job.layer_count} layers printed` : "no job selected"}</div>
-      <div className="hint" style={{ marginTop: 10 }}>Science-cam capture &amp; CAD-vs-actual comparison shows here once a science camera is assigned.</div>
     </div>
   );
   const timeline = timelineRows.length > 0 ? (

@@ -214,6 +214,11 @@ button.small { height: 34px; padding: 0 12px; border: 1px solid var(--line-contr
 .print-grid { display: grid; grid-template-columns: minmax(0, 1fr) 340px; gap: 16px; align-items: start; }
 @media (max-width: 1000px) { .print-grid { grid-template-columns: minmax(0, 1fr); } }
 .imaging-card .xsec { height: 380px; }
+.compare-2 { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
+@media (max-width: 760px) { .compare-2 { grid-template-columns: 1fr; } }
+.compare-2 .xsec { height: 300px; }
+.cmp-h { font: 10px var(--font-mono); letter-spacing: .09em; text-transform: uppercase; color: var(--label); margin-bottom: 6px; }
+.cmp-img { display: block; width: 100%; max-height: 300px; object-fit: contain; border: 1px solid var(--line); border-radius: 10px; background: var(--image-bg); }
 .manual-card { max-width: 620px; }
 .single-step-row { font-size: 13px; color: var(--fg); }
 .rp-drawer { border: 1px solid var(--line); border-radius: var(--radius); background: var(--panel); padding: 14px 16px; margin-top: 16px; }
