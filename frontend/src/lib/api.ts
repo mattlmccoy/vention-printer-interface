@@ -56,6 +56,20 @@ export interface VisionDevice { index: number; stable_id: string | null; name: s
 export interface VisionDevicesResponse { devices: VisionDevice[]; camera_access: "ok" | "unknown" | "denied" | "no_devices" }
 // GET/PUT /api/vision/roles body/response shape: a stable_id -> role ("overview"/"science") map.
 export interface RunMeta { run: string; complete: boolean; size_bytes: number; name?: string; notes?: string; started_at?: string | number | null; layer_count?: number | null; duration_s?: number | null }
+// Lane A dimensional analysis — GET/POST /api/analysis/{run}/dimensional (see backend
+// vention_printer_interface/analysis/dimensional.py DimensionalReport). Non-"ok" statuses are
+// honest 200 reports with features:{} and compensation:null — never fabricated metrics.
+export type AnalysisStatus = "ok" | "no_capture" | "no_calibration" | "roi_failed" | "not_run";
+export interface Compensation { scale_x: number; scale_y: number; yaw_deg: number | null; human: string; notes: string[]; deadband_pct?: number }
+export interface DimensionalReport {
+  run: string; status: AnalysisStatus; generated_utc?: string; message?: string;
+  captured_from?: { layer?: number; stage?: string } | null; px_per_mm?: number | null; mm_per_px?: number | null;
+  rois?: Record<string, [number, number, number, number]> | null;
+  features?: Record<string, Record<string, number | null>>;
+  compensation?: Compensation | null;
+  tool_provenance?: Record<string, unknown>;
+}
+export interface AnalysisRequest { layer?: number; stage?: string; rois?: Record<string, [number, number, number, number]>; nominals?: Record<string, unknown> }
 export type VisionRoleMap = Record<string, string>;
 export interface CameraSettings { resolution?: [number, number] | string | null; fps?: number | null; format?: string | null; exposure?: number | null }
 export interface VisionRolesPutResult { mapping: VisionRoleMap; roles_resolved: boolean; unresolved: string[] }
@@ -152,11 +166,16 @@ export const api = {
   recordingStart: (body: { name: string; notes: string }) => req<{ run: string }>("POST", "/api/recording/start", body),
   recordingStop: () => req<{ run: string | null; stopped: boolean }>("POST", "/api/recording/stop"),
   recordings: () => req<{ runs: RunMeta[] }>("GET", "/api/recordings"),
+  analysisGet: (run: string) => req<DimensionalReport>("GET", `/api/analysis/${encodeURIComponent(run)}/dimensional`),
+  analysisRun: (run: string, body: AnalysisRequest = {}) => req<DimensionalReport>("POST", `/api/analysis/${encodeURIComponent(run)}/dimensional`, body),
   recordingSetMeta: (run: string, body: { name?: string; notes?: string }) => req<{ name: string; notes: string }>("PUT", `/api/recordings/${encodeURIComponent(run)}/meta`, body),
+  recordingDelete: (run: string) => req<{ run: string; deleted: boolean }>("DELETE", `/api/recordings/${encodeURIComponent(run)}`),
   jobs: () => req<{ jobs: Array<Omit<StatusPayload["job"] & object, "current_layer">>; roots: string[] }>("GET", "/api/jobs"),
   selectJob: (path: string) => req<{ job: StatusPayload["job"]; print_settings: PrintSettingsPayload }>("POST", "/api/jobs/select", { path }),
   clearJob: () => req<{ job: null }>("POST", "/api/jobs/clear"),
   jobLayerUrl: (layer: number, jobFolder = "") => `${base}/api/jobs/current/layers/${layer}.png?job=${encodeURIComponent(jobFolder)}`,
+  // serve a specific job folder's layer (incl. archived jobs), regardless of the selected job
+  jobLayerByFolderUrl: (layer: number, folder: string) => `${base}/api/jobs/by-folder/${encodeURIComponent(folder)}/layers/${layer}.png`,
   macro: (name: string) => req<StatusPayload["print"]>("POST", `/api/macro/${name}`),
   priming: () => req<PrimingPayload>("GET", "/api/priming"),
   setPriming: (patch: Record<string, number>) => req<PrimingPayload>("PUT", "/api/priming", patch),

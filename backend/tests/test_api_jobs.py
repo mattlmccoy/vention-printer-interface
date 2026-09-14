@@ -50,6 +50,16 @@ def test_list_select_and_preview(client: TestClient) -> None:
     assert client.get("/api/status").json()["job"] is None
 
 
+def test_job_layer_by_folder_serves_any_job_without_selecting(client: TestClient) -> None:
+    """The Runs/Analysis stills compare needs a specific job's layer (incl. archived jobs) even
+    when it isn't the currently-selected job."""
+    folder = "20260414_171155_8MM-ROD-CLAMPS-03MM-TOL"
+    png = client.get(f"/api/jobs/by-folder/{folder}/layers/2.png")
+    assert png.status_code == 200 and png.headers["content-type"] == "image/png"
+    assert client.get("/api/jobs/by-folder/does-not-exist/layers/1.png").status_code == 404
+    assert client.get(f"/api/jobs/by-folder/{folder}/layers/999.png").status_code == 404
+
+
 def test_select_rejects_paths_outside_roots(client: TestClient, tmp_path: Path) -> None:
     assert client.post("/api/jobs/select", json={"path": str(tmp_path / "exp")}).status_code == 400
     assert client.post("/api/jobs/select", json={"path": "/etc"}).status_code == 400

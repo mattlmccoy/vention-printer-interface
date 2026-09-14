@@ -87,7 +87,8 @@ export function RunsView({ status, gates, call, base }: { status: StatusPayload 
     // doesn't re-open every time this view remounts (e.g. re-clicking the Runs tab).
     if (typeof location === "undefined") return;
     const params = new URLSearchParams(location.search);
-    const q = Number(params.get("still"));
+    const raw = params.get("still"); // NOTE: Number(null) === 0, so guard the missing param explicitly
+    const q = raw === null || raw === "" ? NaN : Number(raw);
     if (Number.isInteger(q) && q >= 0 && q < caps.length) {
       setViewIdx(q);
       params.delete("still");
@@ -118,6 +119,12 @@ export function RunsView({ status, gates, call, base }: { status: StatusPayload 
   const label = (run: string) => `${run.slice(0, 8)} ${run.slice(9, 11)}:${run.slice(11, 13)}`;
   const dispName = (r: RunMeta) => r.name || r.run.slice(16) || r.run;
   const saveMeta = () => call("save run name/notes", () => api.recordingSetMeta(sel, { name, notes }).then(() => { setDirty(false); return refresh(); }));
+  const delRun = () => {
+    if (!selRun) return;
+    if (window.confirm(`Delete run "${dispName(selRun)}"?\n\nThis permanently removes its stills, telemetry, motion profiles, and all data. This cannot be undone.`)) {
+      call("delete run", () => api.recordingDelete(sel).then(() => { setSel(""); setViewIdx(-1); return refresh(); }));
+    }
+  };
 
   return (
     <div className="view fixed-page runs-view">
@@ -144,7 +151,10 @@ export function RunsView({ status, gates, call, base }: { status: StatusPayload 
             <>
               <div className="card">
                 <h3>{dispName(selRun)} · {label(selRun.run)}
-                  <a className="cta primary sm" href={`${base}/api/recordings/${encodeURIComponent(selRun.run)}/archive.zip`} target="_blank" rel="noreferrer" style={{ textDecoration: "none", display: "inline-flex", alignItems: "center" }}>⬇ Download run (.zip)</a>
+                  <span className="btnrow" style={{ display: "inline-flex" }}>
+                    <a className="cta primary sm" href={`${base}/api/recordings/${encodeURIComponent(selRun.run)}/archive.zip`} target="_blank" rel="noreferrer" style={{ textDecoration: "none", display: "inline-flex", alignItems: "center" }}>⬇ Download run (.zip)</a>
+                    <button className="cta danger sm" disabled={!gates.reachable} onClick={delRun}>Delete run</button>
+                  </span>
                 </h3>
                 <div className="statrow">
                   <div className="stat"><span className="k">Status</span><span className="v">{selRun.complete ? "complete" : "incomplete"}</span></div>
@@ -214,7 +224,7 @@ export function RunsView({ status, gates, call, base }: { status: StatusPayload 
                 <img className="cmp-img" src={`${base}${viewCap.url}`} alt={`science cam layer ${viewCap.layer} ${viewCap.stage}`} /></div>
               <div className="cmp"><div className="cmp-h">CAD slice</div>
                 {viewJobFolder && !viewCadErr
-                  ? <img className="cmp-img" src={api.jobLayerUrl(viewCap.layer, viewJobFolder)} alt={`CAD layer ${viewCap.layer}`} onError={() => setViewCadErr(true)} />
+                  ? <img className="cmp-img" src={api.jobLayerByFolderUrl(viewCap.layer, viewJobFolder)} alt={`CAD layer ${viewCap.layer}`} onError={() => setViewCadErr(true)} />
                   : <div className="cmp-img chart-empty" style={{ display: "grid", placeItems: "center", textAlign: "center", padding: 16 }}>{viewJobFolder ? "CAD slice unavailable — its sliced job isn't loaded" : "CAD slice unavailable for this run"}</div>}
               </div>
             </div>

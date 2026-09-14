@@ -12,6 +12,7 @@ import io
 import json
 import logging
 import platform
+import shutil
 import socket
 import time
 import zipfile
@@ -1115,6 +1116,24 @@ def create_app(
             headers={"Cache-Control": "no-cache", "ETag": f'"{job.dir.name}-{layer}"'},
         )
 
+    @app.get("/api/jobs/by-folder/{folder}/layers/{layer}.png")
+    def job_layer_by_folder(folder: str, layer: int) -> Response:
+        """Serve a layer PNG from a SPECIFIC job folder (incl. _archive), regardless of the
+        selected job — the Runs/Analysis stills-vs-CAD compare needs any run's job layer.
+        `folder` is matched against scanned job folders only (no path traversal / arbitrary reads)."""
+        job = next((j for j in jobs.scan() if j.dir.name == folder), None)
+        if job is None:
+            raise HTTPException(404, f"no job folder {folder!r}")
+        try:
+            data = layer_png(job, layer)
+        except IndexError as exc:
+            raise HTTPException(404, str(exc)) from exc
+        return Response(
+            content=data,
+            media_type="image/png",
+            headers={"Cache-Control": "no-cache", "ETag": f'"{folder}-{layer}"'},
+        )
+
     @app.post("/api/macro/{name}")
     def run_macro(name: str) -> dict[str, Any]:
         if name not in MACROS:
@@ -1235,6 +1254,19 @@ def create_app(
             media_type="application/zip",
             headers={"Content-Disposition": f'attachment; filename="{run}.zip"'},
         )
+
+    @app.delete("/api/recordings/{run}")
+    def recording_delete(run: str) -> dict[str, Any]:
+        """Delete a run directory (telemetry, stills, everything). Refuses the run currently being
+        recorded (409). Same run-name validation as the archive/file routes (no traversal)."""
+        run_dir = (root / run).resolve()
+        if run_dir.parent != root.resolve() or not run_dir.is_dir():
+            raise HTTPException(400, "bad run")
+        active = rec().current_run_dir
+        if active is not None and active.resolve() == run_dir:
+            raise HTTPException(409, "cannot delete the run that is currently recording")
+        shutil.rmtree(run_dir)
+        return {"run": run, "deleted": True}
 
     @app.put("/api/recordings/{run}/meta")
     def recording_meta(run: str, body: RecordingMetaBody) -> dict[str, str]:

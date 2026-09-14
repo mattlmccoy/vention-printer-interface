@@ -13,6 +13,7 @@ import { Toggle } from "./Toggle.tsx";
 interface PhaseDraft { n_layers: number; layer_thickness_mm: number; feed_thickness_mm: number }
 interface Draft {
   thin_precoat: PhaseDraft;
+  postcoat: PhaseDraft; // N postcoat layers × layer height (just like precoats), when enabled
   printing_feed_thickness_mm: number; // feed advance per printing layer (the powder supply)
   recoater_return_mm: number;
   heater_start_mm: number;
@@ -42,6 +43,7 @@ function phaseOf(plan: Record<string, unknown>, key: string): PhaseDraft {
 function readDraft(plan: Record<string, unknown>): Draft {
   return {
     thin_precoat: phaseOf(plan, "thin_precoat"),
+    postcoat: phaseOf(plan, "postcoat"),
     printing_feed_thickness_mm: phaseOf(plan, "printing").feed_thickness_mm,
     recoater_return_mm: n(plan.recoater_return_mm, 350),
     heater_start_mm: n(plan.heater_start_mm, 425),
@@ -74,7 +76,7 @@ export function RoutinePanel({ gates, call }: { gates: Gates; call: Call }) {
   }, [gates.reachable]);
   const ok = gates.controllable && !gates.printActive;
   const setD = (patch: Partial<Draft>) => d && (setDraft({ ...d, ...patch }), setDirty(true));
-  const setPh = (key: "thin_precoat", patch: Partial<PhaseDraft>) => d && setD({ [key]: { ...d[key], ...patch } } as Partial<Draft>);
+  const setPh = (key: "thin_precoat" | "postcoat", patch: Partial<PhaseDraft>) => d && setD({ [key]: { ...d[key], ...patch } } as Partial<Draft>);
   const save = () => d && call("set routine", () => {
     const patch = {
       thin_precoat: d.thin_precoat,
@@ -93,6 +95,7 @@ export function RoutinePanel({ gates, call }: { gates: Gates; call: Call }) {
       purge_every_n_layers: d.purge_every_n_layers,
       pre_heater_drop_mm: d.pre_heater_drop_mm,
       postcoat_enabled: d.postcoat_enabled,
+      postcoat: d.postcoat,
       target_carbon_wt: d.target_carbon_wt,
       part_area_mm2: d.part_area_mm2,
       heater_section_power_w: d.heater_section_power_w,
@@ -112,6 +115,10 @@ export function RoutinePanel({ gates, call }: { gates: Gates; call: Call }) {
           <div className="rp-row"><span>recoater return (mm)</span><span className="rv"><NumberField value={d.recoater_return_mm} disabled={!ok} onChange={(v) => setD({ recoater_return_mm: v })} /></span></div>
           <div className="rp-row"><span title="Anti-backlash: drops the feed piston this much BEFORE the recoater spread, then the post-spread feed-up returns it from below to take up mechanical slop. 0 = off.">feed backlash (mm)</span><span className="rv"><NumberField step="0.1" value={d.feed_backlash_mm} disabled={!ok} onChange={(v) => setD({ feed_backlash_mm: v })} /></span></div>
           <div className="rp-row"><span>postcoat</span><span className="rv"><Toggle checked={d.postcoat_enabled} disabled={!ok} onChange={(v) => setD({ postcoat_enabled: v })} /></span></div>
+          {d.postcoat_enabled && <>
+            <div className="rp-row"><span title="Number of postcoat layers × the layer height — just like precoats. The part is held; each layer feeds + spreads powder to cap the build.">postcoat (n × mm)</span><span className="rv"><NumberField value={d.postcoat.n_layers} disabled={!ok} style={{ width: 46 }} onChange={(v) => setPh("postcoat", { n_layers: v })} /> × <NumberField step="0.1" value={d.postcoat.layer_thickness_mm} disabled={!ok} style={{ width: 64 }} onChange={(v) => setPh("postcoat", { layer_thickness_mm: v })} /></span></div>
+            <div className="rp-row"><span>postcoat feed (mm)</span><span className="rv"><NumberField step="0.1" value={d.postcoat.feed_thickness_mm} disabled={!ok} onChange={(v) => setPh("postcoat", { feed_thickness_mm: v })} /></span></div>
+          </>}
           <div className="rp-note">Thick precoats live in the Priming routine, not here.</div>
         </div>
 

@@ -184,6 +184,13 @@ button.small { height: 34px; padding: 0 12px; border: 1px solid var(--line-contr
 .cards-2 { display: grid; grid-template-columns: repeat(auto-fit, minmax(340px, 1fr)); gap: 16px; align-items: start; }
 .cards-3 { display: grid; grid-template-columns: repeat(auto-fit, minmax(280px, 1fr)); gap: 16px; align-items: start; }
 .grid-gap { display: flex; flex-direction: column; gap: 16px; min-width: 0; }
+/* Analysis (Lane A) compensation cells: big scale/yaw figure per axis */
+.anl-comp { display: flex; flex-direction: column; gap: 4px; border: 1px solid var(--line); border-radius: 10px; padding: 14px; background: var(--bg-deep); }
+.anl-comp .k { font: 11px var(--font-mono); letter-spacing: .08em; text-transform: uppercase; color: var(--label); }
+.anl-comp .v { font: 26px var(--font-mono); font-weight: 700; color: var(--accent); }
+.anl-comp .s { font-size: 12px; color: var(--muted); }
+.state-pill.ok { color: var(--live); border-color: var(--live); }
+.state-pill.bad { color: var(--err); border-color: var(--err); }
 /* science-cam still lightbox (Runs): enlarged still beside its CAD slice, prev/next navigable */
 .still { cursor: pointer; }
 .still:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }

@@ -29,7 +29,8 @@ export function PrimingView({ status, gates, call, onJob, onPrint }: { status: S
   const macroPct = r && r.n_steps ? Math.round((100 * r.step_index) / r.n_steps) : 0;
 
   const [step, setStep] = useState(() => {
-    const q = typeof location !== "undefined" ? Number(new URLSearchParams(location.search).get("step")) : NaN;
+    const raw = typeof location !== "undefined" ? new URLSearchParams(location.search).get("step") : null;
+    const q = raw === null || raw === "" ? NaN : Number(raw); // Number(null)===0 trap
     return Number.isInteger(q) && q >= 0 && q < WALKTHROUGH_STEPS.length ? q : 0; // capture/deep-link aid
   });
   const cur = WALKTHROUGH_STEPS[step];
