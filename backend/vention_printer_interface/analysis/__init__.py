@@ -5,6 +5,13 @@ extraction + per-run orchestration/persistence. Report-only in v1.
 """
 
 from .compensation import Compensation, to_compensation
+from .dimensional import (
+    DEFAULTS,
+    DimensionalReport,
+    analyze_run,
+    load_report,
+    mm_box_to_px_rect,
+)
 from .feature_analysis import (
     analyze_checkerboard,
     analyze_concentric_rings,
@@ -21,4 +28,9 @@ __all__ = [
     "recommend_compensation_overall",
     "Compensation",
     "to_compensation",
+    "DimensionalReport",
+    "analyze_run",
+    "load_report",
+    "mm_box_to_px_rect",
+    "DEFAULTS",
 ]
