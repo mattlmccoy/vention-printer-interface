@@ -95,7 +95,7 @@ export function JobView({ status, gates, call, onStarted }: { status: StatusPayl
                 <div className="col">
                   <div className={total > plan.feed_end_mm ? "over" : "thin"} style={{ bottom: 0, height: pct(thin) }}>{thin > 0 ? `precoat ${thin.toFixed(1)}` : ""}</div>
                   <div className={total > plan.feed_end_mm ? "over" : "lay"} style={{ bottom: pct(thin), height: pct(pr) }}>{plan.printing.n_layers} × {plan.printing.layer_thickness_mm}</div>
-                  {plan.postcoat_enabled && <div className={total > plan.feed_end_mm ? "over" : "post"} style={{ bottom: pct(thin + pr), height: pct(post) }}>{post > 0 ? `postcoat ${post}` : ""}</div>}
+                  {plan.postcoat_enabled && <div className={total > plan.feed_end_mm ? "over" : "post"} style={{ bottom: pct(thin + pr), height: pct(post) }}>{post > 0 ? `postcoat ${post.toFixed(1)}` : ""}</div>}
                 </div>
                 <div className="legend" style={{ lineHeight: 1.7, fontSize: 14 }}><b>{total.toFixed(1)} mm</b> of {plan.feed_end_mm}<br /><b>{layers}</b> layers<br />heater <b>{plan.heater_enabled ? `${plan.n_heater_passes}×` : "off"}</b></div>
               </div>
