@@ -486,6 +486,26 @@ button.small { height: 34px; padding: 0 12px; border: 1px solid var(--line-contr
 .dock-actions .cta { height: 42px; }
 .dock .cam-panel { margin: 0; }
 
+/* ---- Runs page (mockup) ---- */
+.runlist { display: flex; flex-direction: column; gap: 6px; }
+.runitem { display: block; width: 100%; text-align: left; border: 1px solid var(--line); background: var(--panel); border-radius: 10px; padding: 9px 11px; cursor: pointer; color: var(--fg); }
+.runitem:hover { border-color: var(--line-control); }
+.runitem.on { border-color: var(--accent); box-shadow: 0 0 0 2px color-mix(in srgb, var(--accent) 22%, transparent); }
+.runitem .rn { display: block; font-weight: 600; font-size: 13px; color: var(--fg-strong); }
+.runitem .rd { display: block; font-size: 11px; color: var(--faint); margin-top: 2px; font-family: var(--font-mono); }
+.statrow { display: flex; flex-wrap: wrap; gap: 9px; }
+.stat { display: inline-flex; flex-direction: column; border: 1px solid var(--line); background: var(--bg-deep); border-radius: 10px; padding: 8px 12px; min-width: 92px; }
+.stat .k { font-size: 9.5px; font-weight: 700; letter-spacing: .09em; text-transform: uppercase; color: var(--faint); }
+.stat .v { font: 600 18px var(--font-mono); color: var(--fg-strong); margin-top: 2px; }
+.stat .v small { font-size: 11px; color: var(--muted); font-weight: 400; }
+.zipwrap { border: 1px dashed var(--line-strong); border-radius: 10px; padding: 11px 13px; font: 12px var(--font-mono); color: var(--muted); line-height: 1.55; overflow-wrap: anywhere; }
+.stills { display: grid; grid-template-columns: repeat(auto-fill, minmax(110px, 1fr)); gap: 9px; }
+.still { background: var(--image-bg); border: 1px solid var(--line); border-radius: 10px; aspect-ratio: 4 / 3; position: relative; display: grid; place-items: center; font: 10px var(--font-mono); color: var(--faint); overflow: hidden; }
+.still img { width: 100%; height: 100%; object-fit: cover; }
+.still .ll { position: absolute; top: 5px; left: 6px; font: 9px var(--font-mono); color: var(--label); background: var(--scrim); padding: 1px 5px; border-radius: 5px; }
+.still .lb { position: absolute; bottom: 5px; left: 6px; font: 9px var(--font-mono); color: var(--label); background: var(--scrim); padding: 1px 5px; border-radius: 5px; }
+.mchart line { stroke: var(--line); }
+
 /* ---- machine image overlay ---- */
 .mimg svg { width: 100%; height: auto; display: block; background: var(--danger-ink); border-radius: var(--radius); }
 .mk-rail { stroke: var(--trace-rc); stroke-width: 2; stroke-dasharray: 6 6; opacity: .45; }

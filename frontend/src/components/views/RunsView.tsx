@@ -82,16 +82,14 @@ export function RunsView({ status, gates, call, base }: { status: StatusPayload 
       </div>
 
       <div style={{ display: "grid", gridTemplateColumns: "262px minmax(0,1fr)", gap: 16, alignItems: "start" }}>
-        <div className="card" style={{ padding: 10 }}>
-          <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
-            {[...runs].reverse().map((r) => (
-              <button key={r.run} className={`runitem${r.run === sel ? " on" : ""}`} onClick={() => setSel(r.run)}>
-                <span className="rn">{r.run.slice(16) || r.run}</span>
-                <span className="rd">{label(r.run)} · {fmtSize(r.size_bytes)}{r.complete ? "" : " · INCOMPLETE"}</span>
-              </button>
-            ))}
-            {runs.length === 0 && <div className="hint">no runs yet</div>}
-          </div>
+        <div className="runlist">
+          {[...runs].reverse().map((r) => (
+            <button key={r.run} className={`runitem${r.run === sel ? " on" : ""}`} onClick={() => setSel(r.run)}>
+              <span className="rn">{r.run.slice(16) || r.run}</span>
+              <span className="rd">{label(r.run)} · {fmtSize(r.size_bytes)}{r.complete ? "" : " · incomplete"}</span>
+            </button>
+          ))}
+          {runs.length === 0 && <div className="hint">no runs yet</div>}
         </div>
 
         <div className="grid-gap">
@@ -101,25 +99,23 @@ export function RunsView({ status, gates, call, base }: { status: StatusPayload 
                 <h3>{selRun.run.slice(16) || selRun.run} · {label(selRun.run)}
                   <a className="cta primary sm" href={`${base}/api/recordings/${encodeURIComponent(selRun.run)}/archive.zip`} target="_blank" rel="noreferrer" style={{ textDecoration: "none", display: "inline-flex", alignItems: "center" }}>⬇ Download run (.zip)</a>
                 </h3>
-                <div className="chips" style={{ marginTop: 0 }}>
-                  <span className="chip">{selRun.complete ? "complete" : "incomplete"}</span>
-                  <span className="chip">{fmtSize(selRun.size_bytes)}</span>
-                  <span className="chip">{layers.length} layers captured</span>
-                  <span className="chip">{caps.length} stills</span>
+                <div className="statrow">
+                  <div className="stat"><span className="k">Status</span><span className="v">{selRun.complete ? "complete" : "incomplete"}</span></div>
+                  <div className="stat"><span className="k">Size</span><span className="v">{fmtSize(selRun.size_bytes)}</span></div>
+                  <div className="stat"><span className="k">Layers</span><span className="v">{layers.length}</span></div>
+                  <div className="stat"><span className="k">Stills</span><span className="v">{caps.length}</span></div>
                 </div>
-                <div className="hint" style={{ marginTop: 10, fontFamily: "var(--font-mono)", fontSize: 12 }}>
-                  {selRun.run}.zip → telemetry.csv · motion_profiles.csv · events.json · manifest.json · layers.csv · vision/ (stills + sidecars)
-                </div>
+                <div className="zipwrap">{selRun.run}.zip ⟶ vision/ (stills + .json sidecars) · telemetry.csv · motion_profiles.csv · events.json · manifest.json · layers.csv</div>
               </div>
 
               <div className="card">
                 <h3>science-cam stills<span className="hint" style={{ textTransform: "none", letterSpacing: 0, fontWeight: 400 }}>layer × stage</span></h3>
                 {caps.length === 0 ? <div className="hint" style={{ marginTop: 0 }}>no science-cam captures for this run</div> : (
-                  <div className="cam-grid">
+                  <div className="stills">
                     {caps.slice(0, 24).map((c) => (
-                      <div key={`${c.layer}-${c.stage}`} className="cam-still">
-                        <header>L{c.layer} · {STAGE_LABEL[c.stage] ?? c.stage}</header>
-                        <img className="cam-panel-img" src={`${base}${c.url}`} alt={`layer ${c.layer} ${c.stage}`} onError={(e) => { (e.currentTarget as HTMLImageElement).style.display = "none"; }} />
+                      <div key={`${c.layer}-${c.stage}`} className="still">
+                        <img src={`${base}${c.url}`} alt={`layer ${c.layer} ${c.stage}`} onError={(e) => { (e.currentTarget as HTMLImageElement).style.display = "none"; }} />
+                        <span className="ll">L{c.layer}</span><span className="lb">{STAGE_LABEL[c.stage] ?? c.stage}</span>
                       </div>
                     ))}
                   </div>
