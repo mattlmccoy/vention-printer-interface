@@ -119,6 +119,12 @@ export function RunsView({ status, gates, call, base }: { status: StatusPayload 
   const label = (run: string) => `${run.slice(0, 8)} ${run.slice(9, 11)}:${run.slice(11, 13)}`;
   const dispName = (r: RunMeta) => r.name || r.run.slice(16) || r.run;
   const saveMeta = () => call("save run name/notes", () => api.recordingSetMeta(sel, { name, notes }).then(() => { setDirty(false); return refresh(); }));
+  const delRun = () => {
+    if (!selRun) return;
+    if (window.confirm(`Delete run "${dispName(selRun)}"?\n\nThis permanently removes its stills, telemetry, motion profiles, and all data. This cannot be undone.`)) {
+      call("delete run", () => api.recordingDelete(sel).then(() => { setSel(""); setViewIdx(-1); return refresh(); }));
+    }
+  };
 
   return (
     <div className="view fixed-page runs-view">
@@ -145,7 +151,10 @@ export function RunsView({ status, gates, call, base }: { status: StatusPayload 
             <>
               <div className="card">
                 <h3>{dispName(selRun)} · {label(selRun.run)}
-                  <a className="cta primary sm" href={`${base}/api/recordings/${encodeURIComponent(selRun.run)}/archive.zip`} target="_blank" rel="noreferrer" style={{ textDecoration: "none", display: "inline-flex", alignItems: "center" }}>⬇ Download run (.zip)</a>
+                  <span className="btnrow" style={{ display: "inline-flex" }}>
+                    <a className="cta primary sm" href={`${base}/api/recordings/${encodeURIComponent(selRun.run)}/archive.zip`} target="_blank" rel="noreferrer" style={{ textDecoration: "none", display: "inline-flex", alignItems: "center" }}>⬇ Download run (.zip)</a>
+                    <button className="cta danger sm" disabled={!gates.reachable} onClick={delRun}>Delete run</button>
+                  </span>
                 </h3>
                 <div className="statrow">
                   <div className="stat"><span className="k">Status</span><span className="v">{selRun.complete ? "complete" : "incomplete"}</span></div>

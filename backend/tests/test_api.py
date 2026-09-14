@@ -156,6 +156,30 @@ def test_recording_flow(client: TestClient) -> None:
     assert client.get("/api/recordings/nope/telemetry.csv").status_code == 400
 
 
+def test_recording_delete_removes_the_run(client: TestClient) -> None:
+    connect(client, arm=False)
+    wait_tel(client)
+    client.post("/api/recording/start", json={"name": "to delete", "notes": ""})
+    time.sleep(0.2)
+    run = client.post("/api/recording/stop").json()["run"]
+    assert any(r["run"] == run for r in client.get("/api/recordings").json()["runs"])
+    assert client.delete(f"/api/recordings/{run}").status_code == 200
+    assert all(r["run"] != run for r in client.get("/api/recordings").json()["runs"])
+    # deleting again / an unknown run is a clean error, not a crash
+    assert client.delete("/api/recordings/nope").status_code in (400, 404)
+
+
+def test_recording_delete_refuses_active_run(client: TestClient) -> None:
+    connect(client, arm=False)
+    wait_tel(client)
+    client.post("/api/recording/start", json={"name": "live", "notes": ""})
+    run = client.get("/api/recording/status").json().get("run")
+    assert run is not None
+    # can't delete the run that's currently recording
+    assert client.delete(f"/api/recordings/{run}").status_code == 409
+    client.post("/api/recording/stop")
+
+
 def test_recording_archive_zip(client: TestClient) -> None:
     connect(client, arm=False)
     wait_tel(client)

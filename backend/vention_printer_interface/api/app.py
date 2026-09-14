@@ -12,6 +12,7 @@ import io
 import json
 import logging
 import platform
+import shutil
 import socket
 import time
 import zipfile
@@ -1253,6 +1254,19 @@ def create_app(
             media_type="application/zip",
             headers={"Content-Disposition": f'attachment; filename="{run}.zip"'},
         )
+
+    @app.delete("/api/recordings/{run}")
+    def recording_delete(run: str) -> dict[str, Any]:
+        """Delete a run directory (telemetry, stills, everything). Refuses the run currently being
+        recorded (409). Same run-name validation as the archive/file routes (no traversal)."""
+        run_dir = (root / run).resolve()
+        if run_dir.parent != root.resolve() or not run_dir.is_dir():
+            raise HTTPException(400, "bad run")
+        active = rec().current_run_dir
+        if active is not None and active.resolve() == run_dir:
+            raise HTTPException(409, "cannot delete the run that is currently recording")
+        shutil.rmtree(run_dir)
+        return {"run": run, "deleted": True}
 
     @app.put("/api/recordings/{run}/meta")
     def recording_meta(run: str, body: RecordingMetaBody) -> dict[str, str]:
