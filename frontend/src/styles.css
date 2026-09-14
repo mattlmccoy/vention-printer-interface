@@ -343,7 +343,9 @@ button.small { height: 34px; padding: 0 12px; border: 1px solid var(--line-contr
 /* A user-resized module keeps its explicit pixel size (width/height set inline) and never stretches. */
 .module.sized { flex: none; max-width: 100%; overflow: hidden; }
 .module .mh { display: flex; justify-content: space-between; align-items: center; padding: 10px 14px; border-bottom: 1px solid var(--line); font: 12px var(--font-mono); letter-spacing: .09em; text-transform: uppercase; color: var(--label); cursor: grab; user-select: none; }
-.module .mh .grip { opacity: .5; }
+/* de-clutter: the drag grip + resize handle are noise at rest — reveal only on hover */
+.module .mh .grip { opacity: 0; transition: opacity .12s; }
+.module:hover .mh .grip { opacity: .4; }
 .module .mh-r { display: inline-flex; align-items: center; gap: 8px; }
 .module .mh-reset { background: none; border: 0; color: var(--muted); cursor: pointer; font-size: 13px; padding: 0; line-height: 1; }
 .module .mh-reset:hover { color: var(--accent); }
@@ -351,8 +353,9 @@ button.small { height: 34px; padding: 0 12px; border: 1px solid var(--line-contr
 .module.over { outline: 2px solid var(--accent); outline-offset: -1px; }
 .module.dragging { opacity: .4; }
 .mresize { position: absolute; right: 0; bottom: 0; width: 16px; height: 16px; cursor: nwse-resize; touch-action: none; }
-.mresize::after { content: ""; position: absolute; right: 3px; bottom: 3px; width: 7px; height: 7px; border-right: 2px solid var(--line-control); border-bottom: 2px solid var(--line-control); }
-.mresize:hover::after { border-color: var(--accent); }
+.mresize::after { content: ""; position: absolute; right: 3px; bottom: 3px; width: 7px; height: 7px; border-right: 2px solid var(--line-control); border-bottom: 2px solid var(--line-control); opacity: 0; transition: opacity .12s; }
+.module:hover .mresize::after { opacity: 1; }
+.mresize:hover::after { border-color: var(--accent); opacity: 1; }
 .view.modules-view { display: block; overflow: auto; }
 .kv:first-child, .fields:first-child { margin-top: 0; }
 .xsec.tall { height: 520px; }
@@ -388,26 +391,31 @@ button.small { height: 34px; padding: 0 12px; border: 1px solid var(--line-contr
 .dock-head { display: flex; align-items: center; justify-content: space-between; padding: 10px 14px; border-bottom: 1px solid var(--line); position: sticky; top: 0; background: var(--bg-deep); z-index: 2; }
 .dock-title { font: 12px var(--font-mono); letter-spacing: .1em; text-transform: uppercase; color: var(--label); }
 .dock-body { padding: 14px; display: flex; flex-direction: column; gap: 14px; }
-.dock-machine { background: var(--image-bg); border: 1px solid var(--line); border-radius: var(--radius); padding: 8px; }
-.dock-machine .machine svg, .dock-machine svg { max-height: 40vh; min-height: 220px; }
-/* per-axis: name + live position + travel bar (fill = position within travel) */
-.dock-axes { display: flex; flex-direction: column; gap: 8px; }
-.dock-axis { border: 1px solid var(--line); border-radius: var(--radius); background: var(--panel); padding: 9px 12px; }
-.dock-axis .r1 { display: flex; align-items: baseline; justify-content: space-between; gap: 10px; }
-.dock-axis .k { display: flex; align-items: center; gap: 8px; font: 11px var(--font-mono); letter-spacing: .06em; text-transform: uppercase; color: var(--label); }
-.dock-axis .k i { width: 10px; height: 10px; border-radius: 2px; }
-.dock-axis .v { font: 600 21px var(--font-mono); color: var(--accent); white-space: nowrap; }
-.dock-axis .v.unref { color: var(--muted); opacity: .7; font-style: italic; font-size: 14px; }
-.dock-axis .v small { font-size: 11px; color: var(--muted); font-weight: 400; margin-left: 3px; }
-.dock-axis .trav { height: 6px; border-radius: 3px; background: var(--bg-deep); margin-top: 8px; position: relative; overflow: hidden; }
-.dock-axis .trav i { position: absolute; inset: 0 auto 0 0; opacity: .8; transition: width .3s; }
-.dock-axis .trav i.mv { opacity: 1; animation: vpi-glow 1s ease-in-out infinite; }
-.dock-status { display: flex; flex-wrap: wrap; gap: 6px; }
+/* LARGE machine schematic — the monitor's centrepiece (this was the real complaint: too small) */
+.dock-machine { background: var(--image-bg); border: 1px solid var(--line); border-radius: var(--radius); padding: 10px; }
+.dock-machine .machine { width: 100%; }
+.dock-machine .machine svg, .dock-machine svg { width: 100%; height: auto; max-height: 48vh; min-height: 300px; }
+/* compact 2x2 axis chips (position readouts kept modest — they were fine before) */
+.dock-axes { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
+.dock-chip { border: 1px solid var(--line); border-left: 3px solid var(--line-control); border-radius: var(--radius); background: var(--panel); padding: 7px 11px; }
+.dock-chip.ax-build { border-left-color: var(--trace-part); }
+.dock-chip.ax-feed { border-left-color: var(--trace-feed); }
+.dock-chip.ax-ph { border-left-color: var(--trace-ph); }
+.dock-chip.ax-rc { border-left-color: var(--trace-rc); }
+.dock-chip .k { display: block; font: 10px var(--font-mono); letter-spacing: .08em; text-transform: uppercase; color: var(--label); }
+.dock-chip .v { display: block; font: 600 17px var(--font-mono); color: var(--fg-strong); margin-top: 2px; white-space: nowrap; }
+.dock-chip .v.unref { color: var(--muted); }
+.dock-chip .v small { font-size: 10px; color: var(--muted); font-weight: 400; }
+.dock-mini { display: flex; gap: 8px; }
+.dock-mini .dm { flex: 1; border: 1px solid var(--line); border-radius: var(--radius); background: var(--panel); padding: 7px 11px; }
+.dock-mini .dm .k { font: 10px var(--font-mono); letter-spacing: .08em; text-transform: uppercase; color: var(--label); }
+.dock-mini .dm .v { display: block; font: 600 15px var(--font-mono); color: var(--fg-strong); margin-top: 2px; }
+.dock-mini .dm.hot .v, .dock-mini .dm.bad .v { color: var(--err); }
 .dock-print { border: 1px solid var(--accent); border-radius: var(--radius); background: var(--warn-bg); padding: 10px 12px; }
 .dock-print .dp-row { display: flex; align-items: baseline; justify-content: space-between; }
 .dock-print .dp-state { font: 700 14px var(--font-mono); letter-spacing: .06em; color: var(--accent); }
 .dock-print .dp-layer { font: 13px var(--font-mono); color: var(--fg); }
-.dock-actions { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; margin-top: 10px; }
+.dock-actions { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
 .dock-actions .cta { height: 42px; }
 .dock .cam-panel { margin: 0; }
 
