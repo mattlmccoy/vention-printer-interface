@@ -1,4 +1,5 @@
 import io
+import json
 import time
 import zipfile
 from collections.abc import Iterator
@@ -179,6 +180,55 @@ def test_recording_archive_zip(client: TestClient) -> None:
     } <= names
     # traversal / unknown run is rejected the same way the run-file route rejects it.
     assert client.get("/api/recordings/nope/archive.zip").status_code == 400
+
+
+def test_recording_meta_update_roundtrips(client: TestClient) -> None:
+    connect(client, arm=False)
+    wait_tel(client)
+    client.post("/api/recording/start", json={"name": "orig", "notes": "orig notes"})
+    time.sleep(0.2)
+    run = client.post("/api/recording/stop").json()["run"]
+
+    r = client.put(f"/api/recordings/{run}/meta", json={"name": "renamed", "notes": "new notes"})
+    assert r.status_code == 200
+    assert r.json() == {"name": "renamed", "notes": "new notes"}
+
+    # The edit round-trips through the enriched recordings list.
+    item = next(x for x in client.get("/api/recordings").json()["runs"] if x["run"] == run)
+    assert item["name"] == "renamed" and item["notes"] == "new notes"
+
+
+def test_recording_meta_partial_preserves_other_keys(client: TestClient) -> None:
+    connect(client, arm=False)
+    wait_tel(client)
+    client.post("/api/recording/start", json={"name": "orig", "notes": "n"})
+    time.sleep(0.2)
+    run = client.post("/api/recording/stop").json()["run"]
+    root: Path = client.app.state.experiments_root  # type: ignore[attr-defined]
+    before = json.loads((root / run / "metadata.json").read_text())
+
+    # Only notes provided: name preserved, and unrelated metadata untouched.
+    r = client.put(f"/api/recordings/{run}/meta", json={"notes": "only notes"})
+    assert r.status_code == 200
+    assert r.json() == {"name": "orig", "notes": "only notes"}
+    after = json.loads((root / run / "metadata.json").read_text())
+    assert after["software"] == before["software"]
+    assert after["format_version"] == before["format_version"]
+    assert after["experiment"]["backend"] == before["experiment"]["backend"]
+
+
+def test_recording_meta_unknown_run_404(client: TestClient) -> None:
+    assert client.put("/api/recordings/nope/meta", json={"name": "x"}).status_code == 404
+
+
+def test_resolve_run_dir_rejects_traversal(tmp_path: Path) -> None:
+    from fastapi import HTTPException
+
+    from vention_printer_interface.api.app import _resolve_run_dir
+
+    with pytest.raises(HTTPException) as exc:
+        _resolve_run_dir(tmp_path, "..")
+    assert exc.value.status_code == 400
 
 
 def test_estop_reports_502_when_controller_unreachable(client: TestClient) -> None:

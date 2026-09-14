@@ -9,6 +9,7 @@ from __future__ import annotations
 import asyncio
 import dataclasses
 import io
+import json
 import logging
 import platform
 import socket
@@ -229,6 +230,13 @@ class RecordingStartBody(BaseModel):
     notes: str = ""
 
 
+class RecordingMetaBody(BaseModel):
+    """PUT /api/recordings/{run}/meta body: edit a run's name and/or notes (both optional)."""
+
+    name: str | None = None
+    notes: str | None = None
+
+
 class PrintStartBody(BaseModel):
     dry_run: bool = False
     single_step: bool = False
@@ -395,6 +403,21 @@ def _tcp_open(ip: str, port: int, timeout_s: float = 0.5) -> bool:
             return True
     except OSError:
         return False
+
+
+def _resolve_run_dir(root: Path, run: str) -> Path:
+    """Validate a recordings run name and return its directory.
+
+    Uses the same traversal guard as the other recordings routes (the resolved directory must sit
+    directly under ``root``): a traversal / bad name -> 400, an otherwise-valid but nonexistent
+    run -> 404.
+    """
+    run_dir = (root / run).resolve()
+    if run_dir.parent != root.resolve():
+        raise HTTPException(400, "bad run")
+    if not run_dir.is_dir():
+        raise HTTPException(404, "unknown run")
+    return run_dir
 
 
 def _fresh_axis_motion() -> dict[int, dict[str, float | None]]:
@@ -1198,6 +1221,30 @@ def create_app(
             media_type="application/zip",
             headers={"Content-Disposition": f'attachment; filename="{run}.zip"'},
         )
+
+    @app.put("/api/recordings/{run}/meta")
+    def recording_meta(run: str, body: RecordingMetaBody) -> dict[str, str]:
+        """Edit a run's human-readable name/notes in its metadata.json (all other keys preserved).
+
+        Writes the same ``experiment.name`` / ``experiment.notes`` keys the recorder writes at
+        start and the recordings list reads back, so an edit round-trips through the list.
+        """
+        run_dir = _resolve_run_dir(root, run)
+        meta_path = run_dir / "metadata.json"
+        try:
+            loaded = json.loads(meta_path.read_text())
+        except (OSError, ValueError):
+            loaded = {}
+        meta: dict[str, Any] = loaded if isinstance(loaded, dict) else {}
+        raw_experiment = meta.get("experiment")
+        experiment: dict[str, Any] = raw_experiment if isinstance(raw_experiment, dict) else {}
+        meta["experiment"] = experiment
+        if body.name is not None:
+            experiment["name"] = body.name
+        if body.notes is not None:
+            experiment["notes"] = body.notes
+        meta_path.write_text(json.dumps(meta, indent=2, default=str))
+        return {"name": experiment.get("name", ""), "notes": experiment.get("notes", "")}
 
     @app.get("/api/recordings/{run}/{name}")
     def recording_file(run: str, name: str) -> FileResponse:
