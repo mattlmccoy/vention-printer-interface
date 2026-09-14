@@ -282,11 +282,12 @@ def test_camera_access_state_no_devices_when_enumeration_is_empty():
     assert camera_access_state([]) == "no_devices"
 
 
-def test_camera_access_state_treats_missing_has_frame_key_as_no_frame():
-    """An enumerator that hasn't been upgraded to report `has_frame` must not silently read as
-    healthy -- a missing key is treated the same as `False` (data-contract-verification: unknown
-    must never render as verified-good)."""
-    assert camera_access_state([{"index": 0, "stable_id": "usb-A"}]) == "denied"
+def test_camera_access_state_treats_missing_has_frame_key_as_unknown_not_ok():
+    """A device identified from metadata (no frame probe) must not read as healthy -- it reads as
+    "unknown", never "ok" (data-contract-verification: unknown must never render as verified-good).
+    A real probe that opened the device but got no frame is still "denied"."""
+    assert camera_access_state([{"index": 0, "stable_id": "usb-A"}]) == "unknown"
+    assert camera_access_state([{"index": 0, "stable_id": "usb-A", "has_frame": False, "probed": True}]) == "denied"
 
 
 # ---- enumerate_devices has_frame probe (stubbed cv2.VideoCapture, no real hardware) -----------
@@ -313,9 +314,10 @@ def test_enumerate_devices_marks_has_frame_true_when_read_succeeds(monkeypatch):
     import cv2
 
     monkeypatch.setattr(cv2, "VideoCapture", lambda *a, **k: _StubVideoCapture(read_ok=True))
-    devices = enumerate_devices(max_index=1)
+    devices = enumerate_devices(max_index=1, probe=True)  # explicit access probe (opens the device)
     assert len(devices) == 1
     assert devices[0]["has_frame"] is True
+    assert devices[0]["probed"] is True
 
 
 def test_enumerate_devices_marks_has_frame_false_when_opened_but_read_fails(monkeypatch):
@@ -323,6 +325,36 @@ def test_enumerate_devices_marks_has_frame_false_when_opened_but_read_fails(monk
     import cv2
 
     monkeypatch.setattr(cv2, "VideoCapture", lambda *a, **k: _StubVideoCapture(read_ok=False))
-    devices = enumerate_devices(max_index=1)
+    devices = enumerate_devices(max_index=1, probe=True)  # explicit access probe (opens the device)
     assert len(devices) == 1
     assert devices[0]["has_frame"] is False
+
+
+# --- metadata-based identification (no camera opened) -----------------------------------------
+
+def test_parse_macos_cameras_from_real_system_profiler():
+    # Captured from a real `system_profiler SPCameraDataType -json` on 2026-09-14 (3 cameras).
+    from vention_printer_interface.vision.cameras import _parse_macos_cameras
+    data = {"SPCameraDataType": [
+        {"_name": "FaceTime HD Camera", "spcamera_unique-id": "3F45E80A-0176-46F7-B185-BB9E2C0E82E3"},
+        {"_name": "HD Pro Webcam C920", "spcamera_model-id": "0x110000046d08e5"},
+        {"_name": "mattmccoy-iphone Camera", "spcamera_unique-id": "0075DA72-2CAB-4BE3-9FCA-8C9100000001"},
+    ]}
+    devs = _parse_macos_cameras(data)
+    assert [d["name"] for d in devs] == ["FaceTime HD Camera", "HD Pro Webcam C920", "mattmccoy-iphone Camera"]
+    assert [d["index"] for d in devs] == [0, 1, 2]
+    # stable id uses the USB unique/model id (survives reboot/reorder), NOT the bare index
+    assert devs[1]["stable_id"] == "macos-uid:0x110000046d08e5"
+    # identification does NOT open the camera -> frame state is unknown, not a false "denied"
+    assert all(d["has_frame"] is None and d["probed"] is False for d in devs)
+
+
+def test_camera_access_state_unknown_when_unprobed():
+    from vention_printer_interface.vision.cameras import camera_access_state
+    # devices identified via metadata but never opened -> "unknown", not "denied"
+    devs = [{"index": 0, "name": "C920", "stable_id": "macos-uid:x", "has_frame": None, "probed": False}]
+    assert camera_access_state(devs) == "unknown"
+    # a real probe that got no frame is still "denied"
+    assert camera_access_state([{"has_frame": False, "probed": True}]) == "denied"
+    assert camera_access_state([{"has_frame": True, "probed": True}]) == "ok"
+    assert camera_access_state([]) == "no_devices"

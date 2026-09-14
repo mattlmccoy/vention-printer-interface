@@ -50,8 +50,10 @@ export interface VisionCameras { overview: VisionCameraSpec; science: VisionCame
 // this device actually returned a frame (null when the enumerator didn't report it).
 export interface VisionDevice { index: number; stable_id: string | null; name: string | null; role: string | null; preview_url: string | null; has_frame: boolean | null }
 // Overall camera-permission signal aggregated across every enumerated device — see backend
-// vention_printer_interface/vision/cameras.py's camera_access_state (ok/denied/no_devices).
-export interface VisionDevicesResponse { devices: VisionDevice[]; camera_access: "ok" | "denied" | "no_devices" }
+// vention_printer_interface/vision/cameras.py's camera_access_state. "unknown" = cameras were
+// IDENTIFIED from OS metadata (by name/USB id) but never opened, so access isn't verified yet —
+// NOT an error; the devices are still listable/assignable. ok/denied/no_devices as before.
+export interface VisionDevicesResponse { devices: VisionDevice[]; camera_access: "ok" | "unknown" | "denied" | "no_devices" }
 // GET/PUT /api/vision/roles body/response shape: a stable_id -> role ("overview"/"science") map.
 export interface RunMeta { run: string; complete: boolean; size_bytes: number; name?: string; notes?: string; started_at?: string | number | null; layer_count?: number | null; duration_s?: number | null }
 export type VisionRoleMap = Record<string, string>;

@@ -107,7 +107,7 @@ export function dismissQuickStart(status: VisionStatusLike, storage: Storage | n
 
 /** `camera_access` as reported by `GET /api/vision/devices` (see backend
  *  vention_printer_interface/vision/cameras.py's `camera_access_state`). */
-export type CameraAccessStatus = "ok" | "denied" | "no_devices";
+export type CameraAccessStatus = "ok" | "unknown" | "denied" | "no_devices";
 
 /** User-facing message for a camera-access state, shown in place of an empty/silent device list
  *  so a macOS Privacy & Security permission block reads as an actionable message instead of a
@@ -119,6 +119,9 @@ export function cameraAccessMessage(status: CameraAccessStatus): string {
       return "Camera permission not granted — enable it in System Settings → Privacy & Security → Camera, then rescan";
     case "no_devices":
       return "No cameras detected — check the USB connection, then rescan";
+    case "unknown":
+      // Devices identified from OS metadata but not opened — access verified when a camera is used.
+      return "";
     case "ok":
       return "";
   }
