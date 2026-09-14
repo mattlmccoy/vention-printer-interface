@@ -25,9 +25,28 @@ details > .body { margin-top: 12px; }
 .console { display: grid; grid-template-rows: 56px auto minmax(0, 1fr) 30px; height: 100vh; min-height: 640px; }
 .top { display: flex; align-items: center; gap: 24px; padding: 0 24px; background: var(--bg-deep); border-bottom: 1px solid var(--line); min-width: 0; }
 .wordmark { font-family: var(--font-mono); font-weight: 700; letter-spacing: .14em; font-size: 12px; color: var(--fg-strong); white-space: nowrap; }
-.tabs { display: flex; gap: 4px; height: 100%; }
-.tabs button { background: none; border: 0; border-bottom: 2px solid transparent; color: var(--muted); padding: 0 14px; font: 13px/56px var(--font-mono); letter-spacing: .08em; text-transform: uppercase; cursor: pointer; }
-.tabs button.active { color: var(--fg-strong); border-bottom-color: var(--accent); }
+.tabs { display: flex; align-items: center; gap: 12px; height: 100%; }
+/* grouped tabs: the BUILD sequence (Job·Priming·Print) sits in an accent-capable pill group; the
+   rest (Control·Runs·Cameras) sit in a neutral group. Keeps the app's mono/uppercase family. */
+.tabgroup { display: flex; align-items: center; gap: 2px; height: 34px; padding: 0 4px; border: 1px solid var(--line-strong); border-radius: 8px; background: var(--bg); }
+.tabgroup .tglabel { font: 10px var(--font-mono); letter-spacing: .12em; color: var(--faint); padding: 0 8px 0 6px; text-transform: uppercase; }
+.tabs .bt { background: none; border: 0; color: var(--muted); padding: 0 12px; height: 26px; border-radius: 6px; font: 12px var(--font-mono); letter-spacing: .08em; text-transform: uppercase; cursor: pointer; }
+.tabs .bt:hover { color: var(--fg); }
+.tabs .bt.active { color: var(--fg-strong); background: var(--panel); }
+.tabgroup.build .bt.active { background: var(--accent); color: var(--accent-ink); }
+
+/* toggle switch — position IS the state (replaces confusing "checkbox + ON/OFF" text) */
+.toggle { display: inline-flex; align-items: center; gap: 10px; font-size: 14px; color: var(--fg); cursor: pointer; user-select: none; }
+.toggle.disabled { opacity: .4; cursor: default; }
+.toggle .tg-switch { position: relative; width: 42px; height: 22px; border-radius: 12px; border: 1px solid var(--line-control); background: var(--bg-deep); padding: 0; cursor: inherit; flex: none; transition: background .15s, border-color .15s; }
+.toggle .tg-knob { position: absolute; top: 2px; left: 2px; width: 16px; height: 16px; border-radius: 50%; background: var(--fg); transition: left .15s, background .15s; }
+.toggle.on .tg-switch { background: var(--accent); border-color: var(--accent); }
+.toggle.on .tg-knob { left: 22px; background: var(--accent-ink); }
+.toggle .tg-state { font: 12px var(--font-mono); text-transform: uppercase; letter-spacing: .06em; color: var(--muted); min-width: 24px; }
+.toggle.on .tg-state { color: var(--accent); }
+.toggle.danger.on .tg-switch { background: var(--err-btn); border-color: var(--err-btn); }
+.toggle.danger.on .tg-state { color: var(--err); }
+.wordmark .sub { color: var(--faint); font-weight: 400; letter-spacing: .04em; margin-left: 8px; }
 .pill { display: inline-flex; align-items: center; gap: 8px; padding: 5px 11px; border-radius: 14px; font: 12px var(--font-mono); border: 1px solid var(--line-strong); color: var(--fg); white-space: nowrap; background: transparent; cursor: pointer; }
 .pill.warn { border-color: var(--warn); color: var(--warn); }
 .pill.err { border-color: var(--err); color: var(--err); }

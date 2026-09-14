@@ -2,7 +2,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { api, operatorBase, setOperatorBase, SITE_MODE, type VisionStatus } from "./lib/api.ts";
 import { formatError, gates as computeGates } from "./lib/format.ts";
 import { checkHandshake, saveOperatorBase, UI_API_VERSION, wsUrl } from "./lib/operator.ts";
-import { clampSize, loadConsole, saveConsole, VIEWS, type ModuleSize, type View } from "./lib/console.ts";
+import { clampSize, loadConsole, saveConsole, type ModuleSize, type View } from "./lib/console.ts";
 import { connectOptions, type Candidate } from "./lib/connect.ts";
 import { dismissQuickStart, shouldShowQuickStart } from "./lib/vision.ts";
 import type { StatusPayload } from "./lib/telemetry.ts";
@@ -125,8 +125,16 @@ export function App() {
     <ErrorBoundary>
       <div className="console">
         <header className="top">
-          <span className="wordmark">BINDER JET CONSOLE</span>
-          <nav className="tabs">{VIEWS.map((v) => <button key={v} className={ui.view === v ? "active" : ""} onClick={() => setView(v)}>{v}</button>)}</nav>
+          <span className="wordmark">RFAM BINDER JET<span className="sub">MM2 · MetPrint</span></span>
+          <nav className="tabs">
+            <div className="tabgroup build">
+              <span className="tglabel">BUILD</span>
+              {(["job", "priming", "print"] as View[]).map((v) => <button key={v} className={`bt${ui.view === v ? " active" : ""}`} onClick={() => setView(v)}>{v}</button>)}
+            </div>
+            <div className="tabgroup">
+              {(["control", "runs", "cameras"] as View[]).map((v) => <button key={v} className={`bt${ui.view === v ? " active" : ""}`} onClick={() => setView(v)}>{v}</button>)}
+            </div>
+          </nav>
           <button className={`pill${g.faulted ? " err" : ""}`} onClick={() => setShowConnect((s) => !s)} title="connection">
             <span className={`dot ${dotCls}`} />{pillLabel}
             {g.connected && !g.armed && !g.faulted && <svg className="lock" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><rect x="4" y="10" width="16" height="11" rx="2" /><path d="M8 10V7a4 4 0 0 1 8 0v3" /></svg>}

@@ -3,6 +3,7 @@ import { api, type PrintSettingsPayload } from "../lib/api.ts";
 import type { Gates } from "../lib/format.ts";
 import type { Call } from "./views/types.ts";
 import { NumberField } from "./NumberField.tsx";
+import { Toggle } from "./Toggle.tsx";
 
 /** Edit the print routine (thin precoat, printing multi-pass, postcoat) plus the heater-exposure
  *  inputs, and show the backend-computed IPA exposure readout. The thick precoats live in the
@@ -115,7 +116,7 @@ export function RoutinePanel({ gates, call }: { gates: Gates; call: Call }) {
           <span className="seg" style={{ marginLeft: 8 }}>{([["every_pass", "every pass"], ["per_layer", "per layer"], ["every_n_layers", "every N"]] as const).map(([m, lbl]) => <button key={m} type="button" className={`small${d.purge_mode === m ? " on" : ""}`} aria-pressed={d.purge_mode === m} disabled={!ok} onClick={() => setD({ purge_mode: m })}>{lbl}</button>)}</span>
           {d.purge_mode === "every_n_layers" && <> N=<NumberField value={d.purge_every_n_layers} disabled={!ok} style={{ width: 48 }} onChange={(v) => setD({ purge_every_n_layers: v })} /></>}</label>
         <span>pre-heater drop</span><span className="row"><NumberField step="0.1" value={d.pre_heater_drop_mm} disabled={!ok} onChange={(v) => setD({ pre_heater_drop_mm: v })} /> mm</span>
-        <span>postcoat</span><label className="row"><input type="checkbox" checked={d.postcoat_enabled} disabled={!ok} onChange={(e) => setD({ postcoat_enabled: e.target.checked })} /> enabled</label>
+        <span>postcoat</span><span className="row"><Toggle checked={d.postcoat_enabled} disabled={!ok} onChange={(v) => setD({ postcoat_enabled: v })} /></span>
         <span>target carbon</span><span className="row"><NumberField step="0.01" value={d.target_carbon_wt} disabled={!ok} onChange={(v) => setD({ target_carbon_wt: v })} /> wt</span>
         <span>part area</span><span className="row"><NumberField value={d.part_area_mm2} disabled={!ok} onChange={(v) => setD({ part_area_mm2: v })} /> mm²</span>
         <span>heater power</span><span className="row"><NumberField value={d.heater_section_power_w} disabled={!ok} onChange={(v) => setD({ heater_section_power_w: v })} /> W</span>

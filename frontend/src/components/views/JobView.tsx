@@ -7,6 +7,7 @@ import type { JobSnap, StatusPayload } from "../../lib/telemetry.ts";
 import { CrossSection } from "../CrossSection.tsx";
 import { ModuleGrid, type Module } from "../Modules.tsx";
 import { NumberField } from "../NumberField.tsx";
+import { Toggle } from "../Toggle.tsx";
 import type { Call } from "./types.ts";
 
 type JobRow = Omit<JobSnap, "current_layer">;
@@ -104,13 +105,13 @@ export function JobView({ status, gates, call, order, sizes, onOrder, onResize, 
         </div>
         <div className="fields" style={{ marginTop: 16, maxWidth: "none" }}>
           <span>precoat</span><span className="row"><NumberField value={plan.thin_precoat.n_layers} disabled={running} onChange={(v) => editPh("thin_precoat", { n_layers: v })} style={{ width: 56 }} /> × <NumberField step="0.05" value={plan.thin_precoat.layer_thickness_mm} disabled={running} onChange={(v) => editPh("thin_precoat", { layer_thickness_mm: v })} style={{ width: 72 }} /> mm <span className="hint">(thin precoat — thick precoats now live in Priming)</span></span>
-          <span>postcoat</span><label className="row"><input type="checkbox" checked={plan.postcoat_enabled} disabled={running} onChange={(e) => edit({ postcoat_enabled: e.target.checked })} /> <b>{plan.postcoat_enabled ? "ON" : "OFF"}</b>{plan.postcoat_enabled && <> · <input type="number" step="0.5" value={post} disabled={running} onChange={(e) => editPh("postcoat", { layer_thickness_mm: num(e.target.value, post), n_layers: 1 })} style={{ width: 72 }} /> mm</>}</label>
+          <span>postcoat</span><label className="row"><Toggle checked={plan.postcoat_enabled} disabled={running} onChange={(v) => edit({ postcoat_enabled: v })} />{plan.postcoat_enabled && <> · <input type="number" step="0.5" value={post} disabled={running} onChange={(e) => editPh("postcoat", { layer_thickness_mm: num(e.target.value, post), n_layers: 1 })} style={{ width: 72 }} /> mm</>}</label>
           <span>layer height</span><label className="row">
             <span className="seg">{LAYER_HEIGHTS.map((h) => <button key={h} type="button" className={`small${Math.abs(plan.printing.layer_thickness_mm - h) < 1e-6 ? " on" : ""}`} aria-pressed={Math.abs(plan.printing.layer_thickness_mm - h) < 1e-6} disabled={running} onClick={() => editPh("printing", { layer_thickness_mm: h })}>{h}</button>)}</span>
             <input type="number" step="0.05" value={plan.printing.layer_thickness_mm} disabled={running} onChange={(e) => editPh("printing", { layer_thickness_mm: num(e.target.value, plan.printing.layer_thickness_mm) })} style={{ width: 72 }} /> mm{job ? <span className="hint" style={{ marginLeft: 6 }}>slicer: {job.layer_height_mm} mm</span> : null}
           </label>
           {!job && <><span>print layers</span><input type="number" value={plan.printing.n_layers} disabled={running} onChange={(e) => editPh("printing", { n_layers: num(e.target.value, plan.printing.n_layers) })} /></>}
-          <span>heater</span><label className="row"><input type="checkbox" checked={plan.heater_enabled} disabled={running} onChange={(e) => edit({ heater_enabled: e.target.checked })} /> <b>{plan.heater_enabled ? "ON" : "OFF"}</b> — fire the IR heater each printing layer, <input type="number" value={plan.n_heater_passes} disabled={running || !plan.heater_enabled} onChange={(e) => edit({ n_heater_passes: num(e.target.value, plan.n_heater_passes) })} style={{ width: 56 }} /> pass(es)</label>
+          <span>heater</span><label className="row"><Toggle checked={plan.heater_enabled} disabled={running} onChange={(v) => edit({ heater_enabled: v })} /> <span className="hint">fire the IR heater each printing layer,</span> <input type="number" value={plan.n_heater_passes} disabled={running || !plan.heater_enabled} onChange={(e) => edit({ n_heater_passes: num(e.target.value, plan.n_heater_passes) })} style={{ width: 56 }} /> pass(es)</label>
         </div>
         {reasons.length > 0 ? <div className="errline">{reasons.join(" · ")}</div> : <div className="okline">printable</div>}
       </>
@@ -120,7 +121,7 @@ export function JobView({ status, gates, call, order, sizes, onOrder, onResize, 
         <div className="est" style={{ gridTemplateColumns: "1fr 1fr" }}><div><div className="l">about</div><div className="v" style={{ fontSize: 26 }}>{fmtSecs(estimateDurationS(plan))}</div></div><div><div className="l">layers</div><div className="v" style={{ fontSize: 26 }}>{layers}</div></div></div>
         <div className="chk" style={{ margin: "16px 0" }}>
           <label><input type="checkbox" checked={dry} onChange={(e) => setDry(e.target.checked)} /> dry run (motion only — no heat / no jet)</label>
-          <label title="Fires the IR heater during the printing layers (after the precoats). Forced off in a dry run."><input type="checkbox" checked={plan.heater_enabled && !dry} disabled={dry || running} onChange={(e) => edit({ heater_enabled: e.target.checked })} /> <b>heater {plan.heater_enabled && !dry ? "ON" : "OFF"}</b>{dry ? " (off in dry run)" : ""}</label>
+          <label title="Fires the IR heater during the printing layers (after the precoats). Forced off in a dry run."><Toggle label="heater" danger checked={plan.heater_enabled && !dry} disabled={dry || running} onChange={(v) => edit({ heater_enabled: v })} />{dry ? <span className="hint">&nbsp;(off in dry run)</span> : null}</label>
           <label><input type="checkbox" checked={single} onChange={(e) => setSingle(e.target.checked)} /> single-step</label>
           <label><input type="checkbox" checked={status?.auto_log ?? true} onChange={(e) => call("auto-log", () => api.setAutoLog(e.target.checked))} /> record</label>
         </div>
