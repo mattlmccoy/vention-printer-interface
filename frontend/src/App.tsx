@@ -272,7 +272,7 @@ export function App() {
             <div className="viewhost">
               {ui.view === "print" && <PrintView status={status} gates={g} call={call} onJob={() => setView("job")} />}
               {ui.view === "job" && <JobView status={status} gates={g} call={call} order={ui.order.job} sizes={ui.sizes.job} onOrder={setOrder("job")} onResize={setResize("job")} onStarted={() => setView("print")} />}
-              {ui.view === "control" && <ControlView status={status} gates={g} call={call} gantryStep={ui.gantryStep} pistonStep={ui.pistonStep} setGantryStep={(s) => setUi((u) => ({ ...u, gantryStep: s }))} setPistonStep={(s) => setUi((u) => ({ ...u, pistonStep: s }))} order={ui.order.control} sizes={ui.sizes.control} onOrder={setOrder("control")} onResize={setResize("control")} />}
+              {ui.view === "control" && <ControlView status={status} gates={g} call={call} gantryStep={ui.gantryStep} pistonStep={ui.pistonStep} setGantryStep={(s) => setUi((u) => ({ ...u, gantryStep: s }))} setPistonStep={(s) => setUi((u) => ({ ...u, pistonStep: s }))} />}
               {ui.view === "priming" && <PrimingView status={status} gates={g} call={call} base={base} onJob={() => setView("job")} onPrint={() => setView("print")} />}
               {ui.view === "runs" && <RunsView status={status} gates={g} call={call} order={ui.order.runs} sizes={ui.sizes.runs} onOrder={setOrder("runs")} onResize={setResize("runs")} />}
               {ui.view === "cameras" && <CamerasView status={status} gates={g} call={call} base={base} order={ui.order.cameras} sizes={ui.sizes.cameras} onOrder={setOrder("cameras")} onResize={setResize("cameras")} onOpenQuickStart={() => setQuickStartOpen(true)} />}
