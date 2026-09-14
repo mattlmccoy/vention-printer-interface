@@ -267,7 +267,7 @@ export function App() {
               {ui.view === "job" && <JobView status={status} gates={g} call={call} onStarted={() => setView("print")} />}
               {ui.view === "control" && <ControlView status={status} gates={g} call={call} gantryStep={ui.gantryStep} pistonStep={ui.pistonStep} setGantryStep={(s) => setUi((u) => ({ ...u, gantryStep: s }))} setPistonStep={(s) => setUi((u) => ({ ...u, pistonStep: s }))} />}
               {ui.view === "priming" && <PrimingView status={status} gates={g} call={call} onJob={() => setView("job")} onPrint={() => setView("print")} />}
-              {ui.view === "runs" && <RunsView status={status} gates={g} call={call} />}
+              {ui.view === "runs" && <RunsView status={status} gates={g} call={call} base={base} />}
               {ui.view === "cameras" && <CamerasView status={status} gates={g} call={call} base={base} onOpenQuickStart={() => setQuickStartOpen(true)} />}
             </div>
             <aside className={`dock${dock.open ? "" : " collapsed"}`} style={{ "--dock-w": `${dock.w}px` } as CSSProperties}>

@@ -144,7 +144,10 @@ details > .body { margin-top: 12px; }
 .kv .good { color: var(--live); }
 .actions { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; margin-top: 26px; }
 .actions.one { grid-template-columns: 1fr; }
-button.cta { height: 52px; border: 1px solid var(--line-control); background: var(--panel); color: var(--fg-strong); font: 600 14px var(--font-mono); letter-spacing: .08em; border-radius: var(--radius); cursor: pointer; }
+button.cta { height: 52px; padding: 0 20px; border: 1px solid var(--line-control); background: var(--panel); color: var(--fg-strong); font: 600 14px var(--font-mono); letter-spacing: .04em; border-radius: var(--radius); cursor: pointer; }
+/* buttons in a flex row keep their content width + padding and wrap instead of squishing */
+.btnrow { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }
+.btnrow > button, .btnrow > a { flex: 0 0 auto; }
 button.cta.primary { background: var(--accent); color: var(--accent-ink); border-color: var(--accent); }
 button.cta.danger { border-color: var(--err); color: var(--err); }
 button.small { height: 34px; padding: 0 12px; border: 1px solid var(--line-control); background: var(--panel); color: var(--fg); font: 13px var(--font-mono); border-radius: var(--radius); cursor: pointer; }

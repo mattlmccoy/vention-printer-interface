@@ -171,31 +171,46 @@ function CaptureBrowser({ base }: { base: string }) {
 /** Per-camera settings (resolution/fps/format/exposure), persisted per role via the backend and
  *  applied the next time each camera opens. Fields left blank fall back to the built-in/config
  *  default (never faked — the current overrides come from GET /api/vision/settings). */
+type CamForm = { resolution: string; fps: string; format: string; exposure: string };
+const emptyCamForm = (): CamForm => ({ resolution: "", fps: "", format: "", exposure: "" });
+function toCamForm(cs?: CameraSettings): CamForm {
+  const res = Array.isArray(cs?.resolution) ? `${cs!.resolution[0]}x${cs!.resolution[1]}` : (typeof cs?.resolution === "string" ? cs.resolution : "");
+  return { resolution: res, fps: cs?.fps != null ? String(cs.fps) : "", format: cs?.format ?? "", exposure: cs?.exposure != null ? String(cs.exposure) : "" };
+}
 function CameraSettingsStep({ call, reachable }: { call: Call; reachable: boolean }) {
-  const [settings, setSettings] = useState<Record<string, CameraSettings>>({ overview: {}, science: {} });
+  const [form, setForm] = useState<Record<string, CamForm>>({ overview: emptyCamForm(), science: emptyCamForm() });
   const [dirty, setDirty] = useState(false);
   useEffect(() => {
     let live = true;
-    api.visionGetSettings().then((r) => { if (live && r?.settings) setSettings({ overview: {}, science: {}, ...r.settings }); }).catch(() => undefined);
+    api.visionGetSettings().then((r) => { if (live && r) setForm({ overview: toCamForm(r.overview), science: toCamForm(r.science) }); }).catch(() => undefined);
     return () => { live = false; };
   }, []);
-  const edit = (role: string, patch: Partial<CameraSettings>) => { setSettings((s) => ({ ...s, [role]: { ...s[role], ...patch } })); setDirty(true); };
-  const save = () => call("save camera settings", () => api.visionSetSettings(settings).then((r) => { if (r?.settings) setSettings({ overview: {}, science: {}, ...r.settings }); setDirty(false); }));
-  const iw = { width: 118 } as const;
-  const roleCard = (role: string, title: string, resOpts: string[], fmtOpts: string[], fps: string) => (
+  const edit = (role: string, patch: Partial<CamForm>) => { setForm((f) => ({ ...f, [role]: { ...f[role], ...patch } })); setDirty(true); };
+  const save = () => {
+    const conv = (f: CamForm): CameraSettings => ({
+      resolution: f.resolution || undefined,
+      fps: f.fps === "" ? undefined : Number(f.fps),
+      format: f.format || undefined,
+      exposure: f.exposure === "" ? undefined : Number(f.exposure),
+    });
+    return call("save camera settings", () => api.visionSetSettings({ overview: conv(form.overview), science: conv(form.science) })
+      .then((r) => { if (r) setForm({ overview: toCamForm(r.overview), science: toCamForm(r.science) }); setDirty(false); }));
+  };
+  const iw = { width: 128 } as const;
+  const roleCard = (role: string, title: string, resOpts: [string, string][], fmtOpts: string[], fpsPh: string) => (
     <div className="rp-card">
       <h4>{title}</h4>
-      <div className="rp-row"><span>resolution</span><span className="rv"><select style={iw} value={settings[role]?.resolution ?? ""} onChange={(e) => edit(role, { resolution: e.target.value || undefined })}><option value="">default</option>{resOpts.map((o) => <option key={o} value={o}>{o}</option>)}</select></span></div>
-      <div className="rp-row"><span>fps</span><span className="rv"><input type="text" style={iw} placeholder={fps} value={settings[role]?.fps ?? ""} onChange={(e) => edit(role, { fps: e.target.value === "" ? undefined : Number(e.target.value) })} /></span></div>
-      <div className="rp-row"><span>format</span><span className="rv"><select style={iw} value={settings[role]?.format ?? ""} onChange={(e) => edit(role, { format: e.target.value || undefined })}><option value="">default</option>{fmtOpts.map((o) => <option key={o} value={o}>{o}</option>)}</select></span></div>
-      <div className="rp-row"><span>exposure</span><span className="rv"><input type="text" style={iw} placeholder="auto" value={settings[role]?.exposure ?? ""} onChange={(e) => edit(role, { exposure: e.target.value || undefined })} /></span></div>
+      <div className="rp-row"><span>resolution</span><span className="rv"><select style={iw} value={form[role].resolution} onChange={(e) => edit(role, { resolution: e.target.value })}><option value="">default</option>{resOpts.map(([v, l]) => <option key={v} value={v}>{l}</option>)}</select></span></div>
+      <div className="rp-row"><span>fps</span><span className="rv"><input type="text" style={iw} placeholder={fpsPh} value={form[role].fps} onChange={(e) => edit(role, { fps: e.target.value })} /></span></div>
+      <div className="rp-row"><span>format</span><span className="rv"><select style={iw} value={form[role].format} onChange={(e) => edit(role, { format: e.target.value })}><option value="">default</option>{fmtOpts.map((o) => <option key={o} value={o}>{o}</option>)}</select></span></div>
+      <div className="rp-row"><span>exposure</span><span className="rv"><input type="text" style={iw} placeholder="auto" value={form[role].exposure} onChange={(e) => edit(role, { exposure: e.target.value })} /></span></div>
     </div>
   );
   return (
     <div className="grid-gap">
       <div className="cols-2">
-        {roleCard("overview", "Overview · ELP AR2020 (95° FOV)", ["1920×1080", "1280×720"], ["MJPEG", "YUY2"], "30")}
-        {roleCard("science", "Science · ELP CS 5-50mm", ["5120×3840", "2560×1440"], ["YUY2", "MJPEG"], "7.5")}
+        {roleCard("overview", "Overview · ELP AR2020 (95° FOV)", [["1920x1080", "1920×1080"], ["1280x720", "1280×720"]], ["MJPG", "YUY2"], "30")}
+        {roleCard("science", "Science · ELP CS 5-50mm", [["5120x3840", "5120×3840"], ["2560x1440", "2560×1440"]], ["MJPG", "YUY2"], "7.5")}
       </div>
       <div className="btnrow"><button className="cta primary" disabled={!reachable || !dirty} onClick={save}>Save &amp; continue</button></div>
       <div className="hint" style={{ marginTop: 0 }}>Applied the next time each camera opens. A field left on "default" uses the built-in/config value.</div>
