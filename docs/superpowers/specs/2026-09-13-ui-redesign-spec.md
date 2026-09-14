@@ -30,13 +30,25 @@ Mockups: detailed screens `94ba7d61`, layout study `f997cdbc`, visual directions
 
 ## 4. Shell (tabbed + pop-out machine dock)
 - **Top bar (~52px):** brand ▸ **Workflow group** [Job · Priming · Print] (visually grouped, accent-active) ▸ secondary tabs [Control · Runs · Setup] ▸ spacer ▸ connect pill ▸ theme toggle ▸ **E-STOP** (red, always visible).
-- **Pop-out machine dock (right, ~320px, toggleable):** the persistent **monitor** — machine schematic with **drag-to-jog** (draggable gantries/pistons, constrained to travel, snap to jog step/speed, gated armed & not-printing), 4 axis chips (live mm), **overview PIP (on-demand)**, heater + health mini, Pause/Abort during a print. Toggling it OFF **releases** the overview camera. Page main area = the **task** (actuate/configure) — no machine/overview duplication.
+- **Pop-out machine dock (right, ~320px, toggleable + RESIZABLE):** the persistent **monitor** — machine schematic with **drag-to-jog** (draggable gantries/pistons, constrained to travel, snap to jog step/speed, gated armed & not-printing), 4 axis chips (live mm), **overview PIP (on-demand)**, heater + health mini, Pause/Abort during a print. Toggling it OFF **releases** the overview camera. Dock has a left-edge drag handle that **snaps to preset widths** (~288/322/400/460, min 262 / max 540). Page main area = the **task**; the **Control page** is the exception — it shows a larger live machine schematic + overview inline (drag-to-jog surface), since manual jogging is its whole purpose.
+- **Alert ribbon (shell chrome, always present):** a persistent full-width strip **between top bar and body** for warnings/faults (NOT-HOMED, spill, limits). Because it's a fixed shell row, alerts appearing/clearing **never reflow page content** — this replaces the old in-page banners that pushed everything down. Level-colored (ok/warn/fault); horizontally scrolls if multiple; acknowledge collapses to "all clear".
+- **Control page jog:** step size is a **segmented preset selector** (not a free-text input) on **every** axis — gantries e.g. 0.1/1/10/50 mm, pistons 0.01/0.05/0.1/1 mm.
 - **Status bar (bottom):** operator / controller / e-stop / drives / heater; version at right.
 
 ## 5. Page layouts
 Each page's main = its task; the dock is the live monitor.
 
-**Print (Layout B):** main = imaging left (CAD-slice vs captured compare: side-by-side + overlay/diff, stage selector pre/**post_jet**/post_heat, layer scrub, Δ metrics, recent-layers filmstrip) | narrow right column (This-print progress + **grouped routine-params cards**, always visible). Params grouped: Coating / Printing / Heat / Purge / Finish / Manual. Advanced: dry-run / single-step / seek. Source toggle job/manual.
+**Print (Layout B):** main = imaging left (CAD-slice vs captured compare: side-by-side + overlay/diff, stage selector pre/**post_jet**/post_heat, layer scrub, Δ metrics, recent-layers filmstrip) | narrow right column (This-print progress + **grouped routine-params cards**, always visible). Advanced: dry-run / single-step / seek. Source toggle job/manual.
+
+**Routine parameters — ground truth is `frontend/src/components/RoutinePanel.tsx` (do not invent/rename).** Real editable fields, grouped for the redesign:
+- *Powder handling*: `thin_precoat` (n_layers × layer_thickness_mm, feed_thickness_mm), `printing_feed_thickness_mm` (feed/layer), `recoater_return_mm`, `feed_backlash_mm` (anti-backlash), `postcoat_enabled`. (Thick precoats live in the **Priming** routine, not here.)
+- *Multipass*: `n_jet_passes` = **"passes / layer" (multipass language)**, `printhead_multipass_return_mm` ("multipass return"), `printhead_start_mm` = printhead park position before layer 1 (needs the explainer — users don't know the term).
+- *Heat*: `heater_start_mm`, `heater_speed` (manual sweep-speed override), `pre_heater_drop_mm`.
+- *Nozzle purge*: purge **position** (mm) + `purge_dwell_s` + `purge_mode` segmented (every pass / per layer / every N) + `purge_every_n_layers` (N). Keep the existing per-layer/per-N selector.
+- *Finish*: `part_max_mm` = **absolute** part drop-to position (move_abs in compile_print:526, "spill-safe depth") — a POSITION, never a relative move.
+- *Carbon & exposure*: `target_carbon_wt`, `part_area_mm2`, `heater_section_power_w`, + read-only IPA exposure (energy J / dwell s / sweep mm/s).
+- *Layer capture* (vision, new via `capture_stages`): pre-jet / post-jet / post-heat stills.
+Optional explainers (ⓘ) on non-obvious fields. "Set routine" saves via `api.setPrintSettings`.
 
 **Control (Layout B):** main = one **card per axis** (printhead / recoater / build / feed), each with jog (home/away or up/down, buttons content-sized) + speed/accel + go-to; then an ops row (Motion: home PH/RC + STOP; Heater on/off + relay/watchdog; Controller: drives/health/e-stop). Live positions read from the dock.
 
