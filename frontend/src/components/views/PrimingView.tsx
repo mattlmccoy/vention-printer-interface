@@ -43,6 +43,7 @@ export function PrimingView({ status, gates, call, onJob, onPrint }: { status: S
   const [jobThicknessMm, setJobThicknessMm] = useState<number | null>(null);
   const [primed, setPrimed] = useState<{ part_mm: number; feed_mm: number; captured_at: number } | null>(null);
   const [jogStep, setJogStep] = useState("20"); // recoater jog step (mm) for the leveling step
+  const [feedJog, setFeedJog] = useState("2"); // feed-piston jog step (mm) for the leveling step
   const [rcSpeed, setRcSpeed] = useState("");
   const [rcAccel, setRcAccel] = useState("");
   const am4 = status?.axis_motion?.["4"]; // recoater current max speed/accel
@@ -179,7 +180,7 @@ export function PrimingView({ status, gates, call, onJob, onPrint }: { status: S
 
             {cur.id === "level" && (
               <>
-                <div className="hint" style={{ marginTop: 0 }}>Each thick precoat moves the recoater to the start position (past the feed piston), then spreads across the bed to fill the runway and the build-piston cavity. The build piston stays fixed. Repeat until the bed is even.</div>
+                <div className="hint" style={{ marginTop: 0 }}>Each thick precoat: advance the feed piston up to supply powder, move the recoater to the start position (past the feed piston), then spread across the bed to fill the runway and the build-piston cavity. The build piston stays fixed. Repeat until the bed is even.</div>
                 <div className="kv">
                   <span>thick precoats</span><span>{target("n_thick_precoats") ?? "—"}</span>
                   <span>feed / precoat</span><span>{fmt(target("thick_feed_mm"))}</span>
@@ -187,9 +188,18 @@ export function PrimingView({ status, gates, call, onJob, onPrint }: { status: S
                   <span>spread to</span><span>{fmt(target("level_recoat_end_mm"))}</span>
                 </div>
                 <div className="btnrow">
+                  <button className="cta primary" disabled={!ok || !target("thick_feed_mm")} title="Raise the feed piston by one precoat's worth of powder (feed / precoat), supplying powder above the bed for the spread." onClick={() => call("advance feed", () => api.move(2, "rel", -(target("thick_feed_mm") as number)))}>Feed ▲ supply</button>
                   <button className="cta primary" disabled={!ok || target("level_recoat_start_mm") === null} onClick={() => call("move to start", () => api.move(4, "abs", target("level_recoat_start_mm") as number))}>Move to start</button>
                   <button className="cta" disabled={!ok || target("level_recoat_end_mm") === null} onClick={() => call("spread", () => api.move(4, "abs", target("level_recoat_end_mm") as number))}>Spread ▶</button>
                   <button className="cta" onClick={skip}>Next →</button>
+                </div>
+                {/* feed-piston jog for manual fine powder supply (axis 2; UP = negative rel = supply) */}
+                <div className="btnrow">
+                  <span className="hint" style={{ marginTop: 0 }}>feed jog</span>
+                  <input type="number" inputMode="decimal" value={feedJog} onChange={(e) => setFeedJog(e.target.value)} style={{ width: 70 }} />
+                  <span className="hint" style={{ marginTop: 0 }}>mm</span>
+                  <button className="cta" disabled={!ok || n(feedJog) <= 0} title="Raise the feed piston (supply powder)" onClick={() => call("jog feed up (supply)", () => api.move(2, "rel", -n(feedJog)))}>▲ up (supply)</button>
+                  <button className="cta" disabled={!ok || n(feedJog) <= 0} title="Lower the feed piston" onClick={() => call("jog feed down", () => api.move(2, "rel", n(feedJog)))}>▼ down</button>
                 </div>
                 {/* jog + rates for fine leveling — the recoater moves at these controller rates; watch the dock */}
                 <div className="sec-h" style={{ marginTop: 14 }}>recoater · jog &amp; rates <span className="hint" style={{ textTransform: "none", letterSpacing: 0, fontWeight: 400 }}>watch the machine in the dock →</span></div>
