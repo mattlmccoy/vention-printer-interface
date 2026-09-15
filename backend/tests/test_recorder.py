@@ -284,6 +284,22 @@ def test_layer_accuracy_unknown_when_no_telemetry_in_window() -> None:
     assert layer_accuracy_summary(rows)["n"] == 0
 
 
+def test_layer_accuracy_excludes_the_finish_move() -> None:
+    # After the last layer the part is driven to part_max (the finish move); those samples are far
+    # beyond the commanded stack and must NOT be read as the last layer's settled height.
+    telem = [
+        _tel(0, 10.0),                 # baseline
+        _tel(1_000_000_000, 10.2),     # layer 1 settled (+0.2)
+        _tel(2_000_000_000, 10.4),     # layer 2 settled (+0.2)
+        _tel(2_500_000_000, 82.0),     # finish move to part_max (~72 above baseline) -> ignore
+    ]
+    layers = [_lay(1_000_000_000, 1, "printing", 0.2), _lay(2_000_000_000, 2, "printing", 0.4)]
+    rows = layer_accuracy_rows(telem, layers)
+    assert rows[1]["actual_mm"] == pytest.approx(0.2)       # not ~71.6
+    assert rows[1]["actual_cum_mm"] == pytest.approx(0.4)
+    assert rows[1]["deviation_mm"] == pytest.approx(0.0)
+
+
 def test_layer_accuracy_csv_written_on_stop(tmp_path: Path) -> None:
     rec = Recorder(tmp_path)
     run = rec.start("accuracy")

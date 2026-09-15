@@ -434,6 +434,31 @@ def test_compile_one_printing_layer_full_sequence() -> None:
 # ---- (e) multi-pass jetting ----------------------------------------------------------------------
 
 
+def test_heater_off_returns_printhead_and_recoater_concurrently() -> None:
+    # With the heater OFF, the printhead's return home and the recoater's reposition to the spread
+    # start (950) are independent axes -> issued back-to-back under ONE wait, not two serial waits.
+    p = dataclasses.replace(one_layer(), heater_enabled=False)
+    ks = [(s.kind, s.axis, s.value) for s in compile_print(p) if s.phase == "printing"]
+    i_jet = ks.index(("move_abs", PRINTHEAD, 900.0))
+    assert ks[i_jet : i_jet + 5] == [
+        ("move_abs", PRINTHEAD, 900.0),  # jet out
+        ("wait", None, None),
+        ("move_abs", PRINTHEAD, 5.0),    # printhead home  \  concurrent: two moves,
+        ("move_abs", RECOATER, 950.0),   # recoater reposition /  then ONE wait
+        ("wait", None, None),
+    ]
+    assert ks[i_jet + 5] == ("mark", None, None)  # layer_end immediately after
+    assert ("move_abs", RECOATER, 425.0) not in ks  # heater sweep absent
+
+
+def test_heater_on_keeps_printhead_return_serial_before_the_sweep() -> None:
+    # Heater ON is unchanged: printhead returns home (its own wait) BEFORE the heater sweep starts.
+    ks = [(s.kind, s.axis, s.value) for s in compile_print(one_layer()) if s.phase == "printing"]
+    i_home = ks.index(("move_abs", PRINTHEAD, 5.0))
+    assert ks[i_home + 1] == ("wait", None, None)
+    assert ks[i_home + 2] == ("move_abs", RECOATER, 425.0)  # sweep start after the printhead return
+
+
 def test_printing_multipass_shuttles_to_midpoint_then_home() -> None:
     p = dataclasses.replace(one_layer(), n_jet_passes=3, heater_enabled=False)
     ks = kinds_of(p)

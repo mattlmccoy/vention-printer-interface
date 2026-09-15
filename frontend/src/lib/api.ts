@@ -175,6 +175,15 @@ export const api = {
   recordingStart: (body: { name: string; notes: string }) => req<{ run: string }>("POST", "/api/recording/start", body),
   recordingStop: () => req<{ run: string | null; stopped: boolean }>("POST", "/api/recording/stop"),
   recordings: () => req<{ runs: RunMeta[] }>("GET", "/api/recordings"),
+  // Fetch a run's raw CSV/text file (motion_profiles.csv, layer_accuracy.csv, ...). "" when absent.
+  recordingFileText: async (run: string, file: string): Promise<string> => {
+    try {
+      const res = await fetch(`${base}/api/recordings/${encodeURIComponent(run)}/${file}`);
+      return res.ok ? await res.text() : "";
+    } catch {
+      return "";
+    }
+  },
   analysisGet: (run: string) => req<DimensionalReport>("GET", `/api/analysis/${encodeURIComponent(run)}/dimensional`),
   analysisRun: (run: string, body: AnalysisRequest = {}) => req<DimensionalReport>("POST", `/api/analysis/${encodeURIComponent(run)}/dimensional`, body),
   recordingSetMeta: (run: string, body: { name?: string; notes?: string }) => req<{ name: string; notes: string }>("PUT", `/api/recordings/${encodeURIComponent(run)}/meta`, body),

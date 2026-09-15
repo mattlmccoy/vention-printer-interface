@@ -3,6 +3,14 @@ import { api, type RunMeta } from "../../lib/api.ts";
 import type { Gates } from "../../lib/format.ts";
 import type { StatusPayload } from "../../lib/telemetry.ts";
 import { parseCaptures, type Capture } from "../../lib/vision.ts";
+import {
+  hasNativeSpeed,
+  layerAccuracySummary,
+  motionSeries,
+  parseLayerAccuracy,
+  type LayerAccuracy,
+  type Metric,
+} from "../../lib/motion.ts";
 import { EventLog } from "../EventLog.tsx";
 import type { Call } from "./types.ts";
 
@@ -14,37 +22,72 @@ const fmtDur = (s?: number | null) => {
   return h ? `${h} h ${String(m).padStart(2, "0")} m` : m ? `${m} m ${String(sec).padStart(2, "0")} s` : `${sec} s`;
 };
 
-/** motion_profiles.csv → per-axis velocity series for the chart. Columns:
- *  host_timestamp_ns, pos_1..4, vel_1..4, accel_1..4. Blank cells are skipped. */
-function parseVel(csv: string, axis: number): number[] {
-  const lines = csv.trim().split("\n");
-  if (lines.length < 2) return [];
-  const idx = lines[0].split(",").indexOf(`vel_${axis}`);
-  if (idx < 0) return [];
-  const out: number[] = [];
-  for (const line of lines.slice(1)) {
-    const v = line.split(",")[idx];
-    const num = Number(v);
-    if (v !== "" && v !== undefined && Number.isFinite(num)) out.push(num);
-  }
-  return out;
+// Per-axis trace colors match the machine dock; axis order is the drive numbering (spec §4).
+const AXES = [
+  { axis: 1, label: "BUILD", token: "var(--trace-part)" },
+  { axis: 2, label: "FEED", token: "var(--trace-feed)" },
+  { axis: 3, label: "PRINTHEAD", token: "var(--trace-ph)" },
+  { axis: 4, label: "RECOATER", token: "var(--trace-rc)" },
+] as const;
+const METRIC_UNIT: Record<Metric, string> = { pos: "mm", vel: "mm/s", accel: "mm/s²" };
+const METRIC_LABEL: Record<Metric, string> = { pos: "position", vel: "velocity", accel: "acceleration" };
+
+/** One axis's metric over time (its own y-scale), for the stacked small-multiples. */
+function AxisPanel({ series, tMax, label, color, unit }: { series: { t: number; v: number }[]; tMax: number; label: string; color: string; unit: string }) {
+  const W = 560, H = 82, padL = 54, padR = 10, padB = 4, padT = 6, plotH = H - padT - padB, plotW = W - padL - padR;
+  const vs = series.map((p) => p.v);
+  const lo = Math.min(0, ...vs);
+  let hi = Math.max(0, ...vs);
+  if (hi - lo < 1e-6) hi = lo + 1;
+  const y = (v: number) => padT + (1 - (v - lo) / (hi - lo)) * plotH;
+  const x = (t: number) => padL + (tMax > 0 ? (t / tMax) * plotW : 0);
+  const dec = (v: number) => (Math.abs(v) >= 100 ? "0" : Math.abs(v) >= 10 ? "1" : "2");
+  return (
+    <svg className="axpanel" viewBox={`0 0 ${W} ${H}`} style={{ width: "100%", height: "auto" }} role="img" aria-label={`${label} ${unit}`}>
+      <line x1={padL} y1={padT} x2={padL} y2={H - padB} />
+      {lo < 0 && <line x1={padL} y1={y(0)} x2={W - padR} y2={y(0)} strokeDasharray="2 3" />}
+      <polyline points={series.map((p) => `${x(p.t)},${y(p.v)}`).join(" ")} fill="none" stroke={color} strokeWidth="1.5" />
+      <text x={padL + 5} y={padT + 10} fontSize="9.5" fill={color} fontFamily="var(--font-mono)">{label}</text>
+      <text x={padL - 6} y={padT + 8} fontSize="8" fill="var(--faint)" textAnchor="end" fontFamily="var(--font-mono)">{hi.toFixed(Number(dec(hi)))}</text>
+      <text x={padL - 6} y={H - padB} fontSize="8" fill="var(--faint)" textAnchor="end" fontFamily="var(--font-mono)">{lo.toFixed(Number(dec(lo)))}</text>
+      <text x={padL - 30} y={padT + plotH / 2} fontSize="8" fill="var(--faint)" textAnchor="middle" fontFamily="var(--font-mono)" transform={`rotate(-90 ${padL - 30} ${padT + plotH / 2})`}>{unit}</text>
+    </svg>
+  );
 }
 
-function VelChart({ series }: { series: number[] }) {
-  if (series.length < 2) return <div className="chart-empty">no motion profile for this run yet</div>;
-  const W = 520, H = 150, padL = 34, padB = 20, padT = 10;
-  const max = Math.max(1, ...series.map(Math.abs));
-  const step = (W - padL) / (series.length - 1);
-  const y = (v: number) => padT + (1 - Math.abs(v) / max) * (H - padT - padB);
-  const pts = series.map((v, i) => `${padL + i * step},${y(v)}`).join(" ");
+/** layer_accuracy.csv → per-layer build-piston deviation (actual − commanded) in microns, as signed
+ *  lollipops around a zero line with a ±tolerance band; out-of-tolerance layers flagged red. */
+function BuildDeviationChart({ rows, tolUm }: { rows: LayerAccuracy[]; tolUm: number }) {
+  const pts = rows
+    .filter((r) => (r.phase === "thin_precoat" || r.phase === "printing") && r.deviation_mm != null && r.layer != null)
+    .map((r) => ({ layer: r.layer as number, devUm: (r.deviation_mm as number) * 1000 }));
+  if (pts.length === 0) return <div className="chart-empty">no build-piston layer data for this run</div>;
+  const W = 560, H = 205, padL = 54, padR = 12, padB = 30, padT = 12, plotH = H - padT - padB, plotW = W - padL - padR;
+  const maxAbs = Math.max(tolUm * 1.6, ...pts.map((p) => Math.abs(p.devUm))) * 1.08;
+  const y = (v: number) => padT + (1 - (v + maxAbs) / (2 * maxAbs)) * plotH;
+  const x = (i: number) => padL + (pts.length > 1 ? (i * plotW) / (pts.length - 1) : plotW / 2);
+  const zeroY = y(0);
+  const stepEvery = Math.max(1, Math.ceil(pts.length / 10));
   return (
-    <svg className="mchart" viewBox={`0 0 ${W} ${H}`} style={{ width: "100%", height: "auto" }} role="img" aria-label="recoater velocity profile">
+    <svg className="mchart" viewBox={`0 0 ${W} ${H}`} style={{ width: "100%", height: "auto" }} role="img" aria-label="build-piston per-layer deviation in microns">
+      <rect x={padL} y={y(tolUm)} width={plotW} height={y(-tolUm) - y(tolUm)} fill="var(--live-bg)" />
+      <line x1={padL} y1={zeroY} x2={W - padR} y2={zeroY} />
       <line x1={padL} y1={padT} x2={padL} y2={H - padB} />
-      <line x1={padL} y1={H - padB} x2={W} y2={H - padB} />
-      <text x={padL - 6} y={padT + 6} fontSize="9" fill="var(--faint)" textAnchor="end" fontFamily="var(--font-mono)">{Math.round(max)}</text>
-      <text x={padL - 6} y={H - padB} fontSize="9" fill="var(--faint)" textAnchor="end" fontFamily="var(--font-mono)">0</text>
-      <polyline points={pts} fill="none" stroke="var(--trace-rc)" strokeWidth="2" />
-      <text x={(W + padL) / 2} y={H - 4} fontSize="9" fill="var(--faint)" textAnchor="middle" fontFamily="var(--font-mono)">recoater speed (mm/s) over the run</text>
+      {[maxAbs, tolUm, -tolUm, -maxAbs].map((v) => (
+        <text key={v} x={padL - 6} y={y(v) + 3} fontSize="9" fill="var(--faint)" textAnchor="end" fontFamily="var(--font-mono)">{v > 0 ? "+" : ""}{Math.round(v)}</text>
+      ))}
+      {pts.map((p, i) => {
+        const col = Math.abs(p.devUm) <= tolUm ? "var(--trace-part)" : "var(--err)";
+        return (
+          <g key={p.layer}>
+            <line x1={x(i)} y1={zeroY} x2={x(i)} y2={y(p.devUm)} stroke={col} strokeWidth="1.8" />
+            <circle cx={x(i)} cy={y(p.devUm)} r="2.6" fill={col} />
+            {(i % stepEvery === 0 || i === pts.length - 1) && <text x={x(i)} y={H - padB + 13} fontSize="8" fill="var(--faint)" textAnchor="middle" fontFamily="var(--font-mono)">{p.layer}</text>}
+          </g>
+        );
+      })}
+      <text x={padL - 34} y={padT + plotH / 2} fontSize="9" fill="var(--faint)" textAnchor="middle" fontFamily="var(--font-mono)" transform={`rotate(-90 ${padL - 34} ${padT + plotH / 2})`}>deviation (µm)</text>
+      <text x={padL + plotW / 2} y={H - 3} fontSize="9" fill="var(--faint)" textAnchor="middle" fontFamily="var(--font-mono)">layer number · shaded band = ±{tolUm} µm tolerance</text>
     </svg>
   );
 }
@@ -53,7 +96,11 @@ export function RunsView({ status, gates, call, base }: { status: StatusPayload 
   const [runs, setRuns] = useState<RunMeta[]>([]);
   const [sel, setSel] = useState<string>("");
   const [caps, setCaps] = useState<Capture[]>([]);
-  const [vel, setVel] = useState<number[]>([]);
+  const [motionCsv, setMotionCsv] = useState("");
+  const [accuracyRows, setAccuracyRows] = useState<LayerAccuracy[]>([]);
+  const [metric, setMetric] = useState<Metric>("vel");
+  const [axes, setAxes] = useState<number[]>([1, 2, 3, 4]); // all axes stacked by default
+  const [tolUm, setTolUm] = useState("50"); // build-piston tolerance band (µm), editable
   const [name, setName] = useState("");
   const [notes, setNotes] = useState("");
   const [dirty, setDirty] = useState(false);
@@ -108,11 +155,11 @@ export function RunsView({ status, gates, call, base }: { status: StatusPayload 
   }, [viewIdx, caps.length]);
 
   useEffect(() => {
-    if (!sel) { setCaps([]); setVel([]); return; }
+    if (!sel) { setCaps([]); setMotionCsv(""); setAccuracyRows([]); return; }
     let live = true;
     api.visionCaptures(sel).then((rc) => { if (live) setCaps(parseCaptures(rc)); }).catch(() => { if (live) setCaps([]); });
-    fetch(`${base}/api/recordings/${encodeURIComponent(sel)}/motion_profiles.csv`)
-      .then((r) => (r.ok ? r.text() : "")).then((txt) => { if (live) setVel(parseVel(txt, 4)); }).catch(() => { if (live) setVel([]); });
+    api.recordingFileText(sel, "motion_profiles.csv").then((txt) => { if (live) setMotionCsv(txt); });
+    api.recordingFileText(sel, "layer_accuracy.csv").then((txt) => { if (live) setAccuracyRows(txt ? parseLayerAccuracy(txt) : []); });
     return () => { live = false; };
   }, [sel, base]);
 
@@ -199,8 +246,43 @@ export function RunsView({ status, gates, call, base }: { status: StatusPayload 
               </div>
 
               <div className="card">
-                <h3>motion profile — recoater (axis 4)</h3>
-                <VelChart series={vel} />
+                <h3>build-piston layer accuracy{(() => {
+                  const s = layerAccuracySummary(accuracyRows);
+                  return s.n > 0 ? <span className="hint" style={{ textTransform: "none", letterSpacing: 0, fontWeight: 400 }}>mean |dev| {(s.meanAbsDevMm! * 1000).toFixed(0)} µm · max {(s.maxAbsDevMm! * 1000).toFixed(0)} µm (layer {s.maxLayer}) · n={s.n}</span> : null;
+                })()}</h3>
+                <div className="chart-controls">
+                  <span className="hint" style={{ marginTop: 0 }}>tolerance band ±</span>
+                  <input type="number" inputMode="decimal" value={tolUm} onChange={(e) => setTolUm(e.target.value)} style={{ width: 64 }} aria-label="tolerance band (microns)" />
+                  <span className="hint" style={{ marginTop: 0 }}>µm</span>
+                </div>
+                <BuildDeviationChart rows={accuracyRows} tolUm={Math.max(1, Number(tolUm) || 50)} />
+              </div>
+
+              <div className="card">
+                <h3>motion profiles — per axis{hasNativeSpeed(motionCsv) ? <span className="hint" style={{ textTransform: "none", letterSpacing: 0, fontWeight: 400 }}>velocity = native measured speed</span> : null}</h3>
+                <div className="chart-controls">
+                  <span className="seg">{(["pos", "vel", "accel"] as Metric[]).map((m) => <button key={m} type="button" className={metric === m ? "on" : ""} onClick={() => setMetric(m)}>{METRIC_LABEL[m]}</button>)}</span>
+                  <span className="chart-axes">{AXES.map((a) => {
+                    const on = axes.includes(a.axis);
+                    return (
+                      <button key={a.axis} type="button" className={`axtog${on ? " on" : ""}`} style={on ? { borderColor: a.token, color: a.token } : undefined} aria-pressed={on}
+                        onClick={() => setAxes((cur) => cur.includes(a.axis) ? cur.filter((x) => x !== a.axis) : [...cur, a.axis])}>{a.label}</button>
+                    );
+                  })}</span>
+                </div>
+                {(() => {
+                  const panels = AXES.filter((a) => axes.includes(a.axis))
+                    .map((a) => ({ meta: a, s: motionSeries(motionCsv, metric, a.axis) }))
+                    .filter((p) => p.s.length >= 2);
+                  if (panels.length === 0) return <div className="chart-empty">no motion profile for this run (or no axis selected)</div>;
+                  const tMax = Math.max(1, ...panels.map((p) => p.s[p.s.length - 1].t));
+                  return (
+                    <div className="axpanels">
+                      {panels.map((p) => <AxisPanel key={p.meta.axis} series={p.s} tMax={tMax} label={p.meta.label} color={p.meta.token} unit={METRIC_UNIT[metric]} />)}
+                      <div className="axtime">time → 0 … {tMax.toFixed(1)} s · {METRIC_LABEL[metric]}, each axis auto-scaled</div>
+                    </div>
+                  );
+                })()}
               </div>
             </>
           ) : <div className="card"><div className="chart-empty">select a run to see its stills, motion profile, and download.</div></div>}

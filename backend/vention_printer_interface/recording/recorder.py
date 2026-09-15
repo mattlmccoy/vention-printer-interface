@@ -152,15 +152,20 @@ def layer_accuracy_rows(
         key=lambda x: x[0],
     )
     baseline = samples[0][1] if samples else None
+    base_ts = samples[0][0] if samples else None  # print start, before layer 1's drop
     ordered = sorted(layer_rows, key=lambda r: _to_float(r.get("host_timestamp_ns")) or 0.0)
-    starts = [_to_float(r.get("host_timestamp_ns")) for r in ordered]
+    # layers.csv timestamps are the layer_COMPLETED events (app.py records on "layer_completed"),
+    # so a layer's settled build position is the LAST telemetry sample at/just before its own
+    # completion — in (previous completion, this completion]. This attributes the right height to
+    # each layer (no off-by-one) and excludes the finish move, which runs AFTER the last completion.
+    completions = [_to_float(r.get("host_timestamp_ns")) for r in ordered]
 
     def settled_pos(i: int) -> float | None:
-        lo = starts[i]
-        hi = starts[i + 1] if i + 1 < len(starts) else None
-        if lo is None:
+        hi = completions[i]
+        lo = completions[i - 1] if i > 0 else base_ts
+        if hi is None:
             return None
-        window = [p for ts, p in samples if ts >= lo and (hi is None or ts < hi)]
+        window = [p for ts, p in samples if (lo is None or ts > lo) and ts <= hi]
         return window[-1] if window else None
 
     out: list[dict[str, Any]] = []

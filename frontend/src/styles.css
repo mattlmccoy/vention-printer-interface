@@ -236,6 +236,16 @@ button.small { height: 34px; padding: 0 12px; border: 1px solid var(--line-contr
 .cmd-name { font: 600 15px var(--font-read); color: var(--fg-strong); }
 .cmd-prog { flex: 1 1 220px; min-width: 180px; }
 .cmd-actions { display: flex; gap: 8px; }
+/* finish summary (print done / aborted / fault) */
+.finish-card.done { border-color: var(--live); }
+.finish-card.bad { border-color: var(--err); }
+.finish-head { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; }
+.finish-reason { margin-top: 10px; color: var(--err); font: 13px var(--font-read); }
+.finish-stats { display: grid; grid-template-columns: repeat(auto-fit, minmax(128px, 1fr)); gap: 10px; margin-top: 14px; }
+.fstat { border: 1px solid var(--line); border-radius: 8px; padding: 10px 12px; background: var(--panel); }
+.fstat > b { display: block; font: 700 20px var(--font-mono); color: var(--fg-strong); font-variant-numeric: tabular-nums; }
+.fstat > b > small { font-size: 13px; font-weight: 400; color: var(--muted); }
+.fstat > span { display: block; margin-top: 3px; font: 11px var(--font-mono); color: var(--label); text-transform: uppercase; letter-spacing: .05em; }
 .cta.sm { height: 38px; padding: 0 18px; }
 .print-grid { display: grid; grid-template-columns: minmax(0, 1fr) 340px; gap: 16px; align-items: start; }
 @media (max-width: 1000px) { .print-grid { grid-template-columns: minmax(0, 1fr); } }
@@ -543,6 +553,12 @@ button.small { height: 34px; padding: 0 12px; border: 1px solid var(--line-contr
 .still .ll { position: absolute; top: 5px; left: 6px; font: 9px var(--font-mono); color: var(--label); background: var(--scrim); padding: 1px 5px; border-radius: 5px; }
 .still .lb { position: absolute; bottom: 5px; left: 6px; font: 9px var(--font-mono); color: var(--label); background: var(--scrim); padding: 1px 5px; border-radius: 5px; }
 .mchart line { stroke: var(--line); }
+.chart-controls { display: flex; flex-wrap: wrap; gap: 12px; align-items: center; margin-bottom: 10px; }
+.chart-axes { display: flex; flex-wrap: wrap; gap: 6px; }
+.axtog { font: 11px var(--font-mono); letter-spacing: .04em; padding: 4px 9px; border-radius: 12px; border: 1px solid var(--line); background: transparent; color: var(--muted); cursor: pointer; }
+.axpanels { display: flex; flex-direction: column; gap: 6px; }
+.axpanel + .axpanel { border-top: 1px solid var(--line); padding-top: 4px; }
+.axtime { font: 9px var(--font-mono); color: var(--faint); text-align: center; margin-top: 2px; }
 /* staged/fixed-size sections so switching runs never resizes the boxes */
 .chart-empty { min-height: 130px; display: grid; place-items: center; color: var(--muted); font-size: 13px; border: 1px dashed var(--line); border-radius: 10px; background: var(--bg-deep); }
 .stills-wrap { min-height: 150px; }

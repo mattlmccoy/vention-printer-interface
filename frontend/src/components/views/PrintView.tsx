@@ -9,6 +9,7 @@ import { RoutinePanel } from "../RoutinePanel.tsx";
 import { NumberField } from "../NumberField.tsx";
 import { Toggle } from "../Toggle.tsx";
 import { parseCaptures, type Capture } from "../../lib/vision.ts";
+import { layerAccuracySummary, parseLayerAccuracy, type LayerAccuracy } from "../../lib/motion.ts";
 import type { Call } from "./types.ts";
 
 const CMP_STAGES = ["pre_jet", "post_jet", "post_heat"] as const;
@@ -36,7 +37,7 @@ export function phrase(step: ReturnType<typeof compilePrint>[number] | null, pla
   }
 }
 
-export function PrintView({ status, gates, call, base, onJob }: { status: StatusPayload | null; gates: Gates; call: Call; base: string; onJob: () => void }) {
+export function PrintView({ status, gates, call, base, onJob, onRuns }: { status: StatusPayload | null; gates: Gates; call: Call; base: string; onJob: () => void; onRuns: () => void }) {
   const c = status?.controller;
   const r = status?.print;
   const t = c?.telemetry ?? null;
@@ -95,9 +96,35 @@ export function PrintView({ status, gates, call, base, onJob }: { status: Status
   const total = plan ? estimateDurationS(plan) : 0;
   const remaining = r && total ? Math.max(0, total * (1 - r.step_index / Math.max(r.n_steps, 1))) : null;
   const thickness = plan && r ? (plan[r.phase as "thin_precoat" | "printing" | "postcoat"]?.layer_thickness_mm ?? 2) : 2;
-  const mismatch = r ? heightMismatch(r.part_height_measured_mm, r.part_height_mm, thickness) : false;
+  // Only meaningful while printing: at finish the part is driven to part_max, so the measured
+  // displacement no longer tracks the layer height.
+  const mismatch = active && r ? heightMismatch(r.part_height_measured_mm, r.part_height_mm, thickness) : false;
   const printLayer = r && r.phase === "printing" ? r.layer - (plan?.thin_precoat.n_layers ?? 0) : 0;
   const shownLayer = active && printLayer > 0 ? printLayer : (job ? 1 : 0);
+
+  // Finish summary: shown when a print ends. Build-piston accuracy is pulled from the just-finished
+  // run's layer_accuracy.csv (newest recording); a dry run has no meaningful accuracy.
+  const finished = r?.state === "done" || r?.state === "aborted" || r?.state === "fault";
+  const [finishRows, setFinishRows] = useState<LayerAccuracy[] | null>(null);
+  const [accuracyLoading, setAccuracyLoading] = useState(false);
+  useEffect(() => {
+    if (!finished || r?.dry_run) { setFinishRows(null); setAccuracyLoading(false); return; }
+    let live = true;
+    setAccuracyLoading(true);
+    (async () => {
+      try {
+        const { runs } = await api.recordings();
+        const newest = runs.length ? runs[runs.length - 1] : null;
+        const csv = newest ? await api.recordingFileText(newest.run, "layer_accuracy.csv") : "";
+        if (live) setFinishRows(csv ? parseLayerAccuracy(csv) : null);
+      } catch {
+        if (live) setFinishRows(null);
+      } finally {
+        if (live) setAccuracyLoading(false);
+      }
+    })();
+    return () => { live = false; };
+  }, [finished, r?.dry_run, r?.state]);
   const pct = r && r.n_steps ? Math.round((100 * r.step_index) / r.n_steps) : 0;
   const label = !status ? "OFFLINE" : isMacro && active ? r!.macro!.replace("_", " ").toUpperCase() : r?.state === "running" ? (r.dry_run ? "DRY RUN" : "PRINTING") : r?.state === "paused" ? "PAUSED" : (r?.state ?? "idle").toUpperCase();
   const stagePh = plan && r ? plan[r.phase as "thin_precoat" | "printing" | "postcoat"] : undefined;
@@ -189,6 +216,42 @@ export function PrintView({ status, gates, call, base, onJob }: { status: Status
         <div className="chips">{problems.map(([txt, cls]) => <span key={txt} className={`chip ${cls}`}>{txt}</span>)}{mismatch && <span className="chip warn">part height differs from print_settings ({fmtMm(r?.part_height_mm, 1)})</span>}</div>
       )}
 
+      {finished && r && (() => {
+        const label2 = r.state === "done" ? "PRINT COMPLETE" : r.state === "aborted" ? "PRINT ABORTED" : "PRINT FAULTED";
+        const cls = r.state === "done" ? "done" : "bad";
+        const layersDone = r.state === "done" ? r.n_layers : r.layer;
+        const acc = finishRows ? layerAccuracySummary(finishRows) : null;
+        const hasAcc = acc !== null && acc.n > 0;
+        // Measured height = the last known settled build-piston displacement from the run (NOT live
+        // status, which reads part_max after the finish move). Commanded = the compiled height.
+        const measuredRows = (finishRows ?? []).filter((x) => x.actual_cum_mm != null);
+        const measuredFinal = measuredRows.length ? (measuredRows.at(-1)!.actual_cum_mm as number) : null;
+        const dHeight = measuredFinal != null ? measuredFinal - r.part_height_mm : null;
+        const accCell = hasAcc ? `${acc!.meanAbsDevMm!.toFixed(3)} mm` : r.dry_run ? "n/a" : accuracyLoading ? "…" : "—";
+        return (
+          <div className={`card finish-card ${cls}`}>
+            <div className="finish-head">
+              <span className={`state-pill ${cls === "done" ? "run" : "fault"}`}>{label2}</span>
+              <span className="cmd-name">{job ? job.name : "manual print"}{r.dry_run ? " · dry run" : ""}</span>
+              <span className="spacer" />
+              <button className="cta sm" onClick={onRuns}>View in Runs →</button>
+              <button className="cta sm primary" onClick={onJob}>{job ? "Print again" : "New print"}</button>
+            </div>
+            {r.state === "aborted" && r.reason ? <div className="finish-reason">stopped: {r.reason}</div> : null}
+            <div className="finish-stats">
+              <div className="fstat"><b>{layersDone}<small> / {r.n_layers}</small></b><span>layers</span></div>
+              <div className="fstat"><b>{fmtSecs(r.elapsed_s)}</b><span>duration</span></div>
+              <div className="fstat"><b>{fmtMm(r.part_height_mm, 2)}</b><span>commanded height</span></div>
+              <div className="fstat"><b>{measuredFinal != null ? fmtMm(measuredFinal, 2) : (r.dry_run ? "n/a" : "—")}</b><span>measured height</span></div>
+              <div className="fstat"><b>{dHeight != null ? `${dHeight >= 0 ? "+" : ""}${dHeight.toFixed(2)} mm` : "—"}</b><span>height Δ (meas − cmd)</span></div>
+              <div className="fstat"><b>{accCell}</b><span>build-piston mean |dev|{hasAcc ? ` · n=${acc!.n}` : ""}</span></div>
+              <div className="fstat"><b>{hasAcc ? `${acc!.maxAbsDevMm!.toFixed(3)} mm` : "—"}</b><span>max |dev|{hasAcc && acc!.maxLayer != null ? ` · layer ${acc!.maxLayer}` : ""}</span></div>
+            </div>
+            {!hasAcc && !r.dry_run && !accuracyLoading ? <div className="hint" style={{ marginTop: 10 }}>Per-layer build-piston accuracy appears here from the recorded run (needs telemetry during the print).</div> : null}
+          </div>
+        );
+      })()}
+
       {active && (
         <label className="row single-step-row" title="Pause after each step. Off resumes continuous running.">
           <input type="checkbox" checked={!!r?.single_step} disabled={!gates.controllable} onChange={(e) => call("single-step", () => api.setSingleStep(e.target.checked))} /> single-step (pause after each step)
@@ -245,8 +308,8 @@ export function PrintView({ status, gates, call, base, onJob }: { status: Status
         </div>
       )}
 
-      {/* routine parameters — collapsible drawer (collapsed by default) */}
-      <details className="rp-drawer">
+      {/* routine parameters — collapsible drawer, open by default (operators tune these each run) */}
+      <details className="rp-drawer" open>
         <summary>routine parameters</summary>
         <div className="body"><RoutinePanel gates={gates} call={call} /></div>
       </details>
