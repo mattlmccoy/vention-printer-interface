@@ -73,6 +73,10 @@ class PrintController:
         self._step_granted = False
         self._in_flight: Step | None = None
         self._issued_at = 0.0
+        # Whether we've SEEN the move(s) preceding the in-flight wait actually run (motion_complete
+        # went False). Lets a wait end as soon as the move finishes, instead of always sitting out
+        # the min_wait_s floor. Reset whenever a wait/dwell goes in-flight.
+        self._saw_incomplete = False
         self._started_at = 0.0
         self._finished_at: float | None = None
         self._layer = 0
@@ -245,6 +249,7 @@ class PrintController:
             event = self._issue(step, now)
             if step.kind in ("wait", "dwell"):
                 self._in_flight, self._issued_at = step, now
+                self._saw_incomplete = False  # haven't seen the preceding move run yet
                 return event
             if step.kind == "hold":
                 self.state = PrintState.PAUSED
@@ -262,9 +267,15 @@ class PrintController:
             return now - self._issued_at >= float(step.value or 0.0)
         tel = snapshot.get("telemetry") or {}
         complete = tel.get("motion_complete") or {}
-        return (
-            now - self._issued_at >= self.min_wait_s and bool(complete) and all(complete.values())
-        )
+        all_complete = bool(complete) and all(complete.values())
+        if not all_complete:
+            self._saw_incomplete = True  # the preceding move has registered and is running
+            return False
+        # Every axis reports complete. Accept as soon as we've SEEN the move run (fast path — the
+        # common case), OR once min_wait_s has elapsed. The floor is the fallback for a no-op move
+        # that never leaves the complete state, and the guard against a stale "complete" that
+        # predates the move being registered on the controller.
+        return self._saw_incomplete or now - self._issued_at >= self.min_wait_s
 
     def _issue(self, step: Step, now: float) -> tuple[str, dict[str, Any]] | None:
         self._phase, self._layer, self._height = step.phase, step.layer, step.part_height_mm

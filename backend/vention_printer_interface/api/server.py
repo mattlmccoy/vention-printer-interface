@@ -29,6 +29,14 @@ def main(argv: list[str] | None = None) -> int:
     )
     ap.add_argument("--poll-interval", type=float, default=0.2)
     ap.add_argument(
+        "--print-min-wait",
+        type=float,
+        default=0.25,
+        help="fallback floor (s) per wait step during a run. A wait after a real move now ends as "
+        "soon as the move finishes (move-started detection), so this only bites no-op moves and is "
+        "the safety margin against a stale 'complete'. Raise it if fast moves collide on hardware.",
+    )
+    ap.add_argument(
         "--print-poll-interval",
         type=float,
         default=0.1,
@@ -63,6 +71,7 @@ def main(argv: list[str] | None = None) -> int:
         ip=args.ip,
         poll_interval_s=args.poll_interval,
         print_poll_interval_s=args.print_poll_interval,
+        print_min_wait_s=args.print_min_wait,
         experiments_root=args.experiments_root,
         jobs_roots=args.jobs_root,
         site_origin=args.site_origin or None,
