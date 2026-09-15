@@ -56,6 +56,40 @@ def test_positions_unreferenced_until_homed() -> None:
         c.stop()
 
 
+def test_reference_current_marks_all_axes_without_homing() -> None:
+    # Operator-asserted reference: when the machine kept power and the reported positions are real,
+    # mark EVERY axis referenced WITHOUT homing (no motion, no arming required). Only valid when
+    # connected with settled telemetry.
+    c, _ = make()
+    try:
+        assert wait(lambda: c.snapshot()["telemetry"] is not None)
+        assert not any(c.snapshot()["telemetry"]["referenced"].values())  # unreferenced at connect
+        pos = dict(c.snapshot()["telemetry"]["positions"])
+        axes = c.reference_current()
+        assert axes == {1, 2, 3, 4}
+        assert all(c.snapshot()["telemetry"]["referenced"].values())
+        assert c.snapshot()["telemetry"]["positions"] == pos  # nothing moved
+    finally:
+        c.stop()
+
+
+def test_reference_current_refuses_while_moving() -> None:
+    # Positions must be stable: refuse to reference mid-move (would trust a position in flight).
+    c, _ = make()
+    try:
+        assert wait(lambda: c.snapshot()["telemetry"] is not None)
+        c.arm()
+        c.move_absolute(1, 60.0)  # a long move so motion is in progress
+        assert wait(lambda: not all(c.snapshot()["telemetry"]["motion_complete"].values()))
+        try:
+            c.reference_current()
+            raise AssertionError("expected reference_current to refuse while moving")
+        except RuntimeError as exc:
+            assert "settle" in str(exc) or "motion" in str(exc)
+    finally:
+        c.stop()
+
+
 def test_reconcile_reference_keeps_matching_drops_moved() -> None:
     from vention_printer_interface.control.controller import reconcile_reference
 

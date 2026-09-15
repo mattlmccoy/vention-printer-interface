@@ -52,6 +52,7 @@ export function ControlView({ status, gates, call, gantryStep, pistonStep, setGa
   const c = status?.controller;
   const t = c?.telemetry;
   const ok = gates.controllable && !gates.printActive;
+  const anyUnref = t?.referenced ? Object.values(t.referenced).some((v) => v === false) : false;
   const lock = !gates.controllable ? (gates.connected ? "read-only · take control from the connection pill" : "connect a controller to jog") : gates.printActive ? "a print is running · manual motion is locked" : null;
   const stepper = (v: number, set: (s: number) => void) => <div className="stepper" style={{ marginBottom: 8 }}>step {JOG_STEPS.map((s) => <button key={s} className={s === v ? "on" : ""} onClick={() => set(s)}>{s} mm</button>)}</div>;
   return (
@@ -84,7 +85,10 @@ export function ControlView({ status, gates, call, gantryStep, pistonStep, setGa
             <button className="cta" disabled={!ok} onClick={() => { if (window.confirm("Home the recoater gantry?")) call("home recoater", () => api.home([4])); }}>HOME RECOATER</button>
             <button className="cta danger" disabled={!gates.connected} onClick={() => call("stop", api.stop)}>STOP</button>
           </div>
-          <div className="hint" style={{ marginTop: 10 }}>Home one gantry at a time. Pistons are never auto-homed — homing a piston ejects powder.</div>
+          <div className="actions" style={{ marginTop: 8 }}>
+            <button className={`cta${anyUnref ? " primary" : ""}`} disabled={!ok} title="Reference every axis at its CURRENT reported position WITHOUT homing — only when the machine kept power and the positions match its own display." onClick={() => { if (window.confirm("Reference ALL axes at their CURRENT positions WITHOUT homing?\n\nOnly do this if the machine KEPT POWER and the positions shown match the machine's own HMI. If power was lost (positions read ~0), home instead.")) call("reference at current", api.referenceCurrent); }}>REFERENCE AT CURRENT{anyUnref ? " ⚠" : ""}</button>
+          </div>
+          <div className="hint" style={{ marginTop: 10 }}>Home one gantry at a time (pistons ejecting powder). Or, if the machine kept power and the positions are correct, <b>reference at current</b> to trust them without homing.</div>
         </div>
         <div className="card">
           <h3>heater</h3>

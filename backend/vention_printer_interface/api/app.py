@@ -907,6 +907,14 @@ def create_app(
         ev("disarmed")
         return status_payload()
 
+    @app.post("/api/reference/current")
+    def reference_current() -> dict[str, Any]:
+        # Operator asserts the machine kept power and the reported positions are real: reference
+        # every axis at its current position WITHOUT homing. The UI gates this behind a confirm.
+        axes = guarded(ctrl().reference_current)
+        ev("referenced_current", {"axes": sorted(axes)})
+        return status_payload()
+
     @app.post("/api/estop")
     def estop() -> Any:
         result = ctrl().estop()

@@ -42,6 +42,17 @@ def connect(c: TestClient, arm: bool = True) -> None:
         assert c.post("/api/arm").status_code == 200
 
 
+def test_reference_current_endpoint_references_without_homing(client: TestClient) -> None:
+    connect(client, arm=False)
+    wait_tel(client)
+    before = client.get("/api/status").json()["controller"]["telemetry"]["referenced"]
+    assert not any(before.values())  # unreferenced at connect
+    r = client.post("/api/reference/current")
+    assert r.status_code == 200
+    after = r.json()["controller"]["telemetry"]["referenced"]
+    assert all(after.values())  # every axis now referenced, no homing move issued
+
+
 def test_health(client: TestClient) -> None:
     h = client.get("/api/health").json()
     assert h["api_version"] == "0.1" and h["backend"] == "none"
