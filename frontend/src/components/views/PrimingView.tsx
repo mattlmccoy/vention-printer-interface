@@ -43,7 +43,7 @@ export function PrimingView({ status, gates, call, onJob, onPrint }: { status: S
   const [jobThicknessMm, setJobThicknessMm] = useState<number | null>(null);
   const [primed, setPrimed] = useState<{ part_mm: number; feed_mm: number; captured_at: number } | null>(null);
   const [jogStep, setJogStep] = useState("20"); // recoater jog step (mm) for the leveling step
-  const [feedJog, setFeedJog] = useState("2"); // feed-piston jog step (mm) for the leveling step
+  const [feedAmt, setFeedAmt] = useState(""); // editable feed-supply amount (mm); blank = saved default
   const [rcSpeed, setRcSpeed] = useState("");
   const [rcAccel, setRcAccel] = useState("");
   const am4 = status?.axis_motion?.["4"]; // recoater current max speed/accel
@@ -75,6 +75,8 @@ export function PrimingView({ status, gates, call, onJob, onPrint }: { status: S
   const target = (k: string): number | null => (s ? s[k] ?? null : null);
   const fmt = (mm: number | null) => (mm === null ? "—" : `${mm} mm`);
   const skip = () => setStep((x) => Math.min(WALKTHROUGH_STEPS.length - 1, x + 1));
+  // Feed-supply amount for the level step: the editable field, else the saved feed/precoat default.
+  const feedSupplyMm = n(feedAmt) > 0 ? n(feedAmt) : (target("thick_feed_mm") ?? 0);
 
   return (
     <div className="view fixed-page priming-view">
@@ -180,32 +182,32 @@ export function PrimingView({ status, gates, call, onJob, onPrint }: { status: S
 
             {cur.id === "level" && (
               <>
-                <div className="hint" style={{ marginTop: 0 }}>Each thick precoat runs three moves in order — the build piston stays fixed. Repeat until the bed is even.</div>
+                <div className="hint" style={{ marginTop: 0 }}>Each thick precoat runs three moves in order — the build piston stays fixed. The feed amount in ② is editable (defaults to the saved feed / precoat); change it per coat as the bed fills. Repeat until even.</div>
                 <div className="kv">
                   <span>thick precoats</span><span>{target("n_thick_precoats") ?? "—"}</span>
                   <span>feed / precoat</span><span>{fmt(target("thick_feed_mm"))}</span>
                   <span>start (past feed)</span><span>{fmt(target("level_recoat_start_mm"))}</span>
                   <span>spread to</span><span>{fmt(target("level_recoat_end_mm"))}</span>
                 </div>
-                {/* the primary 3-move precoat sequence, IN ORDER: recoater clear of feed → raise powder → spread */}
+                {/* the primary 3-move precoat sequence, IN ORDER: recoater clear of feed → raise powder
+                    → spread. Step ② carries an EDITABLE feed amount (▲ supply / ▼ down) for real control. */}
                 <div className="seq">
                   <button className="cta primary" disabled={!ok || target("level_recoat_start_mm") === null} title="① Move the recoater past the feed piston to the start position, clear of the powder about to be raised." onClick={() => call("move to start", () => api.move(4, "abs", target("level_recoat_start_mm") as number))}><b>①</b> Move to start</button>
                   <span className="seq-arrow" aria-hidden="true">→</span>
-                  <button className="cta primary" disabled={!ok || !target("thick_feed_mm")} title="② Raise the feed piston by one precoat's worth (feed / precoat) to supply powder above the bed." onClick={() => call("advance feed", () => api.move(2, "rel", -(target("thick_feed_mm") as number)))}><b>②</b> Feed ▲ supply</button>
+                  <span className="seq-feed">
+                    <b>②</b> Feed
+                    <input type="number" inputMode="decimal" value={feedAmt} placeholder={target("thick_feed_mm") != null ? String(target("thick_feed_mm")) : "mm"} onChange={(e) => setFeedAmt(e.target.value)} style={{ width: 64 }} aria-label="feed supply amount (mm)" />
+                    <span className="hint" style={{ marginTop: 0 }}>mm</span>
+                    <button className="cta primary" disabled={!ok || feedSupplyMm <= 0} title="Raise the feed piston by the amount shown to supply powder above the bed." onClick={() => call("advance feed", () => api.move(2, "rel", -feedSupplyMm))}>▲ supply</button>
+                    <button className="cta" disabled={!ok || feedSupplyMm <= 0} title="Lower the feed piston by the amount shown (retract)." onClick={() => call("lower feed", () => api.move(2, "rel", feedSupplyMm))}>▼ down</button>
+                  </span>
                   <span className="seq-arrow" aria-hidden="true">→</span>
                   <button className="cta primary" disabled={!ok || target("level_recoat_end_mm") === null} title="③ Sweep the recoater across the bed, dragging the raised powder to fill the runway and build cavity." onClick={() => call("spread", () => api.move(4, "abs", target("level_recoat_end_mm") as number))}><b>③</b> Spread ▶</button>
                 </div>
-                {/* everything below is fine manual adjustment — tucked away so the sequence stays clear */}
+                {/* recoater fine adjustment — tucked away so the sequence stays clear */}
                 <details className="params" style={{ marginTop: 16 }}>
-                  <summary>fine adjust · feed &amp; recoater jog</summary>
+                  <summary>fine adjust · recoater jog &amp; rates</summary>
                   <div className="body">
-                    <div className="btnrow">
-                      <span className="hint" style={{ marginTop: 0, minWidth: 84 }}>feed jog</span>
-                      <input type="number" inputMode="decimal" value={feedJog} onChange={(e) => setFeedJog(e.target.value)} style={{ width: 70 }} />
-                      <span className="hint" style={{ marginTop: 0 }}>mm</span>
-                      <button className="cta" disabled={!ok || n(feedJog) <= 0} title="Raise the feed piston (supply powder)" onClick={() => call("jog feed up (supply)", () => api.move(2, "rel", -n(feedJog)))}>feed ▲ up</button>
-                      <button className="cta" disabled={!ok || n(feedJog) <= 0} title="Lower the feed piston" onClick={() => call("jog feed down", () => api.move(2, "rel", n(feedJog)))}>feed ▼ down</button>
-                    </div>
                     <div className="btnrow">
                       <span className="hint" style={{ marginTop: 0, minWidth: 84 }}>recoater jog</span>
                       <input type="number" inputMode="decimal" value={jogStep} onChange={(e) => setJogStep(e.target.value)} style={{ width: 70 }} />
