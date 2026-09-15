@@ -55,6 +55,37 @@ def test_recording_file_serves_layer_accuracy_csv(client: TestClient, tmp_path: 
     assert "deviation_mm" in r.text
 
 
+def test_operator_restart_reexecs_when_idle(
+    client: TestClient, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # The in-app restart button re-execs the operator in place. Patch the actual exec away so the
+    # test process survives; assert the endpoint acks and schedules exactly one restart.
+    import vention_printer_interface.api.app as app_module
+
+    calls: list[int] = []
+    monkeypatch.setattr(app_module, "schedule_operator_restart", lambda *a, **k: calls.append(1))
+    r = client.post("/api/operator/restart")
+    assert r.status_code == 200
+    assert r.json()["ok"] is True
+    assert calls == [1]
+
+
+def test_operator_restart_refused_while_printing(
+    client: TestClient, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # Never drop an in-progress build: restart is refused while a print is RUNNING or PAUSED, and
+    # the exec is never scheduled.
+    import vention_printer_interface.api.app as app_module
+    from vention_printer_interface.control.print_controller import PrintState
+
+    called: list[int] = []
+    monkeypatch.setattr(app_module, "schedule_operator_restart", lambda *a, **k: called.append(1))
+    client.app.state.printer.state = PrintState.RUNNING  # type: ignore[attr-defined]
+    r = client.post("/api/operator/restart")
+    assert r.status_code == 409
+    assert called == []
+
+
 def test_reference_current_endpoint_references_without_homing(client: TestClient) -> None:
     connect(client, arm=False)
     wait_tel(client)
