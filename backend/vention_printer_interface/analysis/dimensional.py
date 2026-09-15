@@ -119,6 +119,34 @@ def mm_box_to_px_rect(
     return (x_px, y_px, w_px, h_px)
 
 
+def _feature_boxes() -> dict[str, tuple[float, float, float, float]]:
+    """The single source of the per-feature auto-location mm-boxes.
+
+    Both ``_auto_rois`` (after HoughCircles locates the center) and ``rois_from_circle``
+    (given a marked center) iterate this so their ROI geometry stays identical.
+    """
+    return _AUTO_LAYOUT_MM
+
+
+def px_per_mm_from_circle(radius_px: float, diameter_mm: float) -> float:
+    """px/mm implied by the marked Ø``diameter_mm`` outer circle (radius in px)."""
+    return (2.0 * radius_px) / diameter_mm
+
+
+def rois_from_circle(
+    center_px: tuple[float, float], px_per_mm: float, nominals: dict[str, Any]
+) -> dict[str, list[int]]:
+    """Feature ROIs from a known circle center — same math as ``_auto_rois``, no Hough.
+
+    ``nominals`` is accepted for signature parity with ``_auto_rois``/``analyze_run``; the
+    feature boxes come from ``_feature_boxes()`` (the shared source), not from ``nominals``.
+    """
+    rois: dict[str, list[int]] = {}
+    for feature, box_mm in _feature_boxes().items():
+        rois[feature] = list(mm_box_to_px_rect(center_px, px_per_mm, box_mm))
+    return rois
+
+
 def _report_path(run_dir: Path) -> Path:
     return Path(run_dir) / _ANALYSIS_SUBDIR / _REPORT_NAME
 
@@ -291,7 +319,7 @@ def _auto_rois(
     if center is None:
         return None
     rois: dict[str, list[int]] = {}
-    for feature, box_mm in _AUTO_LAYOUT_MM.items():
+    for feature, box_mm in _feature_boxes().items():
         rois[feature] = list(mm_box_to_px_rect(center, px_per_mm, box_mm))
     return rois
 
