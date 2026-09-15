@@ -308,9 +308,9 @@ export function PrintView({ status, gates, call, base, onJob, onRuns }: { status
         </div>
       )}
 
-      {/* routine parameters — collapsible drawer, open by default (operators tune these each run) */}
+      {/* Print Parameters — collapsible drawer, open by default (operators tune these each run) */}
       <details className="rp-drawer" open>
-        <summary>routine parameters</summary>
+        <summary>Print Parameters</summary>
         <div className="body"><RoutinePanel gates={gates} call={call} /></div>
       </details>
     </div>
