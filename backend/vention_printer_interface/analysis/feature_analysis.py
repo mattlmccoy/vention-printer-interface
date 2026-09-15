@@ -1498,7 +1498,13 @@ def recommend_compensation_overall(
             sense = "undersized" if de < 0 else "oversized"
             lines.append(f"Dot size bias (diameter error): { _pct(de) } ({sense} vs nominal).")
             lines.append(f"Diameter-based scale cross-check: multiply XY by {dm:.6f} (diagnostic only).")
-            if spacing_scale_used:  # type: ignore[name-defined]  # latent vendor NameError; preserved verbatim (defining it would change runtime behavior)
+            # Did we have a usable dot-spacing-derived motion scale? `geom_available`
+            # is True iff the centroid-pitch (spacing) errors were finite above, which
+            # is exactly the "motion frame calibrated by dot spacing" signal. When it is
+            # available we read diameter error as deposition morphology; otherwise we
+            # advise preferring dot spacing. (Fixes a latent NameError on real dot data.)
+            spacing_scale_used = geom_available
+            if spacing_scale_used:
                 lines.append(
                     "  Interpretation: dot spacing calibrates the motion frame. If spacing looks calibrated but dots are "
                     f"{sense}, the dominant error is deposition morphology (drop volume, wetting, wicking), not XY motion scale."
