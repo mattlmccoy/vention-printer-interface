@@ -553,6 +553,9 @@ button.small { height: 34px; padding: 0 12px; border: 1px solid var(--line-contr
 .still .ll { position: absolute; top: 5px; left: 6px; font: 9px var(--font-mono); color: var(--label); background: var(--scrim); padding: 1px 5px; border-radius: 5px; }
 .still .lb { position: absolute; bottom: 5px; left: 6px; font: 9px var(--font-mono); color: var(--label); background: var(--scrim); padding: 1px 5px; border-radius: 5px; }
 .mchart line { stroke: var(--line); }
+.chart-controls { display: flex; flex-wrap: wrap; gap: 12px; align-items: center; margin-bottom: 10px; }
+.chart-axes { display: flex; flex-wrap: wrap; gap: 6px; }
+.axtog { font: 11px var(--font-mono); letter-spacing: .04em; padding: 4px 9px; border-radius: 12px; border: 1px solid var(--line); background: transparent; color: var(--muted); cursor: pointer; }
 /* staged/fixed-size sections so switching runs never resizes the boxes */
 .chart-empty { min-height: 130px; display: grid; place-items: center; color: var(--muted); font-size: 13px; border: 1px dashed var(--line); border-radius: 10px; background: var(--bg-deep); }
 .stills-wrap { min-height: 150px; }

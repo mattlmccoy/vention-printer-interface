@@ -24,7 +24,7 @@ commanded-vs-actual layer-height accuracy as the headline metrology.
 - [x] T6: build-piston layer_accuracy.csv (3bb398a).
 - [x] T7: fast print-time poll (Controller.set_fast_poll / effective_poll_interval; recorder on_active_change;
       --print-poll-interval default 0.1). HW-VALIDATE: each poll = ~6 HTTP GETs, so <0.1 needs headroom.
-- [ ] T8 finish screen (frontend). [ ] T9 Runs plotting refresh (frontend). NEXT.
+- [x] T8 finish screen (430982f). [x] T9 Runs plotting refresh (this commit).
 - [ ] OLD:
 - [ ] T2 backend: `parse_actual_speed` for `/smartDrives/get/actualSpeed` JSON
       (`{"actual speed":{"1":v,...}}`). Pure, TDD.
