@@ -12,6 +12,7 @@ import hashlib
 import json
 import platform
 import re
+import statistics
 import threading
 import time
 from datetime import UTC, datetime
@@ -100,6 +101,127 @@ def motion_profile_rows(
         )
         prev_ts, prev_pos, prev_vel = ts, pos, vel
     return out
+
+
+LAYER_ACCURACY_FIELDS = [
+    "layer",
+    "phase",
+    "commanded_mm",
+    "actual_mm",
+    "deviation_mm",
+    "commanded_cum_mm",
+    "actual_cum_mm",
+]
+# Phases where the build piston actually drops one layer (so accuracy is meaningful). Postcoat and
+# setup hold the part fixed. Mirrors control.print_settings._PART_DROP_PHASES without importing it.
+_PART_DROP_PHASES = ("thin_precoat", "printing")
+
+
+def layer_accuracy_rows(
+    telemetry_rows: list[dict[str, Any]],
+    layer_rows: list[dict[str, Any]],
+    part_axis: int = 1,
+) -> list[dict[str, Any]]:
+    """Per-layer build-piston height accuracy: commanded layer thickness vs the ACTUAL settled
+    build-piston displacement.
+
+    Commanded comes from consecutive ``layers.csv`` ``part_height_mm`` deltas. Actual comes from the
+    build-piston position (``pos_<part_axis>`` in telemetry): the piston descends (position rises)
+    as the part grows, so its displacement from the first (primed) sample tracks the commanded
+    cumulative height. For each layer we take the LAST telemetry sample within that layer's window
+    (``[layer_ts, next_layer_ts)``) as the settled position. ``actual_mm``/``deviation_mm`` are
+    ``None`` when no telemetry falls in a layer's window -- unknown must never render as a real 0.
+    """
+    samples = sorted(
+        (
+            (ts, pos)
+            for row in telemetry_rows
+            if (ts := _to_float(row.get("host_timestamp_ns"))) is not None
+            and (pos := _to_float(row.get(f"pos_{part_axis}"))) is not None
+        ),
+        key=lambda x: x[0],
+    )
+    baseline = samples[0][1] if samples else None
+    ordered = sorted(layer_rows, key=lambda r: _to_float(r.get("host_timestamp_ns")) or 0.0)
+    starts = [_to_float(r.get("host_timestamp_ns")) for r in ordered]
+
+    def settled_pos(i: int) -> float | None:
+        lo = starts[i]
+        hi = starts[i + 1] if i + 1 < len(starts) else None
+        if lo is None:
+            return None
+        window = [p for ts, p in samples if ts >= lo and (hi is None or ts < hi)]
+        return window[-1] if window else None
+
+    out: list[dict[str, Any]] = []
+    prev_cmd_cum = 0.0
+    prev_actual_cum: float | None = 0.0  # baseline maps to cumulative 0
+    for i, row in enumerate(ordered):
+        cmd_cum = _to_float(row.get("part_height_mm"))
+        pos = settled_pos(i)
+        actual_cum = (pos - baseline) if (pos is not None and baseline is not None) else None
+        cmd = (cmd_cum - prev_cmd_cum) if cmd_cum is not None else None
+        actual = (
+            (actual_cum - prev_actual_cum)
+            if (actual_cum is not None and prev_actual_cum is not None)
+            else None
+        )
+        dev = (actual - cmd) if (actual is not None and cmd is not None) else None
+        out.append(
+            {
+                "layer": row.get("layer"),
+                "phase": row.get("phase"),
+                "commanded_mm": cmd,
+                "actual_mm": actual,
+                "deviation_mm": dev,
+                "commanded_cum_mm": cmd_cum,
+                "actual_cum_mm": actual_cum,
+            }
+        )
+        if cmd_cum is not None:
+            prev_cmd_cum = cmd_cum
+        if actual_cum is not None:
+            prev_actual_cum = actual_cum
+    return out
+
+
+def layer_accuracy_summary(
+    rows: list[dict[str, Any]], phases: tuple[str, ...] = _PART_DROP_PHASES
+) -> dict[str, Any]:
+    """Deviation statistics over part-drop layers with a known deviation (build-piston accuracy)."""
+    devs = [
+        r["deviation_mm"]
+        for r in rows
+        if r.get("phase") in phases and r.get("deviation_mm") is not None
+    ]
+    if not devs:
+        return {"n": 0, "mean_abs_dev_mm": None, "max_abs_dev_mm": None, "std_dev_mm": None}
+    abs_devs = [abs(d) for d in devs]
+    return {
+        "n": len(devs),
+        "mean_abs_dev_mm": statistics.fmean(abs_devs),
+        "max_abs_dev_mm": max(abs_devs),
+        "std_dev_mm": statistics.pstdev(devs) if len(devs) > 1 else 0.0,
+    }
+
+
+def _read_csv_rows(path: Path) -> list[dict[str, Any]]:
+    if not path.exists():
+        return []
+    with path.open(newline="") as f:
+        return list(csv.DictReader(f))
+
+
+def _write_layer_accuracy(run: Path) -> None:
+    """Write layer_accuracy.csv from the just-closed telemetry.csv + layers.csv (build-piston)."""
+    rows = layer_accuracy_rows(
+        _read_csv_rows(run / "telemetry.csv"), _read_csv_rows(run / "layers.csv")
+    )
+    with (run / "layer_accuracy.csv").open("w", newline="") as f:
+        writer = csv.writer(f)
+        writer.writerow(LAYER_ACCURACY_FIELDS)
+        for r in rows:
+            writer.writerow(["" if r[k] is None else r[k] for k in LAYER_ACCURACY_FIELDS])
 
 
 def _write_motion_profiles(run: Path) -> None:
@@ -279,8 +401,10 @@ class Recorder:
                 return None
             self._file.close()
             self._layers_file.close()
-            # Derive motion_profiles.csv from the streamed telemetry now that it is flushed/closed.
+            # Derive motion_profiles.csv + layer_accuracy.csv from the streamed telemetry now that
+            # it is flushed/closed (finite-diff profiles + per-layer build-piston accuracy).
             _write_motion_profiles(run)
+            _write_layer_accuracy(run)
             (run / "events.json").write_text(json.dumps(self._events, indent=2))
             manifest = {
                 "complete": True,
@@ -294,6 +418,7 @@ class Recorder:
                         "telemetry.csv",
                         "layers.csv",
                         "motion_profiles.csv",
+                        "layer_accuracy.csv",
                     )
                 },
             }
