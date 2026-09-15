@@ -18,6 +18,13 @@ interface Draft {
   recoater_return_mm: number;
   heater_start_mm: number;
   heater_speed: number; // manual override of the computed exposure sweep speed (unachievable now)
+  heater_accel: number; // recoater acceleration during the heater sweep
+  // Per-axis speed / acceleration for the PRINTING phase (drives the print-layer set_speed/set_accel
+  // steps). Clamped to each axis's safety limit on save.
+  printing_part_speed: number; printing_part_accel: number;
+  printing_feed_speed: number; printing_feed_accel: number;
+  printing_printhead_speed: number; printing_printhead_accel: number;
+  printing_recoater_speed: number; printing_recoater_accel: number;
   part_max_mm: number;
   n_jet_passes: number;
   printhead_multipass_return_mm: number;
@@ -41,6 +48,7 @@ function phaseOf(plan: Record<string, unknown>, key: string): PhaseDraft {
   return { n_layers: n(p.n_layers), layer_thickness_mm: n(p.layer_thickness_mm), feed_thickness_mm: n(p.feed_thickness_mm) };
 }
 function readDraft(plan: Record<string, unknown>): Draft {
+  const pr = (plan.printing ?? {}) as Record<string, unknown>;
   return {
     thin_precoat: phaseOf(plan, "thin_precoat"),
     postcoat: phaseOf(plan, "postcoat"),
@@ -48,6 +56,11 @@ function readDraft(plan: Record<string, unknown>): Draft {
     recoater_return_mm: n(plan.recoater_return_mm, 350),
     heater_start_mm: n(plan.heater_start_mm, 425),
     heater_speed: n(plan.heater_speed, 50),
+    heater_accel: n(plan.heater_accel, 250),
+    printing_part_speed: n(pr.part_speed, 2.5), printing_part_accel: n(pr.part_accel, 15),
+    printing_feed_speed: n(pr.feed_speed, 2.5), printing_feed_accel: n(pr.feed_accel, 15),
+    printing_printhead_speed: n(pr.printhead_speed, 100), printing_printhead_accel: n(pr.printhead_accel, 500),
+    printing_recoater_speed: n(pr.recoater_speed, 100), printing_recoater_accel: n(pr.recoater_accel, 500),
     part_max_mm: n(plan.part_max_mm, 72),
     n_jet_passes: n(plan.n_jet_passes, 1),
     printhead_multipass_return_mm: n(plan.printhead_multipass_return_mm, 250),
@@ -80,10 +93,17 @@ export function RoutinePanel({ gates, call }: { gates: Gates; call: Call }) {
   const save = () => d && call("set routine", () => {
     const patch = {
       thin_precoat: d.thin_precoat,
-      printing: { feed_thickness_mm: d.printing_feed_thickness_mm },
+      printing: {
+        feed_thickness_mm: d.printing_feed_thickness_mm,
+        part_speed: d.printing_part_speed, part_accel: d.printing_part_accel,
+        feed_speed: d.printing_feed_speed, feed_accel: d.printing_feed_accel,
+        printhead_speed: d.printing_printhead_speed, printhead_accel: d.printing_printhead_accel,
+        recoater_speed: d.printing_recoater_speed, recoater_accel: d.printing_recoater_accel,
+      },
       recoater_return_mm: d.recoater_return_mm,
       heater_start_mm: d.heater_start_mm,
       heater_speed: d.heater_speed,
+      heater_accel: d.heater_accel,
       part_max_mm: d.part_max_mm,
       n_jet_passes: d.n_jet_passes,
       printhead_multipass_return_mm: d.printhead_multipass_return_mm,
@@ -130,9 +150,19 @@ export function RoutinePanel({ gates, call }: { gates: Gates; call: Call }) {
         </div>
 
         <div className="rp-card">
+          <h4>axis motion · printing</h4>
+          <div className="rp-note" style={{ marginTop: 0 }}>speed / accel per axis for printing layers — clamped to each axis's safety limit on save.</div>
+          <div className="rp-row"><span>build (mm/s · mm/s²)</span><span className="rv"><NumberField step="0.1" value={d.printing_part_speed} disabled={!ok} style={{ width: 60 }} onChange={(v) => setD({ printing_part_speed: v })} /> / <NumberField step="1" value={d.printing_part_accel} disabled={!ok} style={{ width: 64 }} onChange={(v) => setD({ printing_part_accel: v })} /></span></div>
+          <div className="rp-row"><span>feed (mm/s · mm/s²)</span><span className="rv"><NumberField step="0.1" value={d.printing_feed_speed} disabled={!ok} style={{ width: 60 }} onChange={(v) => setD({ printing_feed_speed: v })} /> / <NumberField step="1" value={d.printing_feed_accel} disabled={!ok} style={{ width: 64 }} onChange={(v) => setD({ printing_feed_accel: v })} /></span></div>
+          <div className="rp-row"><span>printhead (mm/s · mm/s²)</span><span className="rv"><NumberField step="1" value={d.printing_printhead_speed} disabled={!ok} style={{ width: 60 }} onChange={(v) => setD({ printing_printhead_speed: v })} /> / <NumberField step="10" value={d.printing_printhead_accel} disabled={!ok} style={{ width: 64 }} onChange={(v) => setD({ printing_printhead_accel: v })} /></span></div>
+          <div className="rp-row"><span>recoater (mm/s · mm/s²)</span><span className="rv"><NumberField step="1" value={d.printing_recoater_speed} disabled={!ok} style={{ width: 60 }} onChange={(v) => setD({ printing_recoater_speed: v })} /> / <NumberField step="10" value={d.printing_recoater_accel} disabled={!ok} style={{ width: 64 }} onChange={(v) => setD({ printing_recoater_accel: v })} /></span></div>
+        </div>
+
+        <div className="rp-card">
           <h4>heat</h4>
           <div className="rp-row"><span>heater start (mm)</span><span className="rv"><NumberField value={d.heater_start_mm} disabled={!ok} onChange={(v) => setD({ heater_start_mm: v })} /></span></div>
           <div className="rp-row"><span title="Manual recoater sweep speed during the heater pass — overrides the computed exposure sweep (unachievable on current hardware).">heater speed (mm/s)</span><span className="rv"><NumberField step="1" value={d.heater_speed} disabled={!ok} onChange={(v) => setD({ heater_speed: v })} /></span></div>
+          <div className="rp-row"><span title="Recoater acceleration during the heater sweep (paired with heater speed).">heater accel (mm/s²)</span><span className="rv"><NumberField step="10" value={d.heater_accel} disabled={!ok} onChange={(v) => setD({ heater_accel: v })} /></span></div>
           <div className="rp-row"><span>pre-heater drop (mm)</span><span className="rv"><NumberField step="0.1" value={d.pre_heater_drop_mm} disabled={!ok} onChange={(v) => setD({ pre_heater_drop_mm: v })} /></span></div>
         </div>
 
