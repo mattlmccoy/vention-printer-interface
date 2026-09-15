@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useState, type MouseEvent as ReactMouseEvent } from "react";
 import { api, type RunMeta } from "../../lib/api.ts";
 import type { Gates } from "../../lib/format.ts";
 import type { StatusPayload } from "../../lib/telemetry.ts";
@@ -38,6 +38,7 @@ const METRIC_LABEL: Record<Metric, string> = { pos: "position", vel: "velocity",
 
 /** One axis's metric over time (its own y-scale), for the stacked small-multiples. */
 function AxisPanel({ series, tMax, label, color, unit }: { series: { t: number; v: number }[]; tMax: number; label: string; color: string; unit: string }) {
+  const [hi2, setHi2] = useState<number | null>(null);
   const W = 560, H = 82, padL = 54, padR = 10, padB = 4, padT = 6, plotH = H - padT - padB, plotW = W - padL - padR;
   const vs = series.map((p) => p.v);
   const lo = Math.min(0, ...vs);
@@ -48,13 +49,27 @@ function AxisPanel({ series, tMax, label, color, unit }: { series: { t: number; 
   const dec = (v: number) => (Math.abs(v) >= 100 ? "0" : Math.abs(v) >= 10 ? "1" : "2");
   const mid = (lo + hi) / 2;
   const tnum = { fontVariantNumeric: "tabular-nums" } as const;
+  const onMove = (e: ReactMouseEvent<SVGSVGElement>) => {
+    if (series.length === 0) return;
+    const r = e.currentTarget.getBoundingClientRect();
+    const vx = ((e.clientX - r.left) / r.width) * W;          // client px -> viewBox x
+    const t = tMax * (vx - padL) / plotW;
+    let best = 0, bd = Infinity;
+    for (let i = 0; i < series.length; i++) { const d = Math.abs(series[i].t - t); if (d < bd) { bd = d; best = i; } }
+    setHi2(best);
+  };
+  const hp = hi2 != null ? series[hi2] : null;
   return (
-    <svg className="axpanel" viewBox={`0 0 ${W} ${H}`} style={{ width: "100%", height: "auto" }} role="img" aria-label={`${label} ${unit}`}>
+    <svg className="axpanel" viewBox={`0 0 ${W} ${H}`} style={{ width: "100%", height: "auto" }} role="img" aria-label={`${label} ${unit}`}
+      onMouseMove={onMove} onMouseLeave={() => setHi2(null)}>
       {/* seaborn whitegrid: faint horizontal gridlines, no boxed spines */}
       {[hi, mid, lo].map((v) => <line key={v} x1={padL} y1={y(v)} x2={W - padR} y2={y(v)} stroke="var(--line)" strokeWidth="1" />)}
       {lo < 0 && <line x1={padL} y1={y(0)} x2={W - padR} y2={y(0)} stroke="var(--faint)" strokeWidth="1" strokeDasharray="2 3" />}
       <polyline points={series.map((p) => `${x(p.t)},${y(p.v)}`).join(" ")} fill="none" stroke={color} strokeWidth="1.4" strokeLinejoin="round" strokeLinecap="round" />
+      {hp && <line x1={x(hp.t)} y1={padT} x2={x(hp.t)} y2={H - padB} stroke="var(--faint)" strokeWidth="1" strokeDasharray="2 2" pointerEvents="none" />}
+      {hp && <circle cx={x(hp.t)} cy={y(hp.v)} r={3} fill={color} pointerEvents="none" />}
       <text x={padL + 5} y={padT + 10} fontSize="10" fill="var(--muted)" fontFamily={PLOT_FONT} fontWeight={500}>{label}</text>
+      {hp && <text x={W - padR} y={padT + 10} fontSize="9" fill="var(--fg-strong)" textAnchor="end" fontFamily={PLOT_FONT} style={tnum} pointerEvents="none">{hp.t.toFixed(1)} s · {hp.v.toFixed(Number(dec(hp.v)))} {unit}</text>}
       <text x={padL - 6} y={padT + 8} fontSize="8.5" fill="var(--faint)" textAnchor="end" fontFamily={PLOT_FONT} style={tnum}>{hi.toFixed(Number(dec(hi)))}</text>
       <text x={padL - 6} y={H - padB} fontSize="8.5" fill="var(--faint)" textAnchor="end" fontFamily={PLOT_FONT} style={tnum}>{lo.toFixed(Number(dec(lo)))}</text>
       <text x={padL - 30} y={padT + plotH / 2} fontSize="8.5" fill="var(--faint)" textAnchor="middle" fontFamily={PLOT_FONT} transform={`rotate(-90 ${padL - 30} ${padT + plotH / 2})`}>{unit}</text>
@@ -65,6 +80,7 @@ function AxisPanel({ series, tMax, label, color, unit }: { series: { t: number; 
 /** layer_accuracy.csv → per-layer build-piston deviation (actual − commanded) in microns, as signed
  *  lollipops around a zero line with a ±tolerance band; out-of-tolerance layers flagged red. */
 function BuildDeviationChart({ rows, tolUm }: { rows: LayerAccuracy[]; tolUm: number }) {
+  const [hov, setHov] = useState<number | null>(null);
   const pts = rows
     .filter((r) => (r.phase === "thin_precoat" || r.phase === "printing") && r.deviation_mm != null && r.layer != null)
     .map((r) => ({ layer: r.layer as number, devUm: (r.deviation_mm as number) * 1000 }));
@@ -91,14 +107,39 @@ function BuildDeviationChart({ rows, tolUm }: { rows: LayerAccuracy[]; tolUm: nu
       ))}
       {pts.map((p, i) => {
         const col = Math.abs(p.devUm) <= tolUm ? "var(--plot-1)" : "var(--plot-warn)";
+        const on = hov === i;
         return (
           <g key={p.layer}>
-            <line x1={x(i)} y1={zeroY} x2={x(i)} y2={y(p.devUm)} stroke={col} strokeWidth="1.3" />
-            <circle cx={x(i)} cy={y(p.devUm)} r="2.4" fill={col} />
+            <line x1={x(i)} y1={zeroY} x2={x(i)} y2={y(p.devUm)} stroke={col} strokeWidth={on ? 1.8 : 1.3} />
+            <circle cx={x(i)} cy={y(p.devUm)} r={on ? 3.6 : 2.4} fill={col} />
             {(i % stepEvery === 0 || i === pts.length - 1) && <text x={x(i)} y={H - padB + 13} fontSize="8.5" fill="var(--faint)" textAnchor="middle" fontFamily={PLOT_FONT} style={tnum}>{p.layer}</text>}
           </g>
         );
       })}
+      {/* wide invisible hit targets so points are easy to hover; native <title> is the fallback */}
+      {pts.map((p, i) => (
+        <circle key={`hit-${p.layer}`} cx={x(i)} cy={y(p.devUm)} r={9} fill="transparent"
+          onMouseEnter={() => setHov(i)} onMouseLeave={() => setHov(null)} style={{ cursor: "pointer" }}>
+          <title>{`layer ${p.layer}: ${p.devUm >= 0 ? "+" : ""}${Math.round(p.devUm)} µm`}</title>
+        </circle>
+      ))}
+      {hov != null && (() => {
+        const p = pts[hov];
+        const out = Math.abs(p.devUm) > tolUm;
+        const dv = Number(p.devUm.toFixed(1)) + 0;  // normalize -0.0 -> 0.0
+        const label = `L${p.layer}   ${dv >= 0 ? "+" : ""}${dv.toFixed(1)} µm`;
+        const boxW = Math.max(84, label.length * 6.4), boxH = 30;
+        const bx = Math.max(padL, Math.min(x(hov) - boxW / 2, W - padR - boxW));
+        const above = y(p.devUm) > padT + boxH + 10;
+        const by = above ? y(p.devUm) - boxH - 9 : y(p.devUm) + 9;
+        return (
+          <g pointerEvents="none">
+            <rect x={bx} y={by} width={boxW} height={boxH} rx={4} fill="var(--panel)" stroke="var(--line-strong)" strokeWidth="1" />
+            <text x={bx + boxW / 2} y={by + 13} fontSize="10" fill="var(--fg-strong)" textAnchor="middle" fontFamily={PLOT_FONT} style={tnum}>{label}</text>
+            <text x={bx + boxW / 2} y={by + 24} fontSize="8.5" fill={out ? "var(--plot-warn)" : "var(--muted)"} textAnchor="middle" fontFamily={PLOT_FONT}>{out ? `outside ±${tolUm} µm` : `within ±${tolUm} µm`}</text>
+          </g>
+        );
+      })()}
       <text x={padL - 34} y={padT + plotH / 2} fontSize="9.5" fill="var(--muted)" textAnchor="middle" fontFamily={PLOT_FONT} transform={`rotate(-90 ${padL - 34} ${padT + plotH / 2})`}>deviation (µm)</text>
       <text x={padL + plotW / 2} y={H - 3} fontSize="9.5" fill="var(--faint)" textAnchor="middle" fontFamily={PLOT_FONT}>layer number{nOut > 0 ? ` · ${nOut} of ${pts.length} outside ±${tolUm} µm` : ` · all ${pts.length} within ±${tolUm} µm`}</text>
     </svg>
