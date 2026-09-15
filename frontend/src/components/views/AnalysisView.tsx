@@ -2,7 +2,7 @@ import { useEffect, useRef, useState } from "react";
 import type { PointerEvent as ReactPointerEvent } from "react";
 import { api, type DimensionalReport, type RunMeta } from "../../lib/api.ts";
 import type { Gates } from "../../lib/format.ts";
-import { analysisStatusKind, analysisStatusMessage, compensationRows, featureTiles } from "../../lib/analysis.ts";
+import { analysisStatusKind, analysisStatusMessage, calibrationChip, compensationRows, featureTiles, roiEditPrompt } from "../../lib/analysis.ts";
 import { roiBoxesFromCircle, type Circle } from "../../lib/roi.ts";
 import type { Call } from "./types.ts";
 
@@ -157,6 +157,8 @@ export function AnalysisView({ gates, call, base }: { gates: Gates; call: Call; 
   const kind = analysisStatusKind(status);
   const comp = report?.compensation ?? null;
   const tiles = report ? featureTiles(report) : [];
+  const calWarn = report ? calibrationChip(report) : null;
+  const roiPrompt = roiEditPrompt(status);
   const analyze = () => call("analyze run", () => api.analysisRun(sel).then(setReport));
   const copy = () => { if (comp?.human) { navigator.clipboard?.writeText(comp.human).then(() => setCopied(true)).catch(() => undefined); } };
   // Seed the initial circle once the still's natural size is known: centered, radius ~40% of the
@@ -195,6 +197,7 @@ export function AnalysisView({ gates, call, base }: { gates: Gates; call: Call; 
                 <h3>{dispName(selRun)} · {label(selRun.run)}
                   <span className={`state-pill ${kind === "ok" ? "ok" : kind === "empty" ? "" : "bad"}`}>{status.replace("_", " ")}</span>
                 </h3>
+                {calWarn && <div style={{ marginTop: 6 }}><span className="chip warn" title="the marked circle and the camera calibration disagree — the circle scale is being used">{calWarn}</span></div>}
                 {kind !== "ok" && (
                   <div className={`banner ${kind === "error" ? "err" : ""}`} style={{ marginTop: 4 }}>
                     <span className="reason">{analysisStatusMessage(status, report?.message)}</span>
@@ -235,6 +238,7 @@ export function AnalysisView({ gates, call, base }: { gates: Gates; call: Call; 
                     <div className="chart-empty">no registered capture to show for this run</div>
                   ) : editing ? (
                     <>
+                      {roiPrompt && <div className="banner err" style={{ marginBottom: 12 }}><span className="reason">{roiPrompt}</span></div>}
                       <RoiEditor stillUrl={stillUrl} circle={circle} natSize={natSize} onChange={setCircle} onLoad={onStillLoad} />
                       <div className="btnrow" style={{ marginTop: 12 }}>
                         <button className="cta primary sm" disabled={!gates.reachable || !circle} onClick={analyzeCircle}>Analyze with this circle</button>

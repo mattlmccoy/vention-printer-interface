@@ -68,6 +68,11 @@ export interface DimensionalReport {
   features?: Record<string, Record<string, number | null>>;
   compensation?: Compensation | null;
   tool_provenance?: Record<string, unknown>;
+  // How the scale/ROIs were derived and any honest cross-check warning — see backend
+  // analysis/dimensional.py (roi_source/calibration_source/calibration_warning on DimensionalReport).
+  roi_source?: string | null;
+  calibration_source?: string | null;
+  calibration_warning?: string | null;
 }
 // Optional operator-marked outer circle (still natural-pixel coords), mirrors backend
 // app.py CircleAnchor (cx_px/cy_px/radius_px). When present, the backend derives px/mm and the
