@@ -60,6 +60,20 @@ test("printing layer: multi-pass jetting + pre-heater drop and return-up", () =>
   assert.ok(Math.max(...jet) < iDrop && iDrop < iHeaterOn && iHeaterOn < iUp);
 });
 
+test("heater off: printhead home + recoater reposition run concurrently (one wait)", () => {
+  const p = { ...DEFAULT_PLAN,
+    thin_precoat: { ...DEFAULT_PLAN.thin_precoat, n_layers: 0 },
+    printing: { ...DEFAULT_PLAN.printing, n_layers: 1 }, postcoat: { ...DEFAULT_PLAN.postcoat, n_layers: 0 },
+    heater_enabled: false };
+  const ks = compilePrint(p).filter((s) => s.phase === "printing").map((s) => [s.kind, s.axis, s.value] as const);
+  const iJet = ks.findIndex((k) => k[0] === "move_abs" && k[1] === 3 && k[2] === p.printhead_end_mm);
+  assert.deepEqual(ks[iJet + 1], ["wait", null, null]);
+  assert.deepEqual(ks[iJet + 2], ["move_abs", 3, p.printhead_home_mm]);   // printhead home  \ concurrent
+  assert.deepEqual(ks[iJet + 3], ["move_abs", 4, p.recoater_end_mm]);     // recoater reposition / one wait
+  assert.deepEqual(ks[iJet + 4], ["wait", null, null]);
+  assert.equal(ks[iJet + 5][0], "mark"); // layer_end right after
+});
+
 test("compile of the full default plan: 13 layers, heights, resets", () => {
   const steps = compilePrint(DEFAULT_PLAN);
   // heater disabled by default -> no 425->600 sweep and no heater toggles anywhere
