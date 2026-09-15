@@ -11,6 +11,16 @@ import { Toggle } from "./Toggle.tsx";
  *  with api.setPrintSettings, and re-reads the exposure from each response. */
 
 interface PhaseDraft { n_layers: number; layer_thickness_mm: number; feed_thickness_mm: number }
+interface Speeds {
+  part_speed: number; part_accel: number; feed_speed: number; feed_accel: number;
+  printhead_speed: number; printhead_accel: number; recoater_speed: number; recoater_accel: number;
+}
+const AXIS_SPEEDS: readonly [keyof Speeds, keyof Speeds, string, string, string][] = [
+  ["part_speed", "part_accel", "build", "0.1", "1"],
+  ["feed_speed", "feed_accel", "feed", "0.1", "1"],
+  ["printhead_speed", "printhead_accel", "printhead", "1", "10"],
+  ["recoater_speed", "recoater_accel", "recoater", "1", "10"],
+];
 interface Draft {
   thin_precoat: PhaseDraft;
   postcoat: PhaseDraft; // N postcoat layers × layer height (just like precoats), when enabled
@@ -39,6 +49,33 @@ interface Draft {
   target_carbon_wt: number;
   part_area_mm2: number;
   heater_section_power_w: number;
+  // ---- advanced (full surface) ----
+  precoat_speeds: Speeds;   // thin_precoat per-axis speed/accel
+  postcoat_speeds: Speeds;  // postcoat per-axis speed/accel
+  // machine geometry — absolute positions (rarely changed once commissioned)
+  feed_end_mm: number;
+  recoater_home_mm: number;
+  recoater_end_mm: number;
+  heater_home_mm: number;
+  heater_end_mm: number;
+  printhead_home_mm: number;
+  printhead_end_mm: number;
+  // timing / misc
+  settle_s: number;
+  feed_fast_speed: number;
+  feed_fast_accel: number;
+  n_heater_passes: number;
+  capture_stages: boolean;
+}
+
+function speedsOf(phase: Record<string, unknown>): Speeds {
+  const g = (k: keyof Speeds, fb: number) => n(phase[k], fb);
+  return {
+    part_speed: g("part_speed", 2.5), part_accel: g("part_accel", 15),
+    feed_speed: g("feed_speed", 2.5), feed_accel: g("feed_accel", 15),
+    printhead_speed: g("printhead_speed", 100), printhead_accel: g("printhead_accel", 500),
+    recoater_speed: g("recoater_speed", 100), recoater_accel: g("recoater_accel", 500),
+  };
 }
 
 function n(v: unknown, fb = 0): number { return typeof v === "number" && Number.isFinite(v) ? v : fb; }
@@ -75,6 +112,20 @@ function readDraft(plan: Record<string, unknown>): Draft {
     target_carbon_wt: n(plan.target_carbon_wt),
     part_area_mm2: n(plan.part_area_mm2),
     heater_section_power_w: n(plan.heater_section_power_w),
+    precoat_speeds: speedsOf((plan.thin_precoat ?? {}) as Record<string, unknown>),
+    postcoat_speeds: speedsOf((plan.postcoat ?? {}) as Record<string, unknown>),
+    feed_end_mm: n(plan.feed_end_mm, 145),
+    recoater_home_mm: n(plan.recoater_home_mm, 5),
+    recoater_end_mm: n(plan.recoater_end_mm, 950),
+    heater_home_mm: n(plan.heater_home_mm, 5),
+    heater_end_mm: n(plan.heater_end_mm, 600),
+    printhead_home_mm: n(plan.printhead_home_mm, 5),
+    printhead_end_mm: n(plan.printhead_end_mm, 900),
+    settle_s: n(plan.settle_s, 1),
+    feed_fast_speed: n(plan.feed_fast_speed, 5),
+    feed_fast_accel: n(plan.feed_fast_accel, 30),
+    n_heater_passes: n(plan.n_heater_passes, 1),
+    capture_stages: typeof plan.capture_stages === "boolean" ? plan.capture_stages : false,
   };
 }
 
@@ -92,7 +143,7 @@ export function RoutinePanel({ gates, call }: { gates: Gates; call: Call }) {
   const setPh = (key: "thin_precoat" | "postcoat", patch: Partial<PhaseDraft>) => d && setD({ [key]: { ...d[key], ...patch } } as Partial<Draft>);
   const save = () => d && call("set routine", () => {
     const patch = {
-      thin_precoat: d.thin_precoat,
+      thin_precoat: { ...d.thin_precoat, ...d.precoat_speeds },
       printing: {
         feed_thickness_mm: d.printing_feed_thickness_mm,
         part_speed: d.printing_part_speed, part_accel: d.printing_part_accel,
@@ -115,13 +166,34 @@ export function RoutinePanel({ gates, call }: { gates: Gates; call: Call }) {
       purge_every_n_layers: d.purge_every_n_layers,
       pre_heater_drop_mm: d.pre_heater_drop_mm,
       postcoat_enabled: d.postcoat_enabled,
-      postcoat: d.postcoat,
+      postcoat: { ...d.postcoat, ...d.postcoat_speeds },
       target_carbon_wt: d.target_carbon_wt,
       part_area_mm2: d.part_area_mm2,
       heater_section_power_w: d.heater_section_power_w,
+      feed_end_mm: d.feed_end_mm,
+      recoater_home_mm: d.recoater_home_mm,
+      recoater_end_mm: d.recoater_end_mm,
+      heater_home_mm: d.heater_home_mm,
+      heater_end_mm: d.heater_end_mm,
+      printhead_home_mm: d.printhead_home_mm,
+      printhead_end_mm: d.printhead_end_mm,
+      settle_s: d.settle_s,
+      feed_fast_speed: d.feed_fast_speed,
+      feed_fast_accel: d.feed_fast_accel,
+      n_heater_passes: d.n_heater_passes,
+      capture_stages: d.capture_stages,
     };
     return api.setPrintSettings(patch).then((np) => { setP(np); setDraft(readDraft(np.plan)); setDirty(false); });
   });
+  const speedRows = (sp: Speeds, set: (patch: Partial<Speeds>) => void) =>
+    AXIS_SPEEDS.map(([sk, ak, label, sstep, astep]) => (
+      <div className="rp-row" key={label}><span>{label} (mm/s · mm/s²)</span><span className="rv">
+        <NumberField step={sstep} value={sp[sk]} disabled={!ok} style={{ width: 58 }} onChange={(v) => set({ [sk]: v } as Partial<Speeds>)} /> / <NumberField step={astep} value={sp[ak]} disabled={!ok} style={{ width: 62 }} onChange={(v) => set({ [ak]: v } as Partial<Speeds>)} />
+      </span></div>
+    ));
+  const pos = (label: string, key: keyof Draft, title?: string) => (
+    <div className="rp-row"><span title={title}>{label}</span><span className="rv"><NumberField value={d![key] as number} disabled={!ok} onChange={(v) => setD({ [key]: v } as Partial<Draft>)} /></span></div>
+  );
   if (!p || !d) return <div className="hint">loading routine…</div>;
   const exp = p.exposure;
   return (
@@ -188,6 +260,42 @@ export function RoutinePanel({ gates, call }: { gates: Gates; call: Call }) {
           <div className="rp-note">Absolute position the part cylinder is driven to when the print finishes.</div>
         </div>
       </div>
+
+      <details className="rp-advanced">
+        <summary>advanced · per-phase speeds, machine geometry, timing</summary>
+        <div className="rp-grid" style={{ marginTop: 12 }}>
+          <div className="rp-card">
+            <h4>precoat axis motion</h4>
+            <div className="rp-note" style={{ marginTop: 0 }}>per-axis speed/accel for thin-precoat layers.</div>
+            {speedRows(d.precoat_speeds, (patch) => setD({ precoat_speeds: { ...d.precoat_speeds, ...patch } }))}
+          </div>
+          <div className="rp-card">
+            <h4>postcoat axis motion</h4>
+            <div className="rp-note" style={{ marginTop: 0 }}>per-axis speed/accel for postcoat cover layers.</div>
+            {speedRows(d.postcoat_speeds, (patch) => setD({ postcoat_speeds: { ...d.postcoat_speeds, ...patch } }))}
+          </div>
+          <div className="rp-card">
+            <h4>machine geometry · positions (mm)</h4>
+            <div className="rp-note" style={{ marginTop: 0 }}>absolute axis positions — set at commissioning, rarely changed per run.</div>
+            {pos("feed end (top)", "feed_end_mm", "The feed piston's raised/full position.")}
+            {pos("recoater home (spread)", "recoater_home_mm")}
+            {pos("recoater end (far)", "recoater_end_mm", "Where the recoater parks past the feed piston before spreading.")}
+            {pos("printhead home", "printhead_home_mm")}
+            {pos("printhead end (jet)", "printhead_end_mm", "Far end of the printhead's jetting pass.")}
+            {pos("heater home", "heater_home_mm")}
+            {pos("heater end (sweep)", "heater_end_mm", "End of the heater sweep (e.g. 600).")}
+          </div>
+          <div className="rp-card">
+            <h4>timing &amp; misc</h4>
+            {pos("settle (s)", "settle_s", "Dwell after the feed-up before spreading.")}
+            {pos("fast feed speed (mm/s)", "feed_fast_speed", "Speed for non-layer feed repositioning.")}
+            {pos("fast feed accel (mm/s²)", "feed_fast_accel")}
+            {pos("heater passes", "n_heater_passes")}
+            <div className="rp-row"><span title="Emit layerwise vision capture marks during the print (needs cameras).">capture stages</span><span className="rv"><Toggle checked={d.capture_stages} disabled={!ok} onChange={(v) => setD({ capture_stages: v })} /></span></div>
+          </div>
+        </div>
+      </details>
+
       <div className="actions one tight" style={{ marginTop: 12 }}>
         <button className="cta" disabled={!ok || !dirty} onClick={save}>SET ROUTINE</button>
       </div>
