@@ -41,6 +41,29 @@ def test_dot_bias_with_spacing_available_reads_as_morphology() -> None:
     assert "Prefer dot spacing for motion scale when available." not in report
 
 
+def test_dot_bias_large_but_finite_spacing_still_reads_as_morphology() -> None:
+    """Gate is availability, not calibration-quality.
+
+    Spacing errors are large (far outside the 0.20% action threshold) but finite,
+    so a dot-spacing motion scale WAS measured. The report must still route to the
+    morphology interpretation, not the "prefer dot spacing when available" advice.
+    This assertion fails under threshold-based gating and passes under the correct
+    availability-based gating, pinning the intended semantics.
+    """
+    dot = {
+        # measured but far off (>> 0.20% threshold) -> still "available"
+        "spacing_x_error_pct": 1.50,
+        "spacing_y_error_pct": -1.20,
+        "diameter_error_pct": -1.20,
+        "scale_xy_from_diameter": 1.012146,
+    }
+
+    report = _report_for_dot(dot)
+
+    assert "dot spacing calibrates the motion frame" in report
+    assert "Prefer dot spacing for motion scale when available." not in report
+
+
 def test_dot_bias_without_spacing_advises_prefer_spacing() -> None:
     """No dot-spacing signal: advise preferring dot spacing for motion scale."""
     dot = {
