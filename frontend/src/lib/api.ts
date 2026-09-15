@@ -55,7 +55,7 @@ export interface VisionDevice { index: number; stable_id: string | null; name: s
 // NOT an error; the devices are still listable/assignable. ok/denied/no_devices as before.
 export interface VisionDevicesResponse { devices: VisionDevice[]; camera_access: "ok" | "unknown" | "denied" | "no_devices" }
 // GET/PUT /api/vision/roles body/response shape: a stable_id -> role ("overview"/"science") map.
-export interface RunMeta { run: string; complete: boolean; size_bytes: number; name?: string; notes?: string; started_at?: string | number | null; layer_count?: number | null; duration_s?: number | null }
+export interface RunMeta { run: string; complete: boolean; size_bytes: number; name?: string; notes?: string; started_at?: string | number | null; layer_count?: number | null; duration_s?: number | null; capture_count?: number | null }
 // Lane A dimensional analysis — GET/POST /api/analysis/{run}/dimensional (see backend
 // vention_printer_interface/analysis/dimensional.py DimensionalReport). Non-"ok" statuses are
 // honest 200 reports with features:{} and compensation:null — never fabricated metrics.

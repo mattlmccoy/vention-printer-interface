@@ -6,7 +6,6 @@ import { analysisStatusKind, analysisStatusMessage, calibrationChip, compensatio
 import { roiBoxesFromCircle, type Circle } from "../../lib/roi.ts";
 import type { Call } from "./types.ts";
 
-const fmtSize = (b: number) => (b > 1e9 ? `${(b / 1e9).toFixed(1)} GB` : b > 1e6 ? `${(b / 1e6).toFixed(0)} MB` : `${(b / 1e3).toFixed(0)} kB`);
 const label = (run: string) => `${run.slice(0, 8)} ${run.slice(9, 11)}:${run.slice(11, 13)}`;
 const dispName = (r: RunMeta) => r.name || r.run.slice(16) || r.run;
 const capturePath = (layer: number, stage: string) => `vision/layer_${String(layer).padStart(4, "0")}/${stage}.png`;
@@ -135,7 +134,9 @@ export function AnalysisView({ gates, call, base }: { gates: Gates; call: Call; 
   const [circle, setCircle] = useState<Circle | null>(null);
   const [natSize, setNatSize] = useState<{ w: number; h: number } | null>(null);
 
-  useEffect(() => { api.recordings().then((r) => { setRuns(r.runs); setSel((c) => c || (r.runs.length ? r.runs[r.runs.length - 1].run : "")); }).catch(() => undefined); }, []);
+  // Only runs with something to analyze appear here: dimensional accuracy needs a captured image,
+  // so a run without vision captures (capture_count 0) is not listed.
+  useEffect(() => { api.recordings().then((r) => { const a = r.runs.filter((x) => (x.capture_count ?? 0) > 0); setRuns(a); setSel((c) => c || (a.length ? a[a.length - 1].run : "")); }).catch(() => undefined); }, []);
   useEffect(() => {
     if (!sel) { setReport(null); return; }
     let live = true; setCopied(false); setEditing(false); setCircle(null); setNatSize(null);
@@ -184,10 +185,10 @@ export function AnalysisView({ gates, call, base }: { gates: Gates; call: Call; 
           {[...runs].reverse().map((r) => (
             <button key={r.run} className={`runitem${r.run === sel ? " on" : ""}`} onClick={() => setSel(r.run)}>
               <span className="rn">{dispName(r)}</span>
-              <span className="rd">{label(r.run)} · {r.layer_count != null ? `${r.layer_count} L` : fmtSize(r.size_bytes)}</span>
+              <span className="rd">{label(r.run)} · {r.capture_count} {r.capture_count === 1 ? "capture" : "captures"}</span>
             </button>
           ))}
-          {runs.length === 0 && <div className="hint">no runs yet</div>}
+          {runs.length === 0 && <div className="hint">no analyzable runs yet — a run appears here once it has captured images (vision).</div>}
         </div>
 
         <div className="grid-gap">
