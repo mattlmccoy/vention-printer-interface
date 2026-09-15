@@ -28,6 +28,12 @@ export function JobView({ status, gates, call, onStarted }: { status: StatusPayl
   useEffect(() => { refresh(); }, [gates.reachable, job?.path]);
   const edit = (patch: Partial<PrintSettings>) => plan && (setPlan({ ...plan, ...patch }), setDirty(true));
   const editPh = (ph: "thin_precoat" | "printing" | "postcoat", patch: Partial<PrintSettings["printing"]>) => plan && edit({ [ph]: { ...plan[ph], ...patch } } as Partial<PrintSettings>);
+  // Apply a per-phase speed/accel uniformly to all three phases (the UI edits them together).
+  const editAllPhases = (patch: Partial<PrintSettings["printing"]>) => plan && edit({
+    thin_precoat: { ...plan.thin_precoat, ...patch },
+    printing: { ...plan.printing, ...patch },
+    postcoat: { ...plan.postcoat, ...patch },
+  } as Partial<PrintSettings>);
   // Job tab does NOT own the routine-only fields (multipass n_jet_passes, pre_heater_drop_mm) — those
   // live in Routine Parameters. Strip them from every save so navigating Job never clobbers them.
   const jobPatch = (p: PrintSettings): Record<string, unknown> => { const { n_jet_passes: _a, pre_heater_drop_mm: _b, ...rest } = p as unknown as Record<string, unknown>; return rest; };
@@ -161,14 +167,37 @@ export function JobView({ status, gates, call, onStarted }: { status: StatusPayl
         <div className="body">
           {plan ? (
             <div className="fields adv" style={{ marginTop: 0 }}>
-              <span>piston speed</span><span className="row"><input type="number" step="0.1" value={plan.printing.part_speed} disabled={running} onChange={(e) => { const s = num(e.target.value, plan.printing.part_speed); const u = (p: PrintSettings["printing"]) => ({ ...p, part_speed: s, feed_speed: s }); edit({ thin_precoat: u(plan.thin_precoat), printing: u(plan.printing), postcoat: u(plan.postcoat) }); }} /> mm/s</span>
-              <span>recoater speed</span><span className="row"><input type="number" value={plan.printing.recoater_speed} disabled={running} onChange={(e) => { const s = num(e.target.value, plan.printing.recoater_speed); edit({ thin_precoat: { ...plan.thin_precoat, recoater_speed: s }, printing: { ...plan.printing, recoater_speed: s }, postcoat: { ...plan.postcoat, recoater_speed: s } }); }} /> mm/s</span>
-              <span>printhead speed</span><span className="row"><input type="number" value={plan.printing.printhead_speed} disabled={running} onChange={(e) => editPh("printing", { printhead_speed: num(e.target.value, plan.printing.printhead_speed) })} /> mm/s</span>
-              <span>heater speed</span><span className="row"><input type="number" value={plan.heater_speed} disabled={running} onChange={(e) => edit({ heater_speed: num(e.target.value, plan.heater_speed) })} /> mm/s</span>
-              <span>recoater end</span><span className="row"><input type="number" value={plan.recoater_end_mm} disabled={running} onChange={(e) => edit({ recoater_end_mm: num(e.target.value, plan.recoater_end_mm) })} /> mm</span>
-              <span>printhead end</span><span className="row"><input type="number" value={plan.printhead_end_mm} disabled={running} onChange={(e) => edit({ printhead_end_mm: num(e.target.value, plan.printhead_end_mm) })} /> mm</span>
-              <span>heater end</span><span className="row"><input type="number" value={plan.heater_end_mm} disabled={running} onChange={(e) => edit({ heater_end_mm: num(e.target.value, plan.heater_end_mm) })} /> mm</span>
-              <span>settle</span><span className="row"><input type="number" step="0.1" value={plan.settle_s} disabled={running} onChange={(e) => edit({ settle_s: num(e.target.value, plan.settle_s) })} /> s</span>
+              <span className="grp">pistons</span>
+              <span title="Build & feed piston speed for layer moves (drop + advance), mm/s.">piston speed</span><span className="row"><input type="number" step="0.1" value={plan.printing.part_speed} disabled={running} onChange={(e) => { const s = num(e.target.value, plan.printing.part_speed); editAllPhases({ part_speed: s, feed_speed: s }); }} /> mm/s</span>
+              <span title="Build & feed piston acceleration, mm/s².">piston accel</span><span className="row"><input type="number" value={plan.printing.part_accel} disabled={running} onChange={(e) => { const a = num(e.target.value, plan.printing.part_accel); editAllPhases({ part_accel: a, feed_accel: a }); }} /> mm/s²</span>
+              <span title="Fast feed-piston speed for non-metering repositioning moves, mm/s.">feed fast speed</span><span className="row"><input type="number" value={plan.feed_fast_speed} disabled={running} onChange={(e) => edit({ feed_fast_speed: num(e.target.value, plan.feed_fast_speed) })} /> mm/s</span>
+              <span title="Fast feed-piston repositioning acceleration, mm/s².">feed fast accel</span><span className="row"><input type="number" value={plan.feed_fast_accel} disabled={running} onChange={(e) => edit({ feed_fast_accel: num(e.target.value, plan.feed_fast_accel) })} /> mm/s²</span>
+              <span title="Top of the primed feed powder column; feed advances start here and drop down, mm.">feed end</span><span className="row"><input type="number" value={plan.feed_end_mm} disabled={running} onChange={(e) => edit({ feed_end_mm: num(e.target.value, plan.feed_end_mm) })} /> mm</span>
+              <span title="Deepest build-piston drop = spill-safe max depth; the part's final position, mm.">part max</span><span className="row"><input type="number" value={plan.part_max_mm} disabled={running} onChange={(e) => edit({ part_max_mm: num(e.target.value, plan.part_max_mm) })} /> mm</span>
+
+              <span className="grp">recoater</span>
+              <span title="Recoater gantry speed while spreading a layer, mm/s.">recoater speed</span><span className="row"><input type="number" value={plan.printing.recoater_speed} disabled={running} onChange={(e) => editAllPhases({ recoater_speed: num(e.target.value, plan.printing.recoater_speed) })} /> mm/s</span>
+              <span title="Recoater gantry acceleration, mm/s².">recoater accel</span><span className="row"><input type="number" value={plan.printing.recoater_accel} disabled={running} onChange={(e) => editAllPhases({ recoater_accel: num(e.target.value, plan.printing.recoater_accel) })} /> mm/s²</span>
+              <span title="Recoater parked / home position, mm.">recoater home</span><span className="row"><input type="number" value={plan.recoater_home_mm} disabled={running} onChange={(e) => edit({ recoater_home_mm: num(e.target.value, plan.recoater_home_mm) })} /> mm</span>
+              <span title="Where the recoater returns to after a precoat/postcoat spread, mm.">recoater return</span><span className="row"><input type="number" value={plan.recoater_return_mm} disabled={running} onChange={(e) => edit({ recoater_return_mm: num(e.target.value, plan.recoater_return_mm) })} /> mm</span>
+              <span title="Far end the recoater travels to when spreading a layer, mm.">recoater end</span><span className="row"><input type="number" value={plan.recoater_end_mm} disabled={running} onChange={(e) => edit({ recoater_end_mm: num(e.target.value, plan.recoater_end_mm) })} /> mm</span>
+
+              <span className="grp">printhead</span>
+              <span title="Printhead gantry speed during jet passes, mm/s.">printhead speed</span><span className="row"><input type="number" value={plan.printing.printhead_speed} disabled={running} onChange={(e) => editAllPhases({ printhead_speed: num(e.target.value, plan.printing.printhead_speed) })} /> mm/s</span>
+              <span title="Printhead gantry acceleration, mm/s².">printhead accel</span><span className="row"><input type="number" value={plan.printing.printhead_accel} disabled={running} onChange={(e) => editAllPhases({ printhead_accel: num(e.target.value, plan.printing.printhead_accel) })} /> mm/s²</span>
+              <span title="Printhead home position, mm.">printhead home</span><span className="row"><input type="number" value={plan.printhead_home_mm} disabled={running} onChange={(e) => edit({ printhead_home_mm: num(e.target.value, plan.printhead_home_mm) })} /> mm</span>
+              <span title="Where the printhead parks after setup-home, before layer 1 (and where it dwells for a nozzle purge, unless a purge position is set), mm.">printhead start</span><span className="row"><input type="number" value={plan.printhead_start_mm} disabled={running} onChange={(e) => edit({ printhead_start_mm: num(e.target.value, plan.printhead_start_mm) })} /> mm</span>
+              <span title="Printhead return position between multipass passes; it only homes on the last pass, mm.">printhead multipass return</span><span className="row"><input type="number" value={plan.printhead_multipass_return_mm} disabled={running} onChange={(e) => edit({ printhead_multipass_return_mm: num(e.target.value, plan.printhead_multipass_return_mm) })} /> mm</span>
+              <span title="Far end of the printhead jet pass, mm.">printhead end</span><span className="row"><input type="number" value={plan.printhead_end_mm} disabled={running} onChange={(e) => edit({ printhead_end_mm: num(e.target.value, plan.printhead_end_mm) })} /> mm</span>
+              <span title="Absolute printhead position for the nozzle-purge dwell. Blank = use the printhead start, mm.">purge position</span><span className="row"><input type="number" value={plan.purge_position_mm ?? ""} placeholder="printhead start" disabled={running} onChange={(e) => edit({ purge_position_mm: e.target.value === "" ? null : num(e.target.value, plan.purge_position_mm ?? 0) })} /> mm</span>
+
+              <span className="grp">heater &amp; timing</span>
+              <span title="IR heater gantry sweep speed, mm/s.">heater speed</span><span className="row"><input type="number" value={plan.heater_speed} disabled={running} onChange={(e) => edit({ heater_speed: num(e.target.value, plan.heater_speed) })} /> mm/s</span>
+              <span title="IR heater gantry acceleration, mm/s².">heater accel</span><span className="row"><input type="number" value={plan.heater_accel} disabled={running} onChange={(e) => edit({ heater_accel: num(e.target.value, plan.heater_accel) })} /> mm/s²</span>
+              <span title="IR heater home position, mm.">heater home</span><span className="row"><input type="number" value={plan.heater_home_mm} disabled={running} onChange={(e) => edit({ heater_home_mm: num(e.target.value, plan.heater_home_mm) })} /> mm</span>
+              <span title="Where the IR heater sweep begins, mm.">heater start</span><span className="row"><input type="number" value={plan.heater_start_mm} disabled={running} onChange={(e) => edit({ heater_start_mm: num(e.target.value, plan.heater_start_mm) })} /> mm</span>
+              <span title="Where the IR heater sweep ends, mm.">heater end</span><span className="row"><input type="number" value={plan.heater_end_mm} disabled={running} onChange={(e) => edit({ heater_end_mm: num(e.target.value, plan.heater_end_mm) })} /> mm</span>
+              <span title="Dwell after the feed-piston move before the recoater spreads, s.">settle</span><span className="row"><input type="number" step="0.1" value={plan.settle_s} disabled={running} onChange={(e) => edit({ settle_s: num(e.target.value, plan.settle_s) })} /> s</span>
             </div>
           ) : <div className="hint">loading…</div>}
         </div>
