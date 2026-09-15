@@ -116,6 +116,7 @@ RUN_FILES = frozenset(
         "manifest.json",
         "layers.csv",
         "motion_profiles.csv",
+        "layer_accuracy.csv",
     }
 )
 VISION_FILE_MEDIA_TYPES = {".png": "image/png", ".json": "application/json"}

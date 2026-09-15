@@ -42,6 +42,19 @@ def connect(c: TestClient, arm: bool = True) -> None:
         assert c.post("/api/arm").status_code == 200
 
 
+def test_recording_file_serves_layer_accuracy_csv(client: TestClient, tmp_path: Path) -> None:
+    # Regression: layer_accuracy.csv must be in the served allowlist, else the Runs build-piston
+    # chart fetches a 404 and shows "no data" even for a good run.
+    run = tmp_path / "20260101_000000_run"
+    run.mkdir(parents=True)
+    (run / "layer_accuracy.csv").write_text(
+        "layer,phase,commanded_mm,actual_mm,deviation_mm\n1,printing,0.2,0.2,0.0\n"
+    )
+    r = client.get("/api/recordings/20260101_000000_run/layer_accuracy.csv")
+    assert r.status_code == 200
+    assert "deviation_mm" in r.text
+
+
 def test_reference_current_endpoint_references_without_homing(client: TestClient) -> None:
     connect(client, arm=False)
     wait_tel(client)
