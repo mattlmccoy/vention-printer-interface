@@ -215,7 +215,7 @@ def test_purge_position_defaults_to_printhead_start() -> None:
 
 def test_purge_position_overrides_the_purge_hold() -> None:
     # When set, purge_position_mm is the absolute printhead position for the purge dwell,
-    # WITHOUT changing printhead_start_mm (the capture park still uses printhead_start_mm).
+    # WITHOUT changing printhead_start_mm (still the multipass/purge reference position).
     p = dataclasses.replace(
         one_layer(),
         n_jet_passes=3,
@@ -293,11 +293,11 @@ def test_setup_homes_gantries_only_no_piston_move() -> None:
     setup = [s for s in steps if s.phase == "setup"]
     assert not any(s.kind == "home" and s.axis in (PART, FEED) for s in setup)
     assert not any(s.kind in ("move_abs", "move_rel") and s.axis in (PART, FEED) for s in setup)
-    # Setup positions the printhead at its start position (250) after homing; the ONLY setup move is
-    # that printhead move — pistons stay put (already primed), the recoater is left at home.
+    # Setup homes the gantries and sets profiles ONLY — it emits NO axis moves. The printhead stays
+    # home (never parked mid-bed at 250, which would block the recoater's spread) and the pistons
+    # stay at the primed bed.
     setup_moves = [s for s in setup if s.kind in ("move_abs", "move_rel")]
-    assert setup_moves == [s for s in setup_moves if s.axis == PRINTHEAD]
-    assert any(s.axis == PRINTHEAD and s.value == 250.0 for s in setup_moves)
+    assert setup_moves == []
     assert PrintSettings().printhead_start_mm == 250.0
 
 
@@ -323,13 +323,13 @@ def test_thin_precoat_layer_spreads_feeds_drops_part_and_returns() -> None:
     ks = [(s.kind, s.axis, s.value) for s in steps]
     body = [
         ("mark", None, None),
-        ("move_abs", RECOATER, 950.0),
+        ("move_rel", PART, 0.2),  # part drop 0.2 (nominal) FIRST — the print's first part drop
+        ("wait", None, None),
+        ("move_abs", RECOATER, 950.0),  # recoater past the feed piston (reposition)
         ("wait", None, None),
         ("move_rel", FEED, -0.4),  # feed advance 0.4 (nominal)
         ("wait", None, None),
         ("dwell", None, 1.0),
-        ("move_rel", PART, 0.2),  # part drop 0.2 (nominal layer) — the print's FIRST part drop
-        ("wait", None, None),
         ("move_abs", RECOATER, 350.0),  # precoat return, NOT home
         ("wait", None, None),
         ("mark", None, None),
@@ -346,7 +346,7 @@ def test_compile_one_printing_layer_full_sequence() -> None:
     steps = compile_print(one_layer())
     kinds = [(s.kind, s.axis, s.value) for s in steps]
 
-    # (a) setup — gantry homes + profiles + printhead-to-start (4 home/wait + 8 set_* + 2 = 14)
+    # (a) setup — gantry homes + profiles ONLY, no printhead park (4 home/wait + 8 set_* = 12)
     assert kinds[0:4] == [
         ("home", PRINTHEAD, None),
         ("wait", None, None),
@@ -354,8 +354,9 @@ def test_compile_one_printing_layer_full_sequence() -> None:
         ("wait", None, None),
     ]
     n_setup = sum(1 for s in steps if s.phase == "setup")
-    assert n_setup == 14
-    assert kinds[12:14] == [("move_abs", PRINTHEAD, 250.0), ("wait", None, None)]
+    assert n_setup == 12
+    # setup emits no axis move — the printhead stays home (never parked at 250 mid-bed)
+    assert not any(s.phase == "setup" and s.kind in ("move_abs", "move_rel") for s in steps)
 
     # phase setup for printing: set_speed/accel PART, FEED, PRINTHEAD, RECOATER
     i = n_setup
@@ -373,15 +374,15 @@ def test_compile_one_printing_layer_full_sequence() -> None:
 
     layer = [
         ("mark", None, None),              # layer_start
-        ("move_abs", RECOATER, 950.0),     # spread
+        ("move_rel", PART, 2.0),           # part drop — FIRST (V1.py order)
         ("wait", None, None),
-        ("move_rel", FEED, -0.4),          # feed advance (feed advances during printing)
+        ("move_abs", RECOATER, 950.0),     # recoater past the feed piston to far end (reposition)
+        ("wait", None, None),
+        ("move_rel", FEED, -0.4),          # feed advance (the feed piston supplies powder)
         ("wait", None, None),
         ("dwell", None, 1.0),
-        ("move_rel", PART, 2.0),           # part drop
-        ("wait", None, None),
-        ("move_abs", RECOATER, 5.0),       # recoater home  \  concurrent: two moves,
-        ("move_abs", PRINTHEAD, 900.0),    # printhead jet  /  then ONE wait
+        ("move_abs", RECOATER, 5.0),       # recoater home = SPREAD  \  concurrent: two moves,
+        ("move_abs", PRINTHEAD, 900.0),    # printhead jet, trailing  /  then ONE wait
         ("wait", None, None),
         ("move_abs", PRINTHEAD, 5.0),      # printhead home
         ("wait", None, None),
@@ -587,11 +588,13 @@ def test_layer_numbers_and_heights_over_a_full_plan() -> None:
 # ---- (i) vision capture marks --------------------------------------------------------------------
 
 
-def test_capture_stages_defaults_to_enabled() -> None:
-    assert PrintSettings().capture_stages is True
+def test_capture_stages_defaults_to_disabled() -> None:
+    # Captures are OFF by default: no cameras are wired in yet, and an operator turns them on
+    # explicitly once the vision package is present. An enabled capture must never add motion.
+    assert PrintSettings().capture_stages is False
 
 
-def test_capture_marks_emitted_at_parked_points() -> None:
+def test_capture_marks_emitted_without_added_motion() -> None:
     # one_layer() disables captures for the pinned-sequence tests above; re-enable it here.
     plan = dataclasses.replace(one_layer(), capture_stages=True)
     steps = compile_print(plan)
@@ -606,32 +609,38 @@ def test_capture_marks_emitted_at_parked_points() -> None:
         < labels.index("capture:post_heat")
     )
 
-    def last_move(kind_axis: int, before: int) -> float | None:
-        moves = [
-            s.value for s in steps[:before] if s.axis == kind_axis and s.kind == "move_abs"
-        ]
+    def last_move(axis: int, before: int) -> float | None:
+        moves = [s.value for s in steps[:before] if s.axis == axis and s.kind == "move_abs"]
         return moves[-1] if moves else None
 
-    # pre_jet: the layer is coated and the printhead is freshly parked at printhead_start_mm
-    # (bed-clear) before any jetting move — verifiable via the immediately preceding printhead
-    # move_abs.
+    # pre_jet: the printhead has NOT moved — it sits home. The camera rides the recoater gantry, so
+    # no printhead park is needed or wanted (a mid-bed park at 250 would block the spread).
     i_pre_jet = next(i for i, s in enumerate(steps) if s.label == "capture:pre_jet")
-    assert last_move(PRINTHEAD, i_pre_jet) == plan.printhead_start_mm
+    assert last_move(PRINTHEAD, i_pre_jet) is None
 
-    # post_jet: gantries parked — recoater retracted home for the jet pass, printhead back home
-    # after the (single) jet pass.
+    # post_jet: gantries parked — recoater retracted home for the jet pass, printhead back home.
     i_post_jet = next(i for i, s in enumerate(steps) if s.label == "capture:post_jet")
     assert last_move(RECOATER, i_post_jet) == plan.recoater_home_mm
     assert last_move(PRINTHEAD, i_post_jet) == plan.printhead_home_mm
 
-    # post_heat: gantries parked — recoater back to its far/clear end after the heater dwell,
-    # printhead still parked home from the jet pass (heater only moves RECOATER/PART).
+    # post_heat: recoater back to its far/clear end after the heater dwell, printhead still home.
     i_post_heat = next(i for i, s in enumerate(steps) if s.label == "capture:post_heat")
     assert last_move(RECOATER, i_post_heat) == plan.recoater_end_mm
     assert last_move(PRINTHEAD, i_post_heat) == plan.printhead_home_mm
 
     # capture:post_heat still precedes the ordinary layer_end mark.
     assert labels.index("capture:post_heat") < labels.index("layer_end")
+
+
+def test_captures_add_no_motion() -> None:
+    # Enabling captures must add ONLY marks — never any axis motion. The motion choreography must be
+    # byte-identical whether captures are on or off (no cameras are installed yet).
+    def motion(plan: PrintSettings) -> list[tuple[str, int | None, float | None]]:
+        return [(s.kind, s.axis, s.value) for s in compile_print(plan) if s.kind != "mark"]
+
+    off = motion(dataclasses.replace(one_layer(), capture_stages=False))
+    on = motion(dataclasses.replace(one_layer(), capture_stages=True))
+    assert on == off
 
 
 def test_capture_marks_absent_when_disabled() -> None:
@@ -641,12 +650,12 @@ def test_capture_marks_absent_when_disabled() -> None:
 
 
 def test_bounded_passes_through_capture_stages() -> None:
-    # bounded() must not silently drop capture_stages back to the dataclass default (True) —
-    # an operator turning captures off via PUT /api/print-settings must have that value stick.
+    # bounded() must not silently reset capture_stages to the dataclass default — an operator
+    # toggling captures via PUT /api/print-settings must have that value stick either way.
     lim = SafetyLimits()
     assert PrintSettings.bounded({"capture_stages": False}, lim).capture_stages is False
     assert PrintSettings.bounded({"capture_stages": True}, lim).capture_stages is True
-    assert PrintSettings.bounded({}, lim).capture_stages is True  # default unchanged
+    assert PrintSettings.bounded({}, lim).capture_stages is False  # default unchanged (off)
 
 
 def test_estimate_duration_is_positive_and_scales_with_layers() -> None:

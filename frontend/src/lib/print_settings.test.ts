@@ -24,17 +24,23 @@ test("printability and travel reasons", () => {
   assert.match(validate({ ...DEFAULT_PLAN, recoater_end_mm: 5000 })[0], /recoater_end_mm/);
 });
 
-test("compile matches the backend order for one print layer (54 steps, heater on)", () => {
+test("compile matches the backend order for one print layer (52 steps, heater on)", () => {
   const one = { ...DEFAULT_PLAN,
     thin_precoat: { ...DEFAULT_PLAN.thin_precoat, n_layers: 0 },
     printing: { ...DEFAULT_PLAN.printing, n_layers: 1 }, postcoat: { ...DEFAULT_PLAN.postcoat, n_layers: 0 }, heater_enabled: true };
   const steps = compilePrint(one);
-  // 14 setup (gantry homes + profiles + printhead-to-start) + 8 phase setup + 26 layer + 6 finish = 54
-  assert.equal(steps.length, 54);
-  assert.equal(steps[22].label, "layer_start");
-  assert.equal(steps[47].label, "layer_end");
-  assert.equal(steps[47].part_height_mm, 2);
-  assert.deepEqual(steps.map((s) => s.index), [...Array(54).keys()]);
+  // 12 setup (gantry homes + profiles, no printhead park) + 8 phase setup + 26 layer + 6 finish = 52
+  assert.equal(steps.length, 52);
+  assert.equal(steps[20].label, "layer_start");
+  assert.equal(steps[45].label, "layer_end");
+  assert.equal(steps[45].part_height_mm, 2);
+  assert.deepEqual(steps.map((s) => s.index), [...Array(52).keys()]);
+  // part drop is the FIRST layer move (V1.py order), before the recoater reposition
+  const layer = steps.slice(20).map((s) => [s.kind, s.axis, s.value] as const);
+  assert.deepEqual(layer[1], ["move_rel", 1, 2]);          // part drop 2.0 (PART=1)
+  assert.deepEqual(layer[3], ["move_abs", 4, one.recoater_end_mm]); // then recoater reposition (RECOATER=4)
+  // setup emits no axis move (printhead never parked at 250)
+  assert.equal(steps.filter((s) => s.phase === "setup" && (s.kind === "move_abs" || s.kind === "move_rel")).length, 0);
 });
 
 test("printing layer: multi-pass jetting + pre-heater drop and return-up", () => {

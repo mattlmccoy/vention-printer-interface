@@ -147,9 +147,10 @@ class PrintSettings:
     ipa_dhvap_j_g: float = 663.0
     heater_section_power_w: float = 75.0
     # When True, compile_print emits capture:pre_jet / capture:post_jet / capture:post_heat marks
-    # at bed-clear, gantry-parked points in each printing layer for the vision package (Phase 4/9)
-    # to key stage captures off of. Purely additive: no motion changes when False.
-    capture_stages: bool = True
+    # at gantry-parked points in each printing layer for the vision package to key stage captures
+    # off of. Purely additive: NO motion is added in either state (the camera rides the recoater
+    # gantry, so no printhead park is needed). OFF by default — no cameras are installed yet.
+    capture_stages: bool = False
 
     @property
     def total_thickness_mm(self) -> float:
@@ -376,9 +377,8 @@ def compile_print(plan: PrintSettings) -> tuple[Step, ...]:
     add("setup", 0, "set_accel", RECOATER, base.recoater_accel)
     add("setup", 0, "set_speed", PRINTHEAD, base.printhead_speed)
     add("setup", 0, "set_accel", PRINTHEAD, base.printhead_accel)
-    # Park the printhead at its start position before layer 1 (pistons stay at the primed bed).
-    add("setup", 0, "move_abs", PRINTHEAD, plan.printhead_start_mm, "printhead to start")
-    add("setup", 0, "wait")
+    # No printhead park: after homing it stays home (5). Parking it mid-bed (e.g. 250) would sit it
+    # right in the recoater's spread path and block coating. The pistons stay at the primed bed.
 
     # Running feed position: starts at the primed feed column top (feed_end_mm) and drops by each
     # feed advance. Mirrors the script's ``current_feed_pos`` guard: when the next advance would
@@ -417,10 +417,16 @@ def compile_print(plan: PrintSettings) -> tuple[Step, ...]:
             if name in _PART_DROP_PHASES:
                 height += ph.layer_thickness_mm
 
-            # 1) SPREAD — recoater forward to the far end.
             add(name, layer_no, "mark", label="layer_start")
-            # Optional anti-backlash: drop the feed a little BEFORE the spread so the post-spread
-            # feed-up (below) approaches the recoat position from below, taking up mechanical slop.
+            # 1) PART DROP — thin_precoat & printing only (postcoat holds the part fixed). V1.py
+            # drops the build piston FIRST, before the recoater repositions or the feed advances.
+            if name in _PART_DROP_PHASES:
+                add(name, layer_no, "move_rel", PART, ph.layer_thickness_mm)  # build piston down
+                add(name, layer_no, "wait")
+
+            # 2) REPOSITION — recoater past the feed piston out to the far end, so it can spread on
+            # the way back. Optional anti-backlash: drop the feed a little BEFORE this move (keeps
+            # nozzles clear of powder; the feed-up then approaches from below, taking up slop).
             preload = plan.feed_backlash_mm if ph.feed_thickness_mm > 0 else 0.0
             if preload > 0:
                 add(name, layer_no, "move_rel", FEED, preload, "feed backlash preload down")
@@ -428,18 +434,13 @@ def compile_print(plan: PrintSettings) -> tuple[Step, ...]:
             add(name, layer_no, "move_abs", RECOATER, plan.recoater_end_mm)
             add(name, layer_no, "wait")
 
-            # 2) FEED ADVANCE — every phase incl. printing (USER OVERRIDE: feed is the powder feed).
+            # 3) FEED ADVANCE — every phase incl. printing (the feed piston is the powder supply).
             # Net advance stays feed_thickness; the up move also undoes the preload drop.
             if ph.feed_thickness_mm > 0:
                 add(name, layer_no, "move_rel", FEED, -(ph.feed_thickness_mm + preload), "feed up")
                 add(name, layer_no, "wait")
                 add(name, layer_no, "dwell", value=plan.settle_s)  # script's time.sleep(1)
                 feed_pos -= ph.feed_thickness_mm
-
-            # 3) PART DROP — thin_precoat & printing only (postcoat holds the part fixed).
-            if name in _PART_DROP_PHASES:
-                add(name, layer_no, "move_rel", PART, ph.layer_thickness_mm)  # build piston down
-                add(name, layer_no, "wait")
 
             # 4) PRECOAT RETURN vs PRINT.
             if name in _PRECOAT_PHASES:
@@ -451,18 +452,8 @@ def compile_print(plan: PrintSettings) -> tuple[Step, ...]:
             # ---- printing ----
             print_layer += 1
             if plan.capture_stages:
-                # Park the printhead at its start position (bed-clear) before jetting so the
-                # vision package's science camera has a stable, unobstructed view of the
-                # freshly-coated layer.
-                add(
-                    name,
-                    layer_no,
-                    "move_abs",
-                    PRINTHEAD,
-                    plan.printhead_start_mm,
-                    "printhead parked for capture",
-                )
-                add(name, layer_no, "wait")
+                # Capture mark only — NO printhead motion. The camera rides the recoater gantry, so
+                # the printhead stays home; the freshly-coated layer is imaged where it lies.
                 add(name, layer_no, "mark", label="capture:pre_jet")
             # Nozzle-purge schedule (firing is external; we only DWELL at the start position so the
             # printhead can fire): every pass, once per layer, or every N printing layers.

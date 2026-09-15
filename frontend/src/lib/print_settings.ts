@@ -146,9 +146,8 @@ export function compilePrint(plan: PrintSettings): Step[] {
   add("setup", 0, "set_accel", RECOATER, base.recoater_accel);
   add("setup", 0, "set_speed", PRINTHEAD, base.printhead_speed);
   add("setup", 0, "set_accel", PRINTHEAD, base.printhead_accel);
-  // Park the printhead at its start position before layer 1 (pistons stay at the primed bed).
-  add("setup", 0, "move_abs", PRINTHEAD, plan.printhead_start_mm, "printhead to start");
-  add("setup", 0, "wait");
+  // No printhead park: after homing it stays home (5). Parking it mid-bed (250) would sit it right
+  // in the recoater's spread path and block coating. The pistons stay at the primed bed.
 
   let feedPos = plan.feed_end_mm; // running feed column top; drops by each feed advance
   let layerNo = 0;
@@ -179,10 +178,17 @@ export function compilePrint(plan: PrintSettings): Step[] {
       layerNo++;
       if (PART_DROP_PHASES.has(name)) height += ph.layer_thickness_mm;
 
-      // 1) SPREAD — recoater forward to the far end.
       add(name, layerNo, "mark", null, null, "layer_start");
-      // Optional anti-backlash: drop the feed a little BEFORE the spread so the post-spread feed-up
-      // approaches the recoat position from below, taking up mechanical slop.
+      // 1) PART DROP — thin_precoat & printing only (postcoat holds the part fixed). V1.py drops the
+      // build piston FIRST, before the recoater repositions or the feed supplies powder.
+      if (PART_DROP_PHASES.has(name)) {
+        add(name, layerNo, "move_rel", PART, ph.layer_thickness_mm);
+        add(name, layerNo, "wait");
+      }
+
+      // 2) REPOSITION — recoater past the feed piston out to the far end, so it can spread on the way
+      // back. Optional anti-backlash: drop the feed a little BEFORE this move (keeps the nozzles clear
+      // of powder, and lets the feed-up below approach from below, taking up mechanical slop).
       const preload = ph.feed_thickness_mm > 0 ? plan.feed_backlash_mm : 0;
       if (preload > 0) {
         add(name, layerNo, "move_rel", FEED, preload, "feed backlash preload down");
@@ -191,19 +197,13 @@ export function compilePrint(plan: PrintSettings): Step[] {
       add(name, layerNo, "move_abs", RECOATER, plan.recoater_end_mm);
       add(name, layerNo, "wait");
 
-      // 2) FEED ADVANCE — every phase incl. printing (the feed piston is the powder supply).
+      // 3) FEED ADVANCE — every phase incl. printing (the feed piston is the powder supply).
       // Net advance stays feed_thickness; the up move also undoes the preload drop.
       if (ph.feed_thickness_mm > 0) {
         add(name, layerNo, "move_rel", FEED, -(ph.feed_thickness_mm + preload), "feed up");
         add(name, layerNo, "wait");
         add(name, layerNo, "dwell", null, plan.settle_s);
         feedPos -= ph.feed_thickness_mm;
-      }
-
-      // 3) PART DROP — thin_precoat & printing only (thick precoat / postcoat hold the part).
-      if (PART_DROP_PHASES.has(name)) {
-        add(name, layerNo, "move_rel", PART, ph.layer_thickness_mm);
-        add(name, layerNo, "wait");
       }
 
       // 4) PRECOAT RETURN vs PRINT.
