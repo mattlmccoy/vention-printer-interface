@@ -469,7 +469,16 @@ class Recorder:
         out = []
         dirs = sorted(p for p in self.root.iterdir() if p.is_dir() and not p.name.startswith("."))
         for d in dirs:
-            size = sum(f.stat().st_size for f in d.rglob("*") if f.is_file())
+            # One walk for both the byte size and the vision-capture count (a run is "analyzable"
+            # in the Analysis tab only if it has captured images under vision/).
+            size = 0
+            captures = 0
+            for f in d.rglob("*"):
+                if not f.is_file():
+                    continue
+                size += f.stat().st_size
+                if f.suffix == ".png" and f.relative_to(d).parts[0] == "vision":
+                    captures += 1
             meta = _read_run_meta(d)
             raw_experiment = meta.get("experiment")
             experiment: dict[str, Any] = raw_experiment if isinstance(raw_experiment, dict) else {}
@@ -483,6 +492,7 @@ class Recorder:
                     "started_at": meta.get("started_utc"),
                     "layer_count": _layer_count(d),
                     "duration_s": _telemetry_duration_s(d),
+                    "capture_count": captures,
                 }
             )
         return out

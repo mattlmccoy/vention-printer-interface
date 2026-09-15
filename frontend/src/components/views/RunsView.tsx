@@ -146,6 +146,79 @@ function BuildDeviationChart({ rows, tolUm }: { rows: LayerAccuracy[]; tolUm: nu
   );
 }
 
+/** Cumulative build height: commanded vs actual, layer by layer. The gap between the lines is the
+ *  real drift — the headline answer to "is the build the right height." (Plot approach A.) */
+function CumulativeHeightChart({ rows }: { rows: LayerAccuracy[] }) {
+  const [hov, setHov] = useState<number | null>(null);
+  const pts = rows
+    .filter((r) => r.commanded_cum_mm != null && r.actual_cum_mm != null && r.layer != null)
+    .map((r) => ({ layer: r.layer as number, cmd: r.commanded_cum_mm as number, act: r.actual_cum_mm as number }));
+  if (pts.length === 0) return <div className="chart-empty">no build-piston layer data for this run</div>;
+  const W = 560, H = 190, padL = 46, padR = 14, padB = 28, padT = 14, plotH = H - padT - padB, plotW = W - padL - padR;
+  const ymax = Math.max(...pts.map((p) => Math.max(p.cmd, p.act))) * 1.12 || 1;
+  const X = (i: number) => padL + (pts.length > 1 ? (i * plotW) / (pts.length - 1) : plotW / 2);
+  const Y = (v: number) => padT + plotH * (1 - v / ymax);
+  const tnum = { fontVariantNumeric: "tabular-nums" } as const;
+  const end = pts[pts.length - 1];
+  const line = (key: "cmd" | "act") => pts.map((p, i) => `${X(i)},${Y(p[key])}`).join(" ");
+  return (
+    <svg className="mchart" viewBox={`0 0 ${W} ${H}`} style={{ width: "100%", height: "auto" }} role="img" aria-label="cumulative build height, commanded vs actual">
+      {[0, 1, 2, 3, 4].map((g) => { const v = ymax * g / 4; return <g key={g}><line x1={padL} y1={Y(v)} x2={W - padR} y2={Y(v)} stroke="var(--line)" strokeWidth="1" /><text x={padL - 6} y={Y(v) + 3} fontSize="9" fill="var(--faint)" textAnchor="end" fontFamily={PLOT_FONT} style={tnum}>{v.toFixed(1)}</text></g>; })}
+      <polyline points={line("cmd")} fill="none" stroke="var(--faint)" strokeWidth="1.6" strokeDasharray="4 4" />
+      <polyline points={line("act")} fill="none" stroke="var(--plot-1)" strokeWidth="2" strokeLinejoin="round" />
+      {pts.map((p, i) => (
+        <g key={p.layer}>
+          <circle cx={X(i)} cy={Y(p.act)} r={hov === i ? 4 : 2.6} fill="var(--plot-1)" />
+          <circle cx={X(i)} cy={Y(p.act)} r={9} fill="transparent" onMouseEnter={() => setHov(i)} onMouseLeave={() => setHov(null)} style={{ cursor: "pointer" }}>
+            <title>{`layer ${p.layer}: actual ${p.act.toFixed(2)} mm / commanded ${p.cmd.toFixed(2)} mm (gap ${((p.act - p.cmd) * 1000 >= 0 ? "+" : "") + ((p.act - p.cmd) * 1000).toFixed(0)} µm)`}</title>
+          </circle>
+          <text x={X(i)} y={H - padB + 14} fontSize="8.5" fill="var(--faint)" textAnchor="middle" fontFamily={PLOT_FONT} style={tnum}>{p.layer}</text>
+        </g>
+      ))}
+      <text x={padL} y={padT - 3} fontSize="9.5" fill="var(--muted)" fontFamily={PLOT_FONT}>height (mm)</text>
+      <text x={W - padR} y={padT + 8} fontSize="9" fill="var(--faint)" textAnchor="end" fontFamily={PLOT_FONT} style={tnum}>actual {end.act.toFixed(2)} / commanded {end.cmd.toFixed(2)} mm</text>
+      <text x={W - padR} y={H - 3} fontSize="9" fill="var(--faint)" textAnchor="end" fontFamily={PLOT_FONT}>— — commanded    —— actual · layer number →</text>
+    </svg>
+  );
+}
+
+/** Activity timeline: a lane per axis, filled where the axis is actually moving (|v| > threshold).
+ *  The gaps are dead time between commands — the inter-step latency, made visible. (Approach G.) */
+function ActivityTimeline({ csv, axisList }: { csv: string; axisList: readonly { axis: number; label: string; token: string }[] }) {
+  const series = axisList.map((a) => ({ ...a, s: motionSeries(csv, "vel", a.axis) })).filter((a) => a.s.length >= 2);
+  if (series.length === 0) return null;
+  const tMax = Math.max(1, ...series.map((a) => a.s[a.s.length - 1].t));
+  const W = 560, laneH = 26, l = 62, r = 12, t = 6, b = 22, TH = 0.5;
+  const H = series.length * laneH + t + b;
+  const X = (tt: number) => l + (W - l - r) * tt / tMax;
+  const tnum = { fontVariantNumeric: "tabular-nums" } as const;
+  const segs = (s: { t: number; v: number }[]) => {
+    const out: [number, number][] = []; let start: number | null = null;
+    for (let i = 0; i < s.length; i++) {
+      const mv = Math.abs(s[i].v) > TH;
+      if (mv && start == null) start = s[i].t;
+      if ((!mv || i === s.length - 1) && start != null) { out.push([start, s[i].t]); start = null; }
+    }
+    return out;
+  };
+  return (
+    <svg viewBox={`0 0 ${W} ${H}`} style={{ width: "100%", height: "auto" }} role="img" aria-label="per-axis activity timeline">
+      {series.map((a, i) => {
+        const top = t + i * laneH;
+        return (
+          <g key={a.axis}>
+            <rect x={l} y={top + 3} width={W - l - r} height={laneH - 10} fill="var(--plot-band)" rx="3" />
+            <text x={l - 8} y={top + laneH / 2 - 1} fontSize="10" fill={a.token} textAnchor="end" fontFamily={PLOT_FONT} fontWeight={500}>{a.label}</text>
+            {segs(a.s).map(([s0, s1], k) => <rect key={k} x={X(s0)} y={top + 3} width={Math.max(1.5, X(s1) - X(s0))} height={laneH - 10} fill={a.token} rx="2"><title>{`${a.label} moving ${s0.toFixed(1)}–${s1.toFixed(1)} s`}</title></rect>)}
+          </g>
+        );
+      })}
+      {[0, 1, 2, 3, 4, 5, 6].map((g) => { const tt = tMax * g / 6; return <text key={g} x={X(tt)} y={H - b + 16} fontSize="8.5" fill="var(--faint)" textAnchor="middle" fontFamily={PLOT_FONT} style={tnum}>{tt.toFixed(0)}</text>; })}
+      <text x={W - r} y={H - b + 16} fontSize="9" fill="var(--muted)" textAnchor="end" fontFamily={PLOT_FONT}>time (s) — gaps = idle between commands</text>
+    </svg>
+  );
+}
+
 export function RunsView({ status, gates, call, base }: { status: StatusPayload | null; gates: Gates; call: Call; base: string }) {
   const [runs, setRuns] = useState<RunMeta[]>([]);
   const [sel, setSel] = useState<string>("");
@@ -304,8 +377,10 @@ export function RunsView({ status, gates, call, base }: { status: StatusPayload 
                   const s = layerAccuracySummary(accuracyRows);
                   return s.n > 0 ? <span className="hint" style={{ textTransform: "none", letterSpacing: 0, fontWeight: 400 }}>mean |dev| {(s.meanAbsDevMm! * 1000).toFixed(0)} µm · max {(s.maxAbsDevMm! * 1000).toFixed(0)} µm (layer {s.maxLayer}) · n={s.n}</span> : null;
                 })()}</h3>
-                <div className="chart-controls">
-                  <span className="hint" style={{ marginTop: 0 }}>tolerance band ±</span>
+                <div className="hint" style={{ margin: "0 0 6px", textTransform: "none", letterSpacing: 0 }}>cumulative height — commanded vs actual (the real drift is the gap)</div>
+                <CumulativeHeightChart rows={accuracyRows} />
+                <div className="chart-controls" style={{ marginTop: 14, borderTop: "1px solid var(--line)", paddingTop: 12 }}>
+                  <span className="hint" style={{ marginTop: 0, textTransform: "none", letterSpacing: 0 }}>per-layer deviation · tolerance band ±</span>
                   <input type="number" inputMode="decimal" value={tolUm} onChange={(e) => setTolUm(e.target.value)} style={{ width: 64 }} aria-label="tolerance band (microns)" />
                   <span className="hint" style={{ marginTop: 0 }}>µm</span>
                 </div>
@@ -337,6 +412,8 @@ export function RunsView({ status, gates, call, base }: { status: StatusPayload 
                     </div>
                   );
                 })()}
+                <div className="hint" style={{ margin: "16px 0 6px", textTransform: "none", letterSpacing: 0, borderTop: "1px solid var(--line)", paddingTop: 12 }}>activity timeline — filled where the axis is moving; the gaps are idle time between commands</div>
+                <ActivityTimeline csv={motionCsv} axisList={AXES.filter((a) => axes.includes(a.axis))} />
               </div>
             </>
           ) : <div className="card"><div className="chart-empty">select a run to see its stills, motion profile, and download.</div></div>}

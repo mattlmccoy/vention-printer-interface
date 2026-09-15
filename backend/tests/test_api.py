@@ -55,6 +55,21 @@ def test_recording_file_serves_layer_accuracy_csv(client: TestClient, tmp_path: 
     assert "deviation_mm" in r.text
 
 
+def test_recordings_report_capture_count(client: TestClient, tmp_path: Path) -> None:
+    # The Analysis tab only lists runs that have something to analyze (vision captures). The
+    # recordings list carries a per-run capture_count so the UI can filter without N extra calls.
+    withcaps = tmp_path / "20260101_000000_withcaps" / "vision" / "layer_0001"
+    withcaps.mkdir(parents=True)
+    (withcaps / "post_jet.png").write_bytes(b"\x89PNG\r\n")
+    (withcaps / "overview.png").write_bytes(b"\x89PNG\r\n")
+    nocaps = tmp_path / "20260101_000001_nocaps"
+    nocaps.mkdir(parents=True)
+    (nocaps / "telemetry.csv").write_text("host_timestamp_ns\n1\n")
+    runs = {r["run"]: r for r in client.get("/api/recordings").json()["runs"]}
+    assert runs["20260101_000000_withcaps"]["capture_count"] == 2
+    assert runs["20260101_000001_nocaps"]["capture_count"] == 0
+
+
 def test_operator_restart_reexecs_when_idle(
     client: TestClient, monkeypatch: pytest.MonkeyPatch
 ) -> None:

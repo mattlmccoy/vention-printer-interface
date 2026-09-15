@@ -7,7 +7,7 @@ import pytest
 
 from vention_printer_interface.control.controller import Controller, ControllerState
 from vention_printer_interface.control.print_controller import PrintController
-from vention_printer_interface.control.print_settings import PhasePlan, PrintSettings
+from vention_printer_interface.control.print_settings import PhasePlan, PrintSettings, Step
 from vention_printer_interface.control.safety import SafetyLimits
 from vention_printer_interface.device.printer import PrinterDevice
 from vention_printer_interface.device.simulated import SimulatedTransport
@@ -70,6 +70,47 @@ def wait(pred: Callable[[], bool], timeout: float = 30.0) -> bool:
             return True
         time.sleep(0.02)
     return False
+
+
+def _pc(min_wait: float, clk: Callable[[], float]) -> PrintController:
+    # A PrintController with no device attached — we exercise _blocking_done directly.
+    c = Controller(poll_interval_s=0.05)
+    return PrintController(c, min_wait_s=min_wait, clock=clk)
+
+
+def _snap(complete: dict[str, bool]) -> dict[str, Any]:
+    return {"telemetry": {"motion_complete": complete}}
+
+
+def test_wait_ends_immediately_after_a_real_move_runs_and_completes() -> None:
+    # A wait after a REAL move must NOT sit out the whole min_wait_s floor: once we SEE the move
+    # actually run (motion_complete goes False) and then complete, the wait is done — long before
+    # the floor. This removes the inter-step dead time that dominated print time.
+    now = [0.0]
+    rc = _pc(0.5, lambda: now[0])
+    rc._issued_at, rc._saw_incomplete = 0.0, False
+    step = Step(index=0, phase="printing", layer=1, kind="wait")
+    allc = {"1": True, "2": True, "3": True, "4": True}
+    now[0] = 0.02  # stale "complete" before the move registers -> NOT done (no floor cheat)
+    assert rc._blocking_done(step, _snap(allc), now[0]) is False
+    now[0] = 0.10  # the move registered and is running (an axis incomplete) -> not done, but noted
+    assert rc._blocking_done(step, _snap({**allc, "4": False}), now[0]) is False
+    now[0] = 0.16  # all complete again -> DONE now, well before the 0.5 s floor
+    assert rc._blocking_done(step, _snap(allc), now[0]) is True
+
+
+def test_wait_falls_back_to_the_floor_for_a_noop_move() -> None:
+    # A no-op move never leaves the complete state, so there's nothing to "see run": the wait falls
+    # back to the min_wait_s floor (also the guard against accepting a stale complete).
+    now = [0.0]
+    rc = _pc(0.2, lambda: now[0])
+    rc._issued_at, rc._saw_incomplete = 0.0, False
+    step = Step(index=0, phase="printing", layer=1, kind="wait")
+    allc = {"1": True, "2": True, "3": True, "4": True}
+    now[0] = 0.1  # before the floor, always-complete -> NOT done
+    assert rc._blocking_done(step, _snap(allc), now[0]) is False
+    now[0] = 0.25  # past the floor -> done
+    assert rc._blocking_done(step, _snap(allc), now[0]) is True
 
 
 def test_start_requires_armed_and_valid() -> None:

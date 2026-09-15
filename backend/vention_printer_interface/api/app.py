@@ -551,7 +551,10 @@ def create_app(
     frontend_dist: Path | None = None,
     site_origin: str | None = None,
     heater_io: tuple[int, int] | None = None,
-    print_min_wait_s: float = 0.5,
+    # Fallback floor per wait step. With move-started detection (PrintController._blocking_done) a
+    # wait after a real move ends as soon as the move finishes, so this only bites no-op moves and
+    # is the safety margin against a stale "complete"; kept modest so the choreography stays fluid.
+    print_min_wait_s: float = 0.25,
     print_step_timeout_s: float = 120.0,
     jobs_roots: list[Path] | None = None,
     vision_source: FrameSource | None = None,
