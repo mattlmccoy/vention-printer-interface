@@ -103,6 +103,28 @@ def test_post_without_body_uses_defaults(env: tuple[TestClient, Path]) -> None:
     assert resp.json()["status"] == "no_capture"
 
 
+def test_post_with_circle_uses_circle_source(env: tuple[TestClient, Path]) -> None:
+    # A marked outer circle supplies px_per_mm + ROIs on its own (roi_source == "circle").
+    # Radius is chosen from the fixture calibration so 2R/100 == FIXTURE_PX_PER_MM.
+    client, exp = env
+    _make_run(exp, "run_circle")
+    img = cv2.imread(str(FX / "dot_roi.png"))
+    h, w = img.shape[0], img.shape[1]
+    radius_px = FIXTURE_PX_PER_MM * 100.0 / 2.0
+
+    resp = client.post(
+        "/api/analysis/run_circle/dimensional",
+        json={
+            "stage": "post_jet",
+            "circle": {"cx_px": w / 2.0, "cy_px": h / 2.0, "radius_px": radius_px},
+        },
+    )
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body["roi_source"] == "circle"
+    assert body["px_per_mm"] == 2.0 * radius_px / 100.0
+
+
 def test_traversal_run_name_never_succeeds(env: tuple[TestClient, Path]) -> None:
     # The {run} path segment cannot carry raw slashes, so an encoded traversal is
     # normalized/rejected by the router or the shared run-path guard. Either way it must

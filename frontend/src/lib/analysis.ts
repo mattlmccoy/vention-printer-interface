@@ -23,6 +23,19 @@ export function analysisStatusMessage(status: AnalysisStatus, message?: string):
   return message ? `${b} (${message})` : b;
 }
 
+/** Human-readable prompt shown when auto-location failed and the operator must mark the circle.
+ *  Actionable copy for `roi_failed`; `null` for every other status (nothing to prompt). */
+export function roiEditPrompt(status: string): string | null {
+  return status === "roi_failed" ? "Auto-location failed — mark the outer circle" : null;
+}
+
+/** The calibration cross-check warning to show as a chip, or `null` when there's nothing honest to
+ *  flag. Returns the backend `calibration_warning` only when it's a non-empty string. */
+export function calibrationChip(report: Pick<DimensionalReport, "calibration_warning">): string | null {
+  const w = report.calibration_warning;
+  return typeof w === "string" && w.length > 0 ? w : null;
+}
+
 const fmtScale = (n: number | null | undefined): string => (typeof n === "number" ? n.toFixed(4) : "—");
 const fmtPct = (n: number | null | undefined): string => (typeof n === "number" ? `${n >= 0 ? "+" : ""}${n.toFixed(2)}%` : "—");
 const fmtDeg = (n: number | null | undefined): string => (typeof n === "number" ? `${n >= 0 ? "+" : ""}${n.toFixed(2)}°` : "—");

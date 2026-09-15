@@ -1,6 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { analysisStatusKind, analysisStatusMessage, compensationRows, featureTiles } from "./analysis.ts";
+import { analysisStatusKind, analysisStatusMessage, calibrationChip, compensationRows, featureTiles, roiEditPrompt } from "./analysis.ts";
 import type { DimensionalReport } from "./api.ts";
 
 test("status kind: ok vs empty vs error", () => {
@@ -44,4 +44,17 @@ test("feature tiles pull the key error metrics from the features dict", () => {
   assert.equal(byk["checker yaw"], "-2.11°"); // yaw ERROR, not the raw grid angle
   // a report with no features yields no tiles (honest empty, not zeros)
   assert.equal(featureTiles({ run: "r", status: "no_capture", features: {} }).length, 0);
+});
+
+test("roiEditPrompt: actionable copy on roi_failed, null otherwise", () => {
+  assert.equal(roiEditPrompt("roi_failed"), "Auto-location failed — mark the outer circle");
+  assert.equal(roiEditPrompt("ok"), null);
+  assert.equal(roiEditPrompt("no_capture"), null);
+});
+
+test("calibrationChip: warning text when present, null otherwise", () => {
+  assert.equal(calibrationChip({ calibration_warning: "circle scale differs by 4.2% — using the circle" }), "circle scale differs by 4.2% — using the circle");
+  assert.equal(calibrationChip({}), null);
+  assert.equal(calibrationChip({ calibration_warning: null }), null);
+  assert.equal(calibrationChip({ calibration_warning: "" }), null);
 });

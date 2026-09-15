@@ -414,6 +414,14 @@ def _tcp_open(ip: str, port: int, timeout_s: float = 0.5) -> bool:
         return False
 
 
+class CircleAnchor(BaseModel):
+    """Operator-marked Ø100 mm outer circle in the capture's pixel space."""
+
+    cx_px: float
+    cy_px: float
+    radius_px: float
+
+
 class DimensionalAnalyzeRequest(BaseModel):
     """Optional body for POST /api/analysis/{run}/dimensional.
 
@@ -424,6 +432,7 @@ class DimensionalAnalyzeRequest(BaseModel):
     layer: int | None = None
     stage: str = "post_jet"
     rois: dict[str, list[int]] | None = None
+    circle: CircleAnchor | None = None
     nominals: dict[str, Any] | None = None
 
 
@@ -1917,7 +1926,12 @@ def create_app(
         req = body or DimensionalAnalyzeRequest()
         nominals = {**DEFAULTS, **req.nominals} if req.nominals else DEFAULTS
         report = analyze_run(
-            run_dir, layer=req.layer, stage=req.stage, rois=req.rois, nominals=nominals
+            run_dir,
+            layer=req.layer,
+            stage=req.stage,
+            rois=req.rois,
+            circle=req.circle.model_dump() if req.circle else None,
+            nominals=nominals,
         )
         return report.to_dict()
 

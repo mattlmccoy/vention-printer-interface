@@ -68,8 +68,17 @@ export interface DimensionalReport {
   features?: Record<string, Record<string, number | null>>;
   compensation?: Compensation | null;
   tool_provenance?: Record<string, unknown>;
+  // How the scale/ROIs were derived and any honest cross-check warning — see backend
+  // analysis/dimensional.py (roi_source/calibration_source/calibration_warning on DimensionalReport).
+  roi_source?: string | null;
+  calibration_source?: string | null;
+  calibration_warning?: string | null;
 }
-export interface AnalysisRequest { layer?: number; stage?: string; rois?: Record<string, [number, number, number, number]>; nominals?: Record<string, unknown> }
+// Optional operator-marked outer circle (still natural-pixel coords), mirrors backend
+// app.py CircleAnchor (cx_px/cy_px/radius_px). When present, the backend derives px/mm and the
+// four feature ROIs from it (roi_source="circle"); `rois` still takes precedence over `circle`.
+export interface CircleAnchorBody { cx_px: number; cy_px: number; radius_px: number }
+export interface AnalysisRequest { layer?: number; stage?: string; rois?: Record<string, [number, number, number, number]>; nominals?: Record<string, unknown>; circle?: CircleAnchorBody }
 export type VisionRoleMap = Record<string, string>;
 export interface CameraSettings { resolution?: [number, number] | string | null; fps?: number | null; format?: string | null; exposure?: number | null }
 export interface VisionRolesPutResult { mapping: VisionRoleMap; roles_resolved: boolean; unresolved: string[] }

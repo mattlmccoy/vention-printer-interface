@@ -537,6 +537,15 @@ button.small { height: 34px; padding: 0 12px; border: 1px solid var(--line-contr
 .chart-empty { min-height: 130px; display: grid; place-items: center; color: var(--muted); font-size: 13px; border: 1px dashed var(--line); border-radius: 10px; background: var(--bg-deep); }
 .stills-wrap { min-height: 150px; }
 
+/* ---- ROI-edit overlay (manual circle → derived ROIs) ---- */
+.roi-edit { position: relative; max-width: 480px; margin: 0 auto; }
+.roi-still { display: block; width: 100%; height: auto; border-radius: 10px; background: var(--slice-bg); }
+.roi-overlay { position: absolute; inset: 0; width: 100%; height: 100%; touch-action: none; }
+.roi-circle { fill: var(--accent); fill-opacity: .06; stroke: var(--accent); cursor: move; }
+.roi-handle { fill: var(--accent); stroke: var(--fg-strong); cursor: ew-resize; }
+.roi-box { fill: none; stroke: var(--live); pointer-events: none; }
+.roi-box-label { fill: var(--live); font-family: var(--font-mono); pointer-events: none; }
+
 /* ---- machine image overlay ---- */
 .mimg svg { width: 100%; height: auto; display: block; background: var(--danger-ink); border-radius: var(--radius); }
 .mk-rail { stroke: var(--trace-rc); stroke-width: 2; stroke-dasharray: 6 6; opacity: .45; }
