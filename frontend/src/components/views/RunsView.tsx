@@ -22,13 +22,17 @@ const fmtDur = (s?: number | null) => {
   return h ? `${h} h ${String(m).padStart(2, "0")} m` : m ? `${m} m ${String(sec).padStart(2, "0")} s` : `${sec} s`;
 };
 
-// Per-axis trace colors match the machine dock; axis order is the drive numbering (spec §4).
+// Analysis-plot palette: the calm seaborn-"muted" set (NOT the vivid live --trace-* dock colours).
+// Axis order is the drive numbering (spec §4).
 const AXES = [
-  { axis: 1, label: "BUILD", token: "var(--trace-part)" },
-  { axis: 2, label: "FEED", token: "var(--trace-feed)" },
-  { axis: 3, label: "PRINTHEAD", token: "var(--trace-ph)" },
-  { axis: 4, label: "RECOATER", token: "var(--trace-rc)" },
+  { axis: 1, label: "BUILD", token: "var(--plot-1)" },
+  { axis: 2, label: "FEED", token: "var(--plot-2)" },
+  { axis: 3, label: "PRINTHEAD", token: "var(--plot-3)" },
+  { axis: 4, label: "RECOATER", token: "var(--plot-4)" },
 ] as const;
+// Sans (not the instrument mono) for chart text, so the plots read as analysis figures. Tabular
+// figures keep the numeric ticks aligned.
+const PLOT_FONT = "var(--font-ui)";
 const METRIC_UNIT: Record<Metric, string> = { pos: "mm", vel: "mm/s", accel: "mm/s²" };
 const METRIC_LABEL: Record<Metric, string> = { pos: "position", vel: "velocity", accel: "acceleration" };
 
@@ -42,15 +46,18 @@ function AxisPanel({ series, tMax, label, color, unit }: { series: { t: number; 
   const y = (v: number) => padT + (1 - (v - lo) / (hi - lo)) * plotH;
   const x = (t: number) => padL + (tMax > 0 ? (t / tMax) * plotW : 0);
   const dec = (v: number) => (Math.abs(v) >= 100 ? "0" : Math.abs(v) >= 10 ? "1" : "2");
+  const mid = (lo + hi) / 2;
+  const tnum = { fontVariantNumeric: "tabular-nums" } as const;
   return (
     <svg className="axpanel" viewBox={`0 0 ${W} ${H}`} style={{ width: "100%", height: "auto" }} role="img" aria-label={`${label} ${unit}`}>
-      <line x1={padL} y1={padT} x2={padL} y2={H - padB} />
-      {lo < 0 && <line x1={padL} y1={y(0)} x2={W - padR} y2={y(0)} strokeDasharray="2 3" />}
-      <polyline points={series.map((p) => `${x(p.t)},${y(p.v)}`).join(" ")} fill="none" stroke={color} strokeWidth="1.5" />
-      <text x={padL + 5} y={padT + 10} fontSize="9.5" fill={color} fontFamily="var(--font-mono)">{label}</text>
-      <text x={padL - 6} y={padT + 8} fontSize="8" fill="var(--faint)" textAnchor="end" fontFamily="var(--font-mono)">{hi.toFixed(Number(dec(hi)))}</text>
-      <text x={padL - 6} y={H - padB} fontSize="8" fill="var(--faint)" textAnchor="end" fontFamily="var(--font-mono)">{lo.toFixed(Number(dec(lo)))}</text>
-      <text x={padL - 30} y={padT + plotH / 2} fontSize="8" fill="var(--faint)" textAnchor="middle" fontFamily="var(--font-mono)" transform={`rotate(-90 ${padL - 30} ${padT + plotH / 2})`}>{unit}</text>
+      {/* seaborn whitegrid: faint horizontal gridlines, no boxed spines */}
+      {[hi, mid, lo].map((v) => <line key={v} x1={padL} y1={y(v)} x2={W - padR} y2={y(v)} stroke="var(--line)" strokeWidth="1" />)}
+      {lo < 0 && <line x1={padL} y1={y(0)} x2={W - padR} y2={y(0)} stroke="var(--faint)" strokeWidth="1" strokeDasharray="2 3" />}
+      <polyline points={series.map((p) => `${x(p.t)},${y(p.v)}`).join(" ")} fill="none" stroke={color} strokeWidth="1.4" strokeLinejoin="round" strokeLinecap="round" />
+      <text x={padL + 5} y={padT + 10} fontSize="10" fill="var(--muted)" fontFamily={PLOT_FONT} fontWeight={500}>{label}</text>
+      <text x={padL - 6} y={padT + 8} fontSize="8.5" fill="var(--faint)" textAnchor="end" fontFamily={PLOT_FONT} style={tnum}>{hi.toFixed(Number(dec(hi)))}</text>
+      <text x={padL - 6} y={H - padB} fontSize="8.5" fill="var(--faint)" textAnchor="end" fontFamily={PLOT_FONT} style={tnum}>{lo.toFixed(Number(dec(lo)))}</text>
+      <text x={padL - 30} y={padT + plotH / 2} fontSize="8.5" fill="var(--faint)" textAnchor="middle" fontFamily={PLOT_FONT} transform={`rotate(-90 ${padL - 30} ${padT + plotH / 2})`}>{unit}</text>
     </svg>
   );
 }
@@ -68,26 +75,32 @@ function BuildDeviationChart({ rows, tolUm }: { rows: LayerAccuracy[]; tolUm: nu
   const x = (i: number) => padL + (pts.length > 1 ? (i * plotW) / (pts.length - 1) : plotW / 2);
   const zeroY = y(0);
   const stepEvery = Math.max(1, Math.ceil(pts.length / 10));
+  const tnum = { fontVariantNumeric: "tabular-nums" } as const;
+  const nOut = pts.filter((p) => Math.abs(p.devUm) > tolUm).length;
   return (
     <svg className="mchart" viewBox={`0 0 ${W} ${H}`} style={{ width: "100%", height: "auto" }} role="img" aria-label="build-piston per-layer deviation in microns">
-      <rect x={padL} y={y(tolUm)} width={plotW} height={y(-tolUm) - y(tolUm)} fill="var(--live-bg)" />
-      <line x1={padL} y1={zeroY} x2={W - padR} y2={zeroY} />
-      <line x1={padL} y1={padT} x2={padL} y2={H - padB} />
+      {/* neutral tolerance band (not a semantic colour) + faint whitegrid at each tick */}
+      <rect x={padL} y={y(tolUm)} width={plotW} height={y(-tolUm) - y(tolUm)} fill="var(--plot-band)" />
       {[maxAbs, tolUm, -tolUm, -maxAbs].map((v) => (
-        <text key={v} x={padL - 6} y={y(v) + 3} fontSize="9" fill="var(--faint)" textAnchor="end" fontFamily="var(--font-mono)">{v > 0 ? "+" : ""}{Math.round(v)}</text>
+        <line key={v} x1={padL} y1={y(v)} x2={W - padR} y2={y(v)} stroke="var(--line)" strokeWidth="1"
+          strokeDasharray={Math.abs(v) === tolUm ? "3 3" : undefined} />
+      ))}
+      <line x1={padL} y1={zeroY} x2={W - padR} y2={zeroY} stroke="var(--faint)" strokeWidth="1" />
+      {[maxAbs, tolUm, -tolUm, -maxAbs].map((v) => (
+        <text key={v} x={padL - 8} y={y(v) + 3} fontSize="9" fill="var(--faint)" textAnchor="end" fontFamily={PLOT_FONT} style={tnum}>{v > 0 ? "+" : ""}{Math.round(v)}</text>
       ))}
       {pts.map((p, i) => {
-        const col = Math.abs(p.devUm) <= tolUm ? "var(--trace-part)" : "var(--err)";
+        const col = Math.abs(p.devUm) <= tolUm ? "var(--plot-1)" : "var(--plot-warn)";
         return (
           <g key={p.layer}>
-            <line x1={x(i)} y1={zeroY} x2={x(i)} y2={y(p.devUm)} stroke={col} strokeWidth="1.8" />
-            <circle cx={x(i)} cy={y(p.devUm)} r="2.6" fill={col} />
-            {(i % stepEvery === 0 || i === pts.length - 1) && <text x={x(i)} y={H - padB + 13} fontSize="8" fill="var(--faint)" textAnchor="middle" fontFamily="var(--font-mono)">{p.layer}</text>}
+            <line x1={x(i)} y1={zeroY} x2={x(i)} y2={y(p.devUm)} stroke={col} strokeWidth="1.3" />
+            <circle cx={x(i)} cy={y(p.devUm)} r="2.4" fill={col} />
+            {(i % stepEvery === 0 || i === pts.length - 1) && <text x={x(i)} y={H - padB + 13} fontSize="8.5" fill="var(--faint)" textAnchor="middle" fontFamily={PLOT_FONT} style={tnum}>{p.layer}</text>}
           </g>
         );
       })}
-      <text x={padL - 34} y={padT + plotH / 2} fontSize="9" fill="var(--faint)" textAnchor="middle" fontFamily="var(--font-mono)" transform={`rotate(-90 ${padL - 34} ${padT + plotH / 2})`}>deviation (µm)</text>
-      <text x={padL + plotW / 2} y={H - 3} fontSize="9" fill="var(--faint)" textAnchor="middle" fontFamily="var(--font-mono)">layer number · shaded band = ±{tolUm} µm tolerance</text>
+      <text x={padL - 34} y={padT + plotH / 2} fontSize="9.5" fill="var(--muted)" textAnchor="middle" fontFamily={PLOT_FONT} transform={`rotate(-90 ${padL - 34} ${padT + plotH / 2})`}>deviation (µm)</text>
+      <text x={padL + plotW / 2} y={H - 3} fontSize="9.5" fill="var(--faint)" textAnchor="middle" fontFamily={PLOT_FONT}>layer number{nOut > 0 ? ` · ${nOut} of ${pts.length} outside ±${tolUm} µm` : ` · all ${pts.length} within ±${tolUm} µm`}</text>
     </svg>
   );
 }

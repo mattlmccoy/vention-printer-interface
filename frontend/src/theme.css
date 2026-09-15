@@ -46,6 +46,14 @@
   --trace-rc: #5cc8ff;
   /* Model / preview (dry-run) movement — distinct from every live axis colour. */
   --violet: #b98cff;
+  /* Runs analysis plots — a calm, desaturated (seaborn-"muted") palette, deliberately separate from
+     the vivid live --trace-* dock colours: the dock is glanceable, the plots are data-forward. */
+  --plot-1: #6f9bd8;  /* build   — muted steel blue */
+  --plot-2: #6cc08a;  /* feed    — muted green */
+  --plot-3: #a992d6;  /* printhead — muted purple */
+  --plot-4: #6fbcd6;  /* recoater — muted cyan */
+  --plot-warn: #d9756e;                    /* out-of-tolerance marks — muted brick red */
+  --plot-band: rgba(152, 165, 179, 0.10);  /* tolerance band fill — neutral, not semantic */
   --image-bg: #000;
   /* Slice-preview letterbox: white in both themes so the padding matches the CAD slice's own
      white field and reads as one clean build-envelope square. */
@@ -102,6 +110,13 @@
   --trace-ph: #cf222e;
   --trace-rc: #1f6feb;
   --violet: #7c3aed;
+  /* Runs analysis plots — seaborn "muted" on white (matplotlib's own values read as intended here). */
+  --plot-1: #4c72b0;
+  --plot-2: #55a868;
+  --plot-3: #8172b3;
+  --plot-4: #4a9cbf;
+  --plot-warn: #c44e52;
+  --plot-band: rgba(92, 104, 116, 0.09);
   --image-bg: #0b0e13;
   --scrim: rgba(11, 14, 18, 0.85);
   --danger-ink: #ffffff;
