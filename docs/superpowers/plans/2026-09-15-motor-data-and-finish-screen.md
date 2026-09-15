@@ -18,7 +18,14 @@ commanded-vs-actual layer-height accuracy as the headline metrology.
 - Telemetry poll ~5 Hz (poll_interval_s=0.2). A 0.2 mm drop @2.5 mm/s ~0.08 s < one sample.
 
 ## Tasks (TDD each; commit per task)
-- [ ] T1 DONE: priming auto routine reorder (committed 4a7b2fe).
+- [x] T1: priming auto routine reorder (4a7b2fe). Plus level-step declutter + editable feed (2c26477, 2b32651).
+- [x] T2: parse_actual_speed. [x] T3: Telemetry.actual_speed + read_telemetry best-effort + sim + snapshot.
+- [x] T4: telemetry.csv vspeed_1..4. [x] T5: motion_profiles prefer native speed.
+- [x] T6: build-piston layer_accuracy.csv (3bb398a).
+- [x] T7: fast print-time poll (Controller.set_fast_poll / effective_poll_interval; recorder on_active_change;
+      --print-poll-interval default 0.1). HW-VALIDATE: each poll = ~6 HTTP GETs, so <0.1 needs headroom.
+- [ ] T8 finish screen (frontend). [ ] T9 Runs plotting refresh (frontend). NEXT.
+- [ ] OLD:
 - [ ] T2 backend: `parse_actual_speed` for `/smartDrives/get/actualSpeed` JSON
       (`{"actual speed":{"1":v,...}}`). Pure, TDD.
 - [ ] T3 backend: Telemetry struct + `read_telemetry` add `actual_speed: dict[int,float]`

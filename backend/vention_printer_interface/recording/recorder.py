@@ -10,16 +10,20 @@ from __future__ import annotations
 import csv
 import hashlib
 import json
+import logging
 import platform
 import re
 import statistics
 import threading
 import time
+from collections.abc import Callable
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
 from vention_printer_interface import __version__
+
+log = logging.getLogger(__name__)
 
 FORMAT_VERSION = 1
 TELEMETRY_FIELDS = [
@@ -30,6 +34,10 @@ TELEMETRY_FIELDS = [
     "pos_2",
     "pos_3",
     "pos_4",
+    "vspeed_1",
+    "vspeed_2",
+    "vspeed_3",
+    "vspeed_4",
     "complete_1",
     "complete_2",
     "complete_3",
@@ -68,11 +76,11 @@ def motion_profile_rows(
 ) -> list[list[Any]]:
     """Derive per-axis pos/vel/accel rows from streamed telemetry rows.
 
-    Velocity is the finite difference Δposition/Δt (mm/s) using the row ``host_timestamp_ns``
-    timestamps; acceleration is Δvelocity/Δt. The first telemetry row is dropped (a finite
-    difference needs a prior row), so N telemetry rows yield N-1 motion rows. A cell is left
-    blank (``None``) when it cannot be computed (missing position, non-increasing timestamps,
-    or no prior velocity for acceleration) -- unknown must never render as a real 0.0.
+    Velocity prefers the controller's NATIVE measured speed (``vspeed_<axis>``, mm/s) when present;
+    otherwise it falls back to the finite difference Δposition/Δt. Acceleration is always
+    Δvelocity/Δt. The first telemetry row is dropped (a finite difference needs a prior row), so N
+    telemetry rows yield N-1 motion rows. A cell is left blank (``None``) when it cannot be computed
+    (missing data, non-increasing timestamps, no prior velocity) -- unknown never renders as 0.0.
     """
     out: list[list[Any]] = []
     prev_ts: float | None = None
@@ -81,6 +89,7 @@ def motion_profile_rows(
     for row in telemetry_rows:
         ts = _to_float(row.get("host_timestamp_ns"))
         pos = {a: _to_float(row.get(f"pos_{a}")) for a in MOTION_AXES}
+        native = {a: _to_float(row.get(f"vspeed_{a}")) for a in MOTION_AXES}
         if prev_ts is None or ts is None:
             prev_ts, prev_pos = ts, pos
             continue
@@ -89,7 +98,8 @@ def motion_profile_rows(
         accel: dict[int, float | None] = {}
         for a in MOTION_AXES:
             p, pp = pos[a], prev_pos[a]
-            vel[a] = (p - pp) / dt if dt > 0 and p is not None and pp is not None else None
+            derived = (p - pp) / dt if dt > 0 and p is not None and pp is not None else None
+            vel[a] = native[a] if native[a] is not None else derived  # native speed wins
             pv = prev_vel[a]
             v = vel[a]
             accel[a] = (v - pv) / dt if dt > 0 and v is not None and pv is not None else None
@@ -284,8 +294,13 @@ def _sha256(path: Path) -> str:
 
 
 class Recorder:
-    def __init__(self, root: Path) -> None:
+    def __init__(
+        self, root: Path, on_active_change: Callable[[bool], None] | None = None
+    ) -> None:
         self.root = root
+        # Fired True when a run starts recording and False when it stops -- lets the controller poll
+        # telemetry faster during a run (finer motion profiles) without the recorder knowing it.
+        self._on_active_change = on_active_change
         self.active: Path | None = None
         self._csv: Any = None
         self._file: Any = None
@@ -295,6 +310,14 @@ class Recorder:
         self._count = 0
         self._started = 0.0
         self._lock = threading.Lock()
+
+    def _signal_active(self, active: bool) -> None:
+        if self._on_active_change is None:
+            return
+        try:
+            self._on_active_change(active)
+        except Exception as exc:  # noqa: BLE001 - a poll-rate hint must never break recording
+            log.warning("recorder on_active_change hook failed: %s", exc)
 
     def start(self, name: str, *, notes: str = "", metadata: dict[str, Any] | None = None) -> Path:
         with self._lock:
@@ -330,6 +353,7 @@ class Recorder:
             self._events, self._count, self._started = [], 0, time.time()
             self.active = run
         self.event("recording_started", {"name": name})
+        self._signal_active(True)
         return run
 
     @property
@@ -347,6 +371,8 @@ class Recorder:
                 return
             t = snapshot["telemetry"]
             pos, comp = t["positions"], t["motion_complete"]
+            # Native measured speed (mm/s) per axis; blank when the controller didn't report it.
+            vspeed = t.get("actual_speed") or {}
             self._csv.writerow(
                 [
                     t["host_timestamp_ns"],
@@ -356,6 +382,10 @@ class Recorder:
                     pos.get("2"),
                     pos.get("3"),
                     pos.get("4"),
+                    vspeed.get("1", ""),
+                    vspeed.get("2", ""),
+                    vspeed.get("3", ""),
+                    vspeed.get("4", ""),
                     comp.get("1"),
                     comp.get("2"),
                     comp.get("3"),
@@ -425,7 +455,8 @@ class Recorder:
             (run / "manifest.json").write_text(json.dumps(manifest, indent=2))
             self.active, self._csv, self._file = None, None, None
             self._layers_csv, self._layers_file = None, None
-            return run
+        self._signal_active(False)
+        return run
 
     def list_runs(self) -> list[dict[str, Any]]:
         if not self.root.exists():

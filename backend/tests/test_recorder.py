@@ -5,9 +5,11 @@ from typing import Any
 import pytest
 
 from vention_printer_interface.recording.recorder import (
+    MOTION_PROFILE_FIELDS,
     Recorder,
     layer_accuracy_rows,
     layer_accuracy_summary,
+    motion_profile_rows,
 )
 
 
@@ -186,6 +188,57 @@ def _tel(ts: int, pos1: float) -> dict[str, Any]:
 
 def _lay(ts: int, layer: int, phase: str, cum_mm: float) -> dict[str, Any]:
     return {"host_timestamp_ns": ts, "layer": layer, "phase": phase, "part_height_mm": cum_mm}
+
+
+def test_recorder_signals_active_change(tmp_path: Path) -> None:
+    # The recorder announces start/stop so the controller can poll faster while a run records.
+    events: list[bool] = []
+    rec = Recorder(tmp_path, on_active_change=events.append)
+    rec.start("x")
+    rec.stop()
+    assert events == [True, False]
+
+
+def test_telemetry_csv_logs_native_speed(tmp_path: Path) -> None:
+    rec = Recorder(tmp_path)
+    run = rec.start("nspeed")
+    s = _snap_at(0, 0.0)
+    s["telemetry"]["actual_speed"] = {"1": 2.5, "2": 0.0, "3": 0.0, "4": 0.0}
+    rec.record(s)
+    rec.stop()
+    lines = (run / "telemetry.csv").read_text().splitlines()
+    header = lines[0].split(",")
+    for a in (1, 2, 3, 4):
+        assert f"vspeed_{a}" in header
+    row = lines[1].split(",")
+    assert float(row[header.index("vspeed_1")]) == 2.5
+
+
+def test_telemetry_csv_native_speed_blank_when_absent(tmp_path: Path) -> None:
+    # No actual_speed in the snapshot (old controller) -> blank cell, never a fabricated 0.
+    rec = Recorder(tmp_path)
+    run = rec.start("noneed")
+    rec.record(_snap_at(0, 0.0))
+    rec.stop()
+    lines = (run / "telemetry.csv").read_text().splitlines()
+    header = lines[0].split(",")
+    assert lines[1].split(",")[header.index("vspeed_1")] == ""
+
+
+def test_motion_profiles_prefer_native_speed() -> None:
+    # When telemetry carries native vspeed_*, the profile uses it for velocity instead of the
+    # finite difference of position (native is more accurate); accel = Δ(native vel)/Δt.
+    rows = [
+        {"host_timestamp_ns": 0, "pos_1": 0.0, "vspeed_1": 5.0},
+        {"host_timestamp_ns": 500_000_000, "pos_1": 1.0, "vspeed_1": 9.0},  # Δpos→2.0, native→9.0
+        {"host_timestamp_ns": 1_000_000_000, "pos_1": 3.0, "vspeed_1": 13.0},
+    ]
+    out = motion_profile_rows(rows)
+    vel_i = MOTION_PROFILE_FIELDS.index("vel_1")
+    accel_i = MOTION_PROFILE_FIELDS.index("accel_1")
+    assert out[0][vel_i] == 9.0  # native, not the finite-diff 2.0
+    assert out[1][vel_i] == 13.0
+    assert out[1][accel_i] == (13.0 - 9.0) / 0.5  # accel from native velocity deltas
 
 
 def test_layer_accuracy_commanded_vs_actual_build_height() -> None:

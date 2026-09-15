@@ -40,6 +40,39 @@ def test_read_telemetry_shape() -> None:
     assert d.read_telemetry().heater_on is False
 
 
+def test_read_telemetry_native_actual_speed() -> None:
+    # The MM2 reports native actual speed (/smartDrives/get/actualSpeed). read_telemetry logs it in
+    # Telemetry.actual_speed (signed mm/s); a settled axis reports 0.0.
+    d, t = make()
+    d.identify()
+    d.home_all()
+    t.advance(60)
+    assert d.read_telemetry().actual_speed == {1: 0.0, 2: 0.0, 3: 0.0, 4: 0.0}  # all settled
+    d.set_max_speed(1, 3.0)
+    d.move_absolute(1, 40.0)  # axis 1 now moving up-position at 3.0 mm/s (target > position 0)
+    tel = d.read_telemetry()
+    assert tel.actual_speed[1] == pytest.approx(3.0)
+    assert tel.actual_speed[2] == 0.0
+
+
+def test_read_telemetry_native_speed_degrades_gracefully(monkeypatch: pytest.MonkeyPatch) -> None:
+    # If the actual-speed endpoint errors (old MM software / transient), telemetry still returns and
+    # actual_speed is empty -- unknown, never fabricated.
+    d, t = make()
+    d.identify()
+    real_get = t.http_get
+
+    def flaky(path: str, *, timeout_s: float | None = None) -> bytes:
+        if path.endswith("actualSpeed"):
+            raise TransportError("actualSpeed unsupported")
+        return real_get(path, timeout_s=timeout_s)
+
+    monkeypatch.setattr(t, "http_get", flaky)
+    tel = d.read_telemetry()
+    assert tel.actual_speed == {}
+    assert tel.positions  # the rest of telemetry is intact
+
+
 def test_move_and_speed() -> None:
     d, t = make()
     d.home_all()
