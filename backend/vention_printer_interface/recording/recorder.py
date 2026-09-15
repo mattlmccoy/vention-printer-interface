@@ -125,9 +125,6 @@ LAYER_ACCURACY_FIELDS = [
 # Phases where the build piston actually drops one layer (so accuracy is meaningful). Postcoat and
 # setup hold the part fixed. Mirrors control.print_settings._PART_DROP_PHASES without importing it.
 _PART_DROP_PHASES = ("thin_precoat", "printing")
-# A layer's settled build position may exceed the commanded stack by at most this (mm) before we
-# treat it as the finish move (part → part_max) rather than a layer height.
-FINISH_GUARD_MM = 2.0
 
 
 def layer_accuracy_rows(
@@ -155,29 +152,20 @@ def layer_accuracy_rows(
         key=lambda x: x[0],
     )
     baseline = samples[0][1] if samples else None
+    base_ts = samples[0][0] if samples else None  # print start, before layer 1's drop
     ordered = sorted(layer_rows, key=lambda r: _to_float(r.get("host_timestamp_ns")) or 0.0)
-    starts = [_to_float(r.get("host_timestamp_ns")) for r in ordered]
-
-    # Physical bound so the FINISH move (part driven to part_max after the last layer) can't be read
-    # as a layer's settled height: ignore samples whose displacement exceeds the commanded stack by
-    # more than a small margin. The finish target sits far beyond any layer's true settled position.
-    commanded_cums = [c for r in ordered if (c := _to_float(r.get("part_height_mm"))) is not None]
-    max_pos = (
-        baseline + max(commanded_cums) + FINISH_GUARD_MM
-        if baseline is not None and commanded_cums
-        else None
-    )
+    # layers.csv timestamps are the layer_COMPLETED events (app.py records on "layer_completed"),
+    # so a layer's settled build position is the LAST telemetry sample at/just before its own
+    # completion — in (previous completion, this completion]. This attributes the right height to
+    # each layer (no off-by-one) and excludes the finish move, which runs AFTER the last completion.
+    completions = [_to_float(r.get("host_timestamp_ns")) for r in ordered]
 
     def settled_pos(i: int) -> float | None:
-        lo = starts[i]
-        hi = starts[i + 1] if i + 1 < len(starts) else None
-        if lo is None:
+        hi = completions[i]
+        lo = completions[i - 1] if i > 0 else base_ts
+        if hi is None:
             return None
-        window = [
-            p
-            for ts, p in samples
-            if ts >= lo and (hi is None or ts < hi) and (max_pos is None or p <= max_pos)
-        ]
+        window = [p for ts, p in samples if (lo is None or ts > lo) and ts <= hi]
         return window[-1] if window else None
 
     out: list[dict[str, Any]] = []
