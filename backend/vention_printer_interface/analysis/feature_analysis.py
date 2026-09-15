@@ -55,7 +55,7 @@ from __future__ import annotations
 import math
 import os
 import traceback
-from typing import Dict, List, Tuple, Optional, Any
+from typing import Dict, List, Tuple, Optional, Any, TextIO, TypeGuard, cast
 
 import cv2
 import numpy as np
@@ -78,14 +78,14 @@ CIRCULARITY_MAX_THEORETICAL = CIRCULARITY_NORM_BASE
 # ---------------------------------------------------------------------------
 # Debug logging (always safe to call; caller decides whether to pass a path)
 # ---------------------------------------------------------------------------
-def _dbg_open(debug_log_path: Optional[str]) -> Optional[object]:
+def _dbg_open(debug_log_path: Optional[str]) -> Optional[TextIO]:
     if not debug_log_path:
         return None
     os.makedirs(os.path.dirname(debug_log_path) or ".", exist_ok=True)
     # Append mode: GUI/CLI can write headers once, feature functions append blocks.
     return open(debug_log_path, "a", encoding="utf-8")
 
-def _dbg(f: Optional[object], msg: str) -> None:
+def _dbg(f: Optional[TextIO], msg: str) -> None:
     if not f:
         return
     try:
@@ -118,7 +118,7 @@ def _segment_blobs(gray: np.ndarray) -> np.ndarray:
     """Otsu threshold then invert so dark ink becomes white blobs."""
     g = gray.copy()
     if g.dtype != np.uint8:
-        g = cv2.normalize(g, None, 0, 255, cv2.NORM_MINMAX).astype(np.uint8)
+        g = cv2.normalize(g, cast(np.ndarray, None), 0, 255, cv2.NORM_MINMAX).astype(np.uint8)
     g = cv2.GaussianBlur(g, (5, 5), 0)
     _, bw = cv2.threshold(g, 0, 255, cv2.THRESH_BINARY_INV + cv2.THRESH_OTSU)
     # Light cleanup: close then open
@@ -328,7 +328,7 @@ def analyze_dot_array(
     debug_overlay_path: Optional[str] = None,
     debug_log_path: Optional[str] = None,
     min_blob_area_px: int = 100,
-) -> Tuple[Dict[str, float], List[Dict]]:
+) -> Tuple[Dict[str, float | str], List[Dict[str, Any]]]:
     """Analyse a dot array inside a cropped ROI using the canonical blob/centroid pipeline.
 
     Notes
@@ -355,14 +355,14 @@ def analyze_dot_array(
         # Area-only filters are insufficient at high DPI (tiny specks can still have large pixel area).
         # Reject blobs whose equivalent diameter is implausibly small/large relative to the nominal and
         # the robust median of detected blobs.
-        _diams_all = [d.get("eq_diam_mm") for d in details if d.get("eq_diam_mm") is not None and not math.isnan(d.get("eq_diam_mm"))]
+        _diams_all = [v for d in details if (v := d.get("eq_diam_mm")) is not None and not math.isnan(v)]
         if len(_diams_all) >= 5 and nominal_diameter_mm and not (isinstance(nominal_diameter_mm, float) and math.isnan(nominal_diameter_mm)):
             _med = float(np.median(np.array(_diams_all, dtype=float)))
             # Keep window: combine nominal-based and median-based gates.
             _min_keep = max(0.45 * float(nominal_diameter_mm), 0.40 * _med)
             _max_keep = max(1.75 * float(nominal_diameter_mm), 1.80 * _med)
             _before = len(details)
-            details = [d for d in details if d.get("eq_diam_mm") is not None and not math.isnan(d.get("eq_diam_mm")) and (_min_keep <= float(d.get("eq_diam_mm")) <= _max_keep)]
+            details = [d for d in details if (v := d.get("eq_diam_mm")) is not None and not math.isnan(v) and (_min_keep <= float(v) <= _max_keep)]
             _after = len(details)
             _dbg(dbg, f"[dot] speck_reject: before={_before} after={_after} min_keep_mm={_min_keep:.3f} max_keep_mm={_max_keep:.3f} median_mm={_med:.3f}")
         centroids_px = [tuple(d["centroid_px"]) for d in details if d.get("centroid_px") is not None]
@@ -373,9 +373,9 @@ def analyze_dot_array(
             spacing_tol=spacing_tol,
         )
 
-        diams = [d.get("eq_diam_mm") for d in details if d.get("eq_diam_mm") is not None and not math.isnan(d.get("eq_diam_mm"))]
-        circs = [d.get("circularity") for d in details if d.get("circularity") is not None and not math.isnan(d.get("circularity"))]
-        circs_norm = [d.get("circularity_norm") for d in details if d.get("circularity_norm") is not None and not math.isnan(d.get("circularity_norm"))]
+        diams = [v for d in details if (v := d.get("eq_diam_mm")) is not None and not math.isnan(v)]
+        circs = [v for d in details if (v := d.get("circularity")) is not None and not math.isnan(v)]
+        circs_norm = [v for d in details if (v := d.get("circularity_norm")) is not None and not math.isnan(v)]
 
         mean_diam = float(np.mean(diams)) if diams else float("nan")
         std_diam = float(np.std(diams, ddof=1) if len(diams) > 1 else 0.0) if diams else float("nan")
@@ -389,7 +389,7 @@ def analyze_dot_array(
         spacing_x_error_pct = (spacing_x_error_mm / float(nominal_spacing_mm) * 100.0) if nominal_spacing_mm and not math.isnan(spacing_x_error_mm) else float("nan")
         spacing_y_error_pct = (spacing_y_error_mm / float(nominal_spacing_mm) * 100.0) if nominal_spacing_mm and not math.isnan(spacing_y_error_mm) else float("nan")
 
-        summary: Dict[str, float] = {
+        summary: Dict[str, float | str] = {
             "num_blobs": float(len(details)),
             "avg_diameter_mm": float(mean_diam),
             "std_diameter_mm": float(std_diam),
@@ -459,13 +459,13 @@ def analyze_dot_array(
     # ------------------------------------------------------------------
 
     # Halo / droplet eccentricity: mean eccentricity across all blobs
-    eccs = [d.get("eccentricity") for d in details if d.get("eccentricity") is not None]
+    eccs = [v for d in details if (v := d.get("eccentricity")) is not None]
     mean_ecc = float(np.mean(eccs)) if eccs else float("nan")
     summary["mean_eccentricity"] = mean_ecc
     summary["halo_eccentricity"] = mean_ecc  # kept for backward compatibility
 
     # Orientation-aware halo metrics
-    angles = [d.get("orientation_deg") for d in details if d.get("orientation_deg") is not None]
+    angles = [v for d in details if (v := d.get("orientation_deg")) is not None]
     if angles:
         summary["mean_major_axis_angle_deg"] = float(np.mean(angles))
     else:
@@ -546,7 +546,7 @@ def analyze_checkerboard(
     scale_min: float = 0.30,
     scale_step: float = 0.05,
     checkerboard_ref_angle_deg: float = -45.0,
-) -> Dict[str, float]:
+) -> Dict[str, float | str]:
     """
     Analyse a checkerboard ROI using a component-based square filter that is robust to blur.
 
@@ -579,7 +579,7 @@ def analyze_checkerboard(
             d -= 90.0
         return d
 
-    out: Dict[str, float] = {
+    out: Dict[str, float | str] = {
         "found": 0,
         "num_squares": 0,
         "mean_square_mm": float("nan"),
@@ -635,7 +635,7 @@ def analyze_checkerboard(
                 pass
 
     # Small helper: analyze one scale and one polarity, return accepted stats
-    def _analyze_mask(mask: np.ndarray, expected_area_px: float):
+    def _analyze_mask(mask: np.ndarray, expected_area_px: float) -> Tuple[int, List[Any]]:
         num_labels, labels, stats, centroids = cv2.connectedComponentsWithStats(mask, connectivity=8)
         accepted = []
         for lab in range(1, num_labels):
@@ -679,7 +679,7 @@ def analyze_checkerboard(
              f"effective_px_per_mm={eff_px_per_mm:.6f}")
         _dbg(f"[checkerboard] params={params}")
 
-        blur = cv2.GaussianBlur(gray, (params["gaussian_blur_ksize"], params["gaussian_blur_ksize"]), 0)
+        blur = cv2.GaussianBlur(gray, cast("tuple[int, int]", (params["gaussian_blur_ksize"], params["gaussian_blur_ksize"])), 0)
 
         if params["use_adaptive"]:
             bw = cv2.adaptiveThreshold(
@@ -862,11 +862,11 @@ def analyze_checkerboard(
     return out
 
 
-def _nan_ring_result(extra: Optional[Dict[str, float]] = None) -> Dict[str, float]:
+def _nan_ring_result(extra: Optional[Dict[str, float | str]] = None) -> Dict[str, float | str]:
     # VENDOR FIX #1: restored verbatim from the backup that still defines it
     # (backup-OLD/feature_analysis.py:282). The current source calls this but
     # omits the definition (latent NameError on ring error paths).
-    base = {
+    base: Dict[str, float | str] = {
         "mean_line_width_mm": float("nan"),
         "std_line_width_mm": float("nan"),
         "mean_spacing_mm": float("nan"),
@@ -889,7 +889,7 @@ def analyze_concentric_rings(
     num_rings: int,
     debug_overlay_path: Optional[str] = None,
     debug_log_path: Optional[str] = None,
-) -> Dict[str, float]:
+) -> Dict[str, float | str]:
     """
     Analyse concentric rings to estimate line width and spacing.
 
@@ -989,6 +989,7 @@ def analyze_concentric_rings(
             merged.append(float(np.mean(current_group)))
 
         peaks = np.array(sorted(merged), dtype=float)
+        result: Dict[str, float | str]
         if peaks.size < 4:
             result = _nan_ring_result(
                 {"num_peaks": int(peaks.size), "algorithm_error": "too_few_peaks"}
@@ -1055,7 +1056,7 @@ def analyze_concentric_rings(
         else:
             overlay = roi.copy()
         cv2.circle(overlay, (cx, cy), 4, (0, 0, 255), -1)
-        if "num_peaks" in result and result["num_peaks"] > 0:
+        if "num_peaks" in result and cast(float, result["num_peaks"]) > 0:
             for r_px in peaks:
                 cv2.circle(overlay, (cx, cy), int(round(r_px)), (0, 255, 0), 1)
         cv2.imwrite(overlay_path, overlay)
@@ -1075,7 +1076,7 @@ def analyze_pitch_ruler(
     debug_overlay_path: Optional[str] = None,
     debug_log_path: Optional[str] = None,
     use_true_edge_width: bool = False,
-) -> Dict[str, float]:
+) -> Dict[str, float | str]:
     """Analyse a pitch ruler by measuring bar widths.
 
     orientation:
@@ -1091,7 +1092,7 @@ def analyze_pitch_ruler(
     try:
         gray = cv2.cvtColor(roi, cv2.COLOR_BGR2GRAY) if roi.ndim == 3 else roi.copy()
         if gray.dtype != np.uint8:
-            gray = cv2.normalize(gray, None, 0, 255, cv2.NORM_MINMAX).astype(np.uint8)
+            gray = cv2.normalize(gray, cast(np.ndarray, None), 0, 255, cv2.NORM_MINMAX).astype(np.uint8)
 
         # threshold ink (dark) -> white foreground
         _, thresh = cv2.threshold(gray, 0, 255, cv2.THRESH_BINARY_INV + cv2.THRESH_OTSU)
@@ -1325,7 +1326,7 @@ def recommend_compensation_overall(
     # Scale corrections:
     # Prefer dot-spacing (centroid lattice) because it is less sensitive to dot morphology/spread.
     # Fall back to dot diameter if spacing is unavailable.
-    def _finite(x: Any) -> bool:
+    def _finite(x: object) -> TypeGuard[float]:
         return x is not None and not (isinstance(x, float) and math.isnan(x))
 
     # Helper to format signed percent
@@ -1435,9 +1436,11 @@ def recommend_compensation_overall(
 
     # If both are available, explicitly flag disagreement as a diagnostic.
     if geom_available and morph_available:
-        x_err = float(dot.get("spacing_x_error_pct"))
-        y_err = float(dot.get("spacing_y_error_pct"))
-        d_err = float(dot.get("diameter_error_pct"))
+        # geom/morph availability is only set inside `if dot:`, so dot is present here.
+        dot_g = cast(Dict[str, float], dot)
+        x_err = float(cast(float, dot_g.get("spacing_x_error_pct")))
+        y_err = float(cast(float, dot_g.get("spacing_y_error_pct")))
+        d_err = float(cast(float, dot_g.get("diameter_error_pct")))
         if (abs(x_err) < SCALE_PCT_THRESH and abs(y_err) < SCALE_PCT_THRESH) and (abs(d_err) >= SCALE_PCT_THRESH):
             lines.append(
                 "  Cross-check: spacing is calibrated but dot diameter is biased. "
@@ -1495,7 +1498,7 @@ def recommend_compensation_overall(
             sense = "undersized" if de < 0 else "oversized"
             lines.append(f"Dot size bias (diameter error): { _pct(de) } ({sense} vs nominal).")
             lines.append(f"Diameter-based scale cross-check: multiply XY by {dm:.6f} (diagnostic only).")
-            if spacing_scale_used:
+            if spacing_scale_used:  # type: ignore[name-defined]  # latent vendor NameError; preserved verbatim (defining it would change runtime behavior)
                 lines.append(
                     "  Interpretation: dot spacing calibrates the motion frame. If spacing looks calibrated but dots are "
                     f"{sense}, the dominant error is deposition morphology (drop volume, wetting, wicking), not XY motion scale."

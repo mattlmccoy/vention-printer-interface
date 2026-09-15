@@ -84,7 +84,7 @@ def _yaw_from_checkerboard(checkerboard: dict[str, Any] | None) -> float | None:
         return None
     for key in ("checkerboard_angle_error_deg", "angle_deg"):
         val = checkerboard.get(key)
-        if _finite(val):
+        if val is not None and _finite(val):
             return float(val)
     return None
 

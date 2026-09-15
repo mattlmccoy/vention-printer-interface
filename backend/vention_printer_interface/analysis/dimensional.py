@@ -128,7 +128,8 @@ def load_report(run_dir: Path) -> dict[str, Any] | None:
     p = _report_path(run_dir)
     if not p.exists():
         return None
-    return json.loads(p.read_text(encoding="utf-8"))
+    data = json.loads(p.read_text(encoding="utf-8"))
+    return data if isinstance(data, dict) else None
 
 
 def _provenance() -> dict[str, Any]:
@@ -246,7 +247,9 @@ def _crop(image: np.ndarray, rect: list[int] | tuple[int, int, int, int]) -> np.
     return image[y0:y1, x0:x1]
 
 
-def _run_analyzer(feature: str, crop: np.ndarray, px_per_mm: float, nominals: dict) -> dict:
+def _run_analyzer(
+    feature: str, crop: np.ndarray, px_per_mm: float, nominals: dict[str, Any]
+) -> dict[str, Any]:
     """Dispatch one feature ROI to its vendored analyzer, returning the summary dict."""
     if feature == "dot":
         summary, _details = analyze_dot_array(
@@ -280,7 +283,7 @@ def _run_analyzer(feature: str, crop: np.ndarray, px_per_mm: float, nominals: di
 
 
 def _auto_rois(
-    image: np.ndarray, px_per_mm: float, nominals: dict
+    image: np.ndarray, px_per_mm: float, nominals: dict[str, Any]
 ) -> dict[str, list[int]] | None:
     """Auto-locate feature ROIs off the outer circle. None if the anchor can't be found."""
     gray = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY) if image.ndim == 3 else image

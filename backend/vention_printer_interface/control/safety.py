@@ -201,10 +201,11 @@ def evaluate(
         # Piston spill guard: a piston commanded/driven past its safe depth can unseat from the
         # cylinder and spill powder. Warn (not fault) so the operator can back it off.
         for axis, depth in limits.spill_depth.items():
-            pos = telemetry.positions.get(axis)
-            if pos is not None and pos > depth:
+            spill_pos = telemetry.positions.get(axis)
+            if spill_pos is not None and spill_pos > depth:
                 warnings.append(
-                    f"axis {axis} past safe depth ({pos:.1f} > {depth:.0f} mm) — powder may spill"
+                    f"axis {axis} past safe depth ({spill_pos:.1f} > {depth:.0f} mm) — "
+                    "powder may spill"
                 )
     # heater_on_s is measured from the earlier of "commanded on" and "observed on", so the
     # watchdog works even when the relay state is never echoed back (review C1).
