@@ -128,14 +128,15 @@ def compile_priming_setup(s: PrimingSettings, limits: SafetyLimits) -> tuple[Ste
     add("move_abs", RECOATER, s.level_recoat_start_mm, "recoater to start (left of feed)")
     add("wait")
     add("hold", None, None, "Load powder into the feed cavity, then Resume")
-    # 3) Fill: spread across -> recoater back -> feed up, N times. The build piston stays FIXED
-    # (backfill); the feed advance supplies powder. The build piston first drops in the print.
+    # 3) Fill, N times, in the SAME order as the manual level step: recoater to start (past the feed
+    # piston) -> feed up (raise powder ABOVE the bed BEFORE spreading) -> spread across. The build
+    # piston stays FIXED (backfill); the feed advance supplies the powder; it first drops in print.
     for _ in range(s.n_thick_precoats):
-        add("move_abs", RECOATER, s.level_recoat_end_mm, "spread across the bed")
-        add("wait")
-        add("move_abs", RECOATER, s.level_recoat_start_mm, "recoater back")
+        add("move_abs", RECOATER, s.level_recoat_start_mm, "recoater to start (past feed)")
         add("wait")
         add("move_rel", FEED, -s.thick_feed_mm, "feed up — supply powder")  # build FIXED
+        add("wait")
+        add("move_abs", RECOATER, s.level_recoat_end_mm, "spread across the bed")
         add("wait")
         add("dwell", value=s.settle_s)
     add("mark", label="priming_done")
