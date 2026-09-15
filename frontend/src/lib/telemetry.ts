@@ -74,7 +74,7 @@ export interface EventItem { host_timestamp_ns: number; label: string; data: Rec
 export interface JobSnap {
   path: string; name: string; folder: string; layer_count: number; layer_height_mm: number; height_mm: number;
   bbox_mm: { x: number; y: number; z: number }; dpi: number; bpp: number; timestamp: string; complete: boolean;
-  missing_pages: number[]; current_layer: number;
+  missing_pages: number[]; current_layer: number; kind?: "2D" | "3D"; workflow?: string;
 }
 
 export interface StatusPayload {

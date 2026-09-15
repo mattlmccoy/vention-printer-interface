@@ -142,3 +142,17 @@ def test_scan_finds_rip_job(tmp_path: Path) -> None:
     make_rip_job(tmp_path / "hot", "20260914_192136_gold_standard")
     jobs = JobStore([tmp_path / "hot"]).scan()
     assert any(j.layer_count == 1 for j in jobs), "RIP job must be discoverable by scan()"
+
+
+def test_job_kind_2d_vs_3d(tmp_path: Path) -> None:
+    # A RIP job (workflow "rip") is a 2D print; a slicer job (or many layers) is 3D. The UI shows
+    # a badge from this, so it must be right for new AND old (workflow-less) jobs.
+    rip = load_job(make_rip_job(tmp_path / "a"))
+    assert rip.workflow == "rip" and rip.kind == "2D"
+
+    sliced = load_job(make_job(tmp_path / "b", layers=50))  # SAMPLE_INFO has no workflow field
+    assert sliced.kind == "3D"          # falls back to layer_count (50 > 1) -> 3D
+    assert sliced.to_dict()["kind"] == "3D"
+
+    one_layer = load_job(make_job(tmp_path / "c", layers=1))
+    assert one_layer.kind == "2D"       # a single-layer, workflow-less job reads as 2D

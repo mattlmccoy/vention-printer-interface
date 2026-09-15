@@ -69,7 +69,7 @@ export function JobView({ status, gates, call, onStarted }: { status: StatusPayl
           <div className="job-list">
             {jobs.map((j) => (
               <button key={j.path} className={job?.path === j.path ? "on" : ""} disabled={running} onClick={() => call("select job", () => api.selectJob(j.path))}>
-                <span className="n">{j.name}</span><span className="m">{j.layer_count} × {j.layer_height_mm} mm</span>
+                <span className="n"><span className={`kind ${(j.kind ?? (j.layer_count <= 1 ? "2D" : "3D")) === "2D" ? "k2d" : "k3d"}`} title={(j.kind ?? (j.layer_count <= 1 ? "2D" : "3D")) === "2D" ? "2D RIP print (single layer, multi-pass)" : "3D sliced part"}>{j.kind ?? (j.layer_count <= 1 ? "2D" : "3D")}</span>{j.name}</span><span className="m">{j.layer_count} × {j.layer_height_mm} mm</span>
                 <span className="m">{j.folder.slice(0, 8)} {j.folder.slice(9, 11)}:{j.folder.slice(11, 13)} · {j.bbox_mm.x} × {j.bbox_mm.y} × {j.height_mm} mm</span><span className={`m ${j.complete ? "" : "bad"}`}>{j.complete ? `${j.dpi} dpi` : "missing pages"}</span>
               </button>
             ))}

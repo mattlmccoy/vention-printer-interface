@@ -399,6 +399,9 @@ button.small { height: 34px; padding: 0 12px; border: 1px solid var(--line-contr
 .job-list button .n { font-weight: 600; color: var(--fg-strong); }
 .job-list button .m { font: 12px var(--font-mono); color: var(--muted); }
 .job-list button .bad { color: var(--err); }
+.job-list button .n .kind { display: inline-block; font: 10px var(--font-mono); letter-spacing: .08em; padding: 1px 5px; border-radius: 5px; margin-right: 8px; vertical-align: middle; border: 1px solid var(--line-strong); color: var(--muted); }
+.job-list button .n .kind.k3d { color: var(--accent); border-color: var(--accent); }
+.job-list button .n .kind.k2d { color: var(--muted); border-color: var(--line-strong); }
 .mini-el { margin-top: 14px; }
 .mini-el svg { max-height: 150px; }
 .slider { display: flex; align-items: center; gap: 12px; margin-top: 12px; font: 12px var(--font-mono); color: var(--muted); }

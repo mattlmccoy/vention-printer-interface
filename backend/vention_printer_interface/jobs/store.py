@@ -36,12 +36,24 @@ class JobInfo:
     bpp: int
     timestamp: str
     pages: tuple[Path, ...]
+    workflow: str = ""
     missing_pages: list[int] = field(default_factory=list)
     _cache: dict[tuple[int, int], bytes] = field(default_factory=dict, repr=False, compare=False)
 
     @property
     def complete(self) -> bool:
         return not self.missing_pages and len(self.pages) == self.layer_count
+
+    @property
+    def kind(self) -> str:
+        """"2D" for a flat RIP print, "3D" for a sliced part. Uses the manifest ``workflow`` when
+        present (current jobs), else falls back to layer count — old jobs predate the workflow
+        field, and a single-layer job is a 2D print while many layers means a 3D part."""
+        if self.workflow == "rip":
+            return "2D"
+        if self.workflow == "slicer":
+            return "3D"
+        return "2D" if self.layer_count <= 1 else "3D"
 
     def print_settings_patch(self) -> dict[str, Any]:
         """What the job dictates: ONLY the print phase's layer COUNT.
@@ -67,6 +79,8 @@ class JobInfo:
             "timestamp": self.timestamp,
             "complete": self.complete,
             "missing_pages": list(self.missing_pages),
+            "workflow": self.workflow,
+            "kind": self.kind,
         }
 
 
@@ -98,6 +112,7 @@ def load_job(job_dir: Path) -> JobInfo:
         bpp=int(info.get("bpp", 2)),
         timestamp=str(info.get("timestamp", "")),
         pages=tuple(ordered),
+        workflow=str(info.get("workflow") or ""),
         missing_pages=missing,
     )
 
