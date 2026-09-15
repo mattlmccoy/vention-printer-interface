@@ -567,3 +567,16 @@ button.small { height: 34px; padding: 0 12px; border: 1px solid var(--line-contr
 .cam-still .cam-panel-empty { min-height: 140px; display: flex; align-items: center; justify-content: center; }
 .cam-browser-row { display: flex; gap: 10px; flex-wrap: wrap; align-items: center; margin: 12px 0; }
 .cam-browser-row select { min-width: 140px; }
+
+/* Operator-update banner: shown only when the local operator is older than this deployed site. */
+.update-banner { position: fixed; top: calc(var(--topbar-h, 40px) + 6px); left: 50%; transform: translateX(-50%); z-index: 1000;
+  display: flex; align-items: center; gap: 10px; flex-wrap: wrap; max-width: min(92vw, 880px);
+  background: var(--warn-bg); border: 1px solid var(--warn); border-radius: 8px;
+  padding: 8px 12px; box-shadow: 0 6px 24px var(--shadow); font-size: 12px; }
+.update-banner .msg { color: var(--fg); }
+.update-banner .cmd { font-family: var(--font-mono); font-size: 11.5px; background: var(--bg-deep);
+  border: 1px solid var(--line); border-radius: 5px; padding: 4px 8px; color: var(--fg-strong);
+  user-select: all; white-space: nowrap; overflow-x: auto; max-width: 100%; }
+.update-banner .x { background: none; border: none; color: var(--muted); font-size: 16px;
+  line-height: 1; cursor: pointer; padding: 0 4px; }
+.update-banner .x:hover { color: var(--fg); }
