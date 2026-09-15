@@ -37,6 +37,7 @@ class JobInfo:
     timestamp: str
     pages: tuple[Path, ...]
     workflow: str = ""
+    preview: Path | None = None
     missing_pages: list[int] = field(default_factory=list)
     _cache: dict[tuple[int, int], bytes] = field(default_factory=dict, repr=False, compare=False)
 
@@ -81,6 +82,7 @@ class JobInfo:
             "missing_pages": list(self.missing_pages),
             "workflow": self.workflow,
             "kind": self.kind,
+            "has_preview": self.preview is not None,
         }
 
 
@@ -100,6 +102,9 @@ def load_job(job_dir: Path) -> JobInfo:
     )
     ordered = [pages[n] for n in sorted(pages) if n <= layer_count]
     missing = [n for n in range(1, layer_count + 1) if n not in pages]
+    preview = _find_preview(
+        job_dir, str(info.get("job_name") or job_dir.name), info.get("preview_file")
+    )
     bbox = info.get("bbox_mm") or {}
     return JobInfo(
         dir=job_dir,
@@ -113,8 +118,32 @@ def load_job(job_dir: Path) -> JobInfo:
         timestamp=str(info.get("timestamp", "")),
         pages=tuple(ordered),
         workflow=str(info.get("workflow") or ""),
+        preview=preview,
         missing_pages=missing,
     )
+
+
+# Preview/splash image extensions the slicer has emitted (an isometric render of the part).
+_PREVIEW_EXTS = (".bmp", ".png", ".jpg", ".jpeg")
+
+
+def _find_preview(job_dir: Path, name: str, manifest_name: Any) -> Path | None:
+    """Locate the slicer's splash/preview image in a job folder. The filename has varied across
+    slicer versions, so try the manifest's ``preview_file`` first, then the known conventions
+    (``<name>.bmp``, ``<name>_preview.bmp``, ``<name>.stl_Preview``), then any image/preview file.
+    Never returns a print TIFF."""
+    candidates: list[str] = []
+    if isinstance(manifest_name, str) and manifest_name:
+        candidates.append(manifest_name)
+    candidates += [f"{name}.bmp", f"{name}_preview.bmp", f"{name}.stl_Preview"]
+    for cand in candidates:
+        p = job_dir / cand
+        if p.is_file():
+            return p
+    for f in sorted(job_dir.iterdir()):
+        if f.is_file() and (f.suffix.lower() in _PREVIEW_EXTS or f.name.endswith(".stl_Preview")):
+            return f
+    return None
 
 
 def layer_png(job: JobInfo, layer: int, *, max_px: int = 700) -> bytes:
@@ -139,6 +168,24 @@ def layer_png(job: JobInfo, layer: int, *, max_px: int = 700) -> bytes:
         gray.save(buf, format="PNG", optimize=True)
     job._cache[key] = buf.getvalue()
     return job._cache[key]
+
+
+def preview_png(job: JobInfo, *, max_px: int = 512) -> bytes:
+    """Render the slicer's splash/preview image as a downscaled RGB PNG the browser can show.
+
+    Raises IndexError when the job has no preview, or OSError when the file can't be decoded (a
+    ``.stl_Preview`` of an unknown format, say) — both become a 404 at the endpoint."""
+    if job.preview is None:
+        raise IndexError("job has no preview image")
+    with Image.open(job.preview) as im:
+        rgb = im.convert("RGB")
+        w, h = rgb.size
+        scale = min(1.0, max_px / max(w, h))
+        if scale < 1.0:
+            rgb = rgb.resize((max(1, int(w * scale)), max(1, int(h * scale))), Image.Resampling.BOX)
+        buf = io.BytesIO()
+        rgb.save(buf, format="PNG", optimize=True)
+    return buf.getvalue()
 
 
 class JobStore:

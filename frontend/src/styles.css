@@ -393,6 +393,9 @@ button.small { height: 34px; padding: 0 12px; border: 1px solid var(--line-contr
 .xsec .cap { position: absolute; left: 14px; bottom: 10px; font: 12px var(--font-mono); color: var(--muted); background: var(--scrim); padding: 2px 6px; }
 .xsec .cap b { color: var(--fg-strong); }
 .xsec .empty { color: var(--muted); font-size: 15px; text-align: center; padding: 24px; }
+.splash { position: relative; width: 100%; max-width: 480px; margin: 0 auto 12px; display: grid; place-items: center; background: var(--slice-bg); border: 1px solid var(--line); border-radius: var(--radius); overflow: hidden; }
+.splash img { max-width: 100%; max-height: 300px; display: block; }
+.splash .cap { position: absolute; left: 12px; bottom: 8px; font: 11px var(--font-mono); letter-spacing: .06em; text-transform: uppercase; color: var(--muted); background: var(--scrim); padding: 2px 6px; }
 .job-list { display: flex; flex-direction: column; gap: 6px; margin-top: 8px; max-height: 300px; overflow: auto; }
 .job-list button { text-align: left; padding: 12px 14px; border: 1px solid var(--line); background: transparent; color: var(--fg); border-radius: var(--radius); cursor: pointer; display: grid; grid-template-columns: 1fr auto; gap: 4px 14px; }
 .job-list button.on { border-color: var(--accent); background: var(--warn-bg); }

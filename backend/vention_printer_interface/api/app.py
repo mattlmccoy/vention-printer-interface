@@ -55,7 +55,13 @@ from vention_printer_interface.control.reference_store import load_reference, sa
 from vention_printer_interface.control.safety import HARD_BOUNDS, SafetyLimits
 from vention_printer_interface.device import create_transport, registered_transports
 from vention_printer_interface.device.printer import PrinterDevice
-from vention_printer_interface.jobs.store import JobInfo, JobStore, layer_png, load_job
+from vention_printer_interface.jobs.store import (
+    JobInfo,
+    JobStore,
+    layer_png,
+    load_job,
+    preview_png,
+)
 from vention_printer_interface.protocol import routes as r
 from vention_printer_interface.recording.recorder import Recorder
 from vention_printer_interface.vision.board_gen import (
@@ -1174,6 +1180,23 @@ def create_app(
             content=data,
             media_type="image/png",
             headers={"Cache-Control": "no-cache", "ETag": f'"{folder}-{layer}"'},
+        )
+
+    @app.get("/api/jobs/by-folder/{folder}/preview.png")
+    def job_preview_by_folder(folder: str) -> Response:
+        """Serve the slicer's splash/preview image for a job folder as a PNG. 404 when the job has
+        no preview or the file can't be decoded."""
+        job = next((j for j in jobs.scan() if j.dir.name == folder), None)
+        if job is None:
+            raise HTTPException(404, f"no job folder {folder!r}")
+        try:
+            data = preview_png(job)
+        except (IndexError, OSError) as exc:
+            raise HTTPException(404, str(exc)) from exc
+        return Response(
+            content=data,
+            media_type="image/png",
+            headers={"Cache-Control": "no-cache", "ETag": f'"{folder}-preview"'},
         )
 
     @app.post("/api/macro/{name}")

@@ -176,6 +176,8 @@ export const api = {
   jobLayerUrl: (layer: number, jobFolder = "") => `${base}/api/jobs/current/layers/${layer}.png?job=${encodeURIComponent(jobFolder)}`,
   // serve a specific job folder's layer (incl. archived jobs), regardless of the selected job
   jobLayerByFolderUrl: (layer: number, folder: string) => `${base}/api/jobs/by-folder/${encodeURIComponent(folder)}/layers/${layer}.png`,
+  // the slicer's isometric splash/preview image for a job folder (PNG); 404 when none exists
+  jobPreviewUrl: (folder: string) => `${base}/api/jobs/by-folder/${encodeURIComponent(folder)}/preview.png`,
   macro: (name: string) => req<StatusPayload["print"]>("POST", `/api/macro/${name}`),
   priming: () => req<PrimingPayload>("GET", "/api/priming"),
   setPriming: (patch: Record<string, number>) => req<PrimingPayload>("PUT", "/api/priming", patch),

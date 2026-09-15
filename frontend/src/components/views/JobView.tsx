@@ -79,6 +79,12 @@ export function JobView({ status, gates, call, onStarted }: { status: StatusPayl
         </div>
         <div className="card">
           <h3>{job ? `${job.name} · preview` : "preview"}</h3>
+          {job?.has_preview && (
+            <div className="splash">
+              <img src={api.jobPreviewUrl(job.folder)} alt={`${job.name} render`} onError={(e) => { (e.currentTarget.parentElement as HTMLElement).hidden = true; }} />
+              <div className="cap">slicer render</div>
+            </div>
+          )}
           <CrossSection job={job} layer={preview} />
           {job && <div className="slider"><span>1</span><input type="range" min={1} max={job.layer_count} value={Math.min(preview, job.layer_count)} onChange={(e) => setPreview(Number(e.target.value))} /><span>{job.layer_count}</span><b style={{ color: "var(--fg-strong)" }}>layer {Math.min(preview, job.layer_count)}</b></div>}
         </div>

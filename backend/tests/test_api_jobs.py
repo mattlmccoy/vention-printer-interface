@@ -53,6 +53,22 @@ def client(tmp_path: Path) -> Iterator[TestClient]:
         yield c
 
 
+def test_splash_preview_endpoint(client: TestClient, tmp_path: Path) -> None:
+    from PIL import Image
+    folder = "20260414_171155_8MM-ROD-CLAMPS-03MM-TOL"
+    job_dir = tmp_path / "jobs" / folder
+    # No splash yet -> 404, and the listing reports has_preview False.
+    assert client.get(f"/api/jobs/by-folder/{folder}/preview.png").status_code == 404
+    assert all(j["has_preview"] is False for j in client.get("/api/jobs").json()["jobs"])
+    # Drop in the slicer splash (a real captured naming convention) -> served as PNG.
+    Image.new("RGB", (64, 48), (10, 20, 30)).save(job_dir / "8MM-ROD-CLAMPS-03MM-TOL_preview.bmp")
+    r = client.get(f"/api/jobs/by-folder/{folder}/preview.png")
+    assert r.status_code == 200
+    assert r.headers["content-type"] == "image/png"
+    assert r.content[:8] == b"\x89PNG\r\n\x1a\n"
+    assert any(j["has_preview"] for j in client.get("/api/jobs").json()["jobs"])
+
+
 def test_list_select_and_preview(client: TestClient) -> None:
     jobs = client.get("/api/jobs").json()["jobs"]
     assert (

@@ -144,6 +144,24 @@ def test_scan_finds_rip_job(tmp_path: Path) -> None:
     assert any(j.layer_count == 1 for j in jobs), "RIP job must be discoverable by scan()"
 
 
+def test_job_finds_slicer_splash_preview(tmp_path: Path) -> None:
+    # 3D slicer jobs ship an isometric splash image, but the filename has varied across versions
+    # (<name>.bmp, <name>_preview.bmp, <name>.stl_Preview). JobStore must find whichever exists so
+    # the console can render it. Real captured names: "8MM..._preview.bmp", "..._v1.stl_Preview".
+    d = make_job(tmp_path / "a", layers=3)
+    (d / "8MM-ROD-CLAMPS-03MM-TOL_preview.bmp").write_bytes(b"BM preview")  # SAMPLE job_name
+    job = load_job(d)
+    assert job.preview is not None
+    assert job.preview.name == "8MM-ROD-CLAMPS-03MM-TOL_preview.bmp"
+    assert job.to_dict()["has_preview"] is True
+
+
+def test_job_without_splash_has_no_preview(tmp_path: Path) -> None:
+    job = load_job(make_job(tmp_path / "b", layers=2))  # make_job writes no .bmp
+    assert job.preview is None
+    assert job.to_dict()["has_preview"] is False
+
+
 def test_job_kind_2d_vs_3d(tmp_path: Path) -> None:
     # A RIP job (workflow "rip") is a 2D print; a slicer job (or many layers) is 3D. The UI shows
     # a badge from this, so it must be right for new AND old (workflow-less) jobs.
