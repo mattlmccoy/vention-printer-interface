@@ -263,3 +263,21 @@ def test_no_device_behaviour() -> None:
     c.estop()  # safe with no device
     c.heater_off()
     assert c.snapshot()["state"] == "disconnected"
+
+
+def test_fast_poll_selects_print_interval() -> None:
+    # During a print/recording the controller polls faster (finer motion data); idle uses the normal
+    # interval. set_fast_poll flips between them; effective_poll_interval reports the active one.
+    c = Controller(poll_interval_s=0.2, print_poll_interval_s=0.05)
+    assert c.effective_poll_interval() == 0.2
+    c.set_fast_poll(True)
+    assert c.effective_poll_interval() == 0.05
+    c.set_fast_poll(False)
+    assert c.effective_poll_interval() == 0.2
+
+
+def test_print_poll_interval_defaults_to_poll_interval_when_unset() -> None:
+    # Not configured -> no behavior change: fast poll == normal poll.
+    c = Controller(poll_interval_s=0.2)
+    c.set_fast_poll(True)
+    assert c.effective_poll_interval() == 0.2

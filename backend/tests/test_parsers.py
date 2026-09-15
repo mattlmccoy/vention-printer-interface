@@ -34,6 +34,20 @@ def test_parse_positions_rejects_missing_axis() -> None:
         p.parse_positions(b'{"X": 1}')
 
 
+def test_parse_actual_speed_reads_numeric_axes() -> None:
+    # /smartDrives/get/actualSpeed -> {"actual speed": {"1": v, ...}} keyed by axis NUMBER (mm/s),
+    # unlike position which is keyed X/Y/Z/W. (MachineMotion.py:1531-1537)
+    raw = json.dumps({"actual speed": {"1": 2.5, "2": 0.0, "3": 100.0, "4": 12.5}}).encode()
+    assert p.parse_actual_speed(raw) == {1: 2.5, 2: 0.0, 3: 100.0, 4: 12.5}
+
+
+def test_parse_actual_speed_rejects_error_and_malformed() -> None:
+    with pytest.raises(p.ProtocolError):
+        p.parse_actual_speed(b"Error in gCode execution")
+    with pytest.raises(p.ProtocolError):
+        p.parse_actual_speed(b'{"speed": {"1": 1}}')  # missing "actual speed" key
+
+
 def test_parse_complete() -> None:
     assert p.parse_complete(b'{"complete": true}') is True  # :1798-1799
     assert p.parse_complete(b'{"complete": false}') is False

@@ -48,6 +48,25 @@ def parse_positions(payload: bytes | str) -> dict[int, float]:
         raise ProtocolError(f"position payload missing axes: {data!r}") from exc
 
 
+def parse_actual_speed(payload: bytes | str) -> dict[int, float]:
+    """/smartDrives/get/actualSpeed -> {axis: mm/s} (MachineMotion.py:1531-1537).
+
+    The payload is ``{"actual speed": {"1": v, "2": v, ...}}`` keyed by axis NUMBER (unlike
+    /smartDrives/position, which is keyed by the X/Y/Z/W letters).
+    """
+    text = _text(payload)
+    if "Error" in text:
+        raise ProtocolError(f"actual-speed query failed: {text[:120]!r}")
+    data = parse_json(text)
+    speeds = data.get("actual speed") if isinstance(data, dict) else None
+    if not isinstance(speeds, dict):
+        raise ProtocolError(f"actual-speed payload malformed: {data!r}")
+    try:
+        return {int(axis): float(v) for axis, v in speeds.items()}
+    except (TypeError, ValueError) as exc:
+        raise ProtocolError(f"actual-speed payload not numeric: {speeds!r}") from exc
+
+
 def parse_complete(payload: bytes | str) -> bool:
     """/smartDrives/complete/<letter> -> {"complete": bool} (MachineMotion.py:1798-1799)."""
     data = parse_json(payload)

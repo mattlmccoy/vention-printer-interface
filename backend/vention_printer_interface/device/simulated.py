@@ -71,6 +71,14 @@ class SimAxis:
             if self.target is not None and not 0.0 <= self.target <= self.travel_mm:
                 self.target, self.speed_override, self.arrived_at = None, None, now
 
+    def actual_speed(self) -> float:
+        """Signed measured speed (mm/s), mirroring the MM2's /smartDrives/get/actualSpeed: the move
+        speed toward the target (sign = direction), or 0 when settled."""
+        if self.target is None:
+            return 0.0
+        speed = self.speed_override or self.max_speed
+        return speed if self.target >= self.position else -speed
+
 
 @dataclass
 class SimulatedMachine:
@@ -165,6 +173,9 @@ class SimulatedTransport(Transport):
                 return json.dumps(
                     {r.AXIS_LETTERS[n]: round(a.position, 4) for n, a in self.machine.axes.items()}
                 ).encode()
+            if url.path == r.ACTUAL_SPEED_PATH:
+                speeds = {str(n): a.actual_speed() for n, a in self.machine.axes.items()}
+                return json.dumps({"actual speed": speeds}).encode()
             if url.path == "/gcode":
                 return self._gcode(parse_qs(url.query).get("gcode", [""])[0]).encode()
             m = re.fullmatch(r"/smartDrives/complete/([XYZW])", url.path)

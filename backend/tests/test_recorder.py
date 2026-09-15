@@ -2,7 +2,15 @@ import json
 from pathlib import Path
 from typing import Any
 
-from vention_printer_interface.recording.recorder import Recorder
+import pytest
+
+from vention_printer_interface.recording.recorder import (
+    MOTION_PROFILE_FIELDS,
+    Recorder,
+    layer_accuracy_rows,
+    layer_accuracy_summary,
+    motion_profile_rows,
+)
 
 
 def snap(z: float = 1.0, heater: bool = False) -> dict[str, Any]:
@@ -40,6 +48,7 @@ def test_layout_and_manifest_on_clean_stop(tmp_path: Path) -> None:
         "telemetry.csv",
         "layers.csv",
         "motion_profiles.csv",
+        "layer_accuracy.csv",
     }
     lines = (run / "telemetry.csv").read_text().splitlines()
     assert lines[0].startswith("host_timestamp_ns,controller_state,armed,pos_1,pos_2,pos_3,pos_4")
@@ -171,6 +180,122 @@ def test_list_runs_bare_run_reports_nulls_without_error(tmp_path: Path) -> None:
     assert item["started_at"] is None
     assert item["layer_count"] is None
     assert item["duration_s"] is None
+
+
+def _tel(ts: int, pos1: float) -> dict[str, Any]:
+    return {"host_timestamp_ns": ts, "pos_1": pos1}
+
+
+def _lay(ts: int, layer: int, phase: str, cum_mm: float) -> dict[str, Any]:
+    return {"host_timestamp_ns": ts, "layer": layer, "phase": phase, "part_height_mm": cum_mm}
+
+
+def test_recorder_signals_active_change(tmp_path: Path) -> None:
+    # The recorder announces start/stop so the controller can poll faster while a run records.
+    events: list[bool] = []
+    rec = Recorder(tmp_path, on_active_change=events.append)
+    rec.start("x")
+    rec.stop()
+    assert events == [True, False]
+
+
+def test_telemetry_csv_logs_native_speed(tmp_path: Path) -> None:
+    rec = Recorder(tmp_path)
+    run = rec.start("nspeed")
+    s = _snap_at(0, 0.0)
+    s["telemetry"]["actual_speed"] = {"1": 2.5, "2": 0.0, "3": 0.0, "4": 0.0}
+    rec.record(s)
+    rec.stop()
+    lines = (run / "telemetry.csv").read_text().splitlines()
+    header = lines[0].split(",")
+    for a in (1, 2, 3, 4):
+        assert f"vspeed_{a}" in header
+    row = lines[1].split(",")
+    assert float(row[header.index("vspeed_1")]) == 2.5
+
+
+def test_telemetry_csv_native_speed_blank_when_absent(tmp_path: Path) -> None:
+    # No actual_speed in the snapshot (old controller) -> blank cell, never a fabricated 0.
+    rec = Recorder(tmp_path)
+    run = rec.start("noneed")
+    rec.record(_snap_at(0, 0.0))
+    rec.stop()
+    lines = (run / "telemetry.csv").read_text().splitlines()
+    header = lines[0].split(",")
+    assert lines[1].split(",")[header.index("vspeed_1")] == ""
+
+
+def test_motion_profiles_prefer_native_speed() -> None:
+    # When telemetry carries native vspeed_*, the profile uses it for velocity instead of the
+    # finite difference of position (native is more accurate); accel = Δ(native vel)/Δt.
+    rows = [
+        {"host_timestamp_ns": 0, "pos_1": 0.0, "vspeed_1": 5.0},
+        {"host_timestamp_ns": 500_000_000, "pos_1": 1.0, "vspeed_1": 9.0},  # Δpos→2.0, native→9.0
+        {"host_timestamp_ns": 1_000_000_000, "pos_1": 3.0, "vspeed_1": 13.0},
+    ]
+    out = motion_profile_rows(rows)
+    vel_i = MOTION_PROFILE_FIELDS.index("vel_1")
+    accel_i = MOTION_PROFILE_FIELDS.index("accel_1")
+    assert out[0][vel_i] == 9.0  # native, not the finite-diff 2.0
+    assert out[1][vel_i] == 13.0
+    assert out[1][accel_i] == (13.0 - 9.0) / 0.5  # accel from native velocity deltas
+
+
+def test_layer_accuracy_commanded_vs_actual_build_height() -> None:
+    # Build piston descends (pos_1 rises) as the part grows; actual layer height = settled Δpos_1
+    # between layers; commanded = Δ of layers.csv part_height_mm. baseline = first sample.
+    telem = [  # ts, actual pos_1: baseline 10.0, then settled per layer (cmd 0.2/0.2/2.0)
+        _tel(0, 10.0),
+        _tel(1_000_000_000, 10.19),  # layer 1: actual 0.19 (cmd 0.2)
+        _tel(2_000_000_000, 10.40),  # layer 2: actual 0.21 (cmd 0.2)
+        _tel(3_000_000_000, 12.42),  # layer 3: actual 2.02 (cmd 2.0)
+    ]
+    layers = [
+        _lay(1_000_000_000, 1, "thin_precoat", 0.2),
+        _lay(2_000_000_000, 2, "thin_precoat", 0.4),
+        _lay(3_000_000_000, 3, "printing", 2.4),
+    ]
+    rows = layer_accuracy_rows(telem, layers, part_axis=1)
+    assert [r["layer"] for r in rows] == [1, 2, 3]
+    assert rows[0]["commanded_mm"] == pytest.approx(0.2)
+    assert rows[0]["actual_mm"] == pytest.approx(0.19)
+    assert rows[0]["deviation_mm"] == pytest.approx(-0.01)
+    assert rows[1]["actual_mm"] == pytest.approx(0.21)
+    assert rows[1]["deviation_mm"] == pytest.approx(0.01)
+    assert rows[2]["commanded_mm"] == pytest.approx(2.0)
+    assert rows[2]["actual_mm"] == pytest.approx(2.02)
+    assert rows[2]["deviation_mm"] == pytest.approx(0.02)
+    assert rows[2]["actual_cum_mm"] == pytest.approx(2.42)
+
+    s = layer_accuracy_summary(rows)
+    assert s["n"] == 3
+    assert s["max_abs_dev_mm"] == pytest.approx(0.02)
+    assert s["mean_abs_dev_mm"] == pytest.approx((0.01 + 0.01 + 0.02) / 3)
+
+
+def test_layer_accuracy_unknown_when_no_telemetry_in_window() -> None:
+    # A layer with no telemetry sample in its window reports actual/deviation None, never a false 0.
+    telem = [_tel(0, 5.0)]  # baseline only; nothing during the layers
+    layers = [_lay(1_000_000_000, 1, "printing", 2.0)]
+    rows = layer_accuracy_rows(telem, layers, part_axis=1)
+    assert rows[0]["commanded_mm"] == pytest.approx(2.0)
+    assert rows[0]["actual_mm"] is None
+    assert rows[0]["deviation_mm"] is None
+    assert layer_accuracy_summary(rows)["n"] == 0
+
+
+def test_layer_accuracy_csv_written_on_stop(tmp_path: Path) -> None:
+    rec = Recorder(tmp_path)
+    run = rec.start("accuracy")
+    rec.record(_snap_at(0, 10.0))
+    rec.record(_snap_at(1_000_000_000, 12.02))
+    rec.record_layer({"layer": 1, "phase": "printing", "part_height_mm": 2.0, "elapsed_s": 1.0})
+    rec.stop()
+    lines = (run / "layer_accuracy.csv").read_text().splitlines()
+    header = ["layer", "phase", "commanded_mm", "actual_mm", "deviation_mm"]
+    assert lines[0].split(",")[:5] == header
+    manifest = json.loads((run / "manifest.json").read_text())
+    assert "layer_accuracy.csv" in manifest["checksums"]
 
 
 def test_layers_csv(tmp_path: Path) -> None:

@@ -65,10 +65,15 @@ class Controller:
         self,
         *,
         poll_interval_s: float = 0.2,
+        print_poll_interval_s: float | None = None,
         limits: SafetyLimits | None = None,
         health_refresh_s: float = 0.0,
     ) -> None:
         self.poll_interval_s = poll_interval_s
+        # Finer telemetry cadence while a run records (set_fast_poll True) -> smoother motion
+        # profiles / build-piston accuracy. Falls back to the normal interval when unset.
+        self.print_poll_interval_s = print_poll_interval_s or poll_interval_s
+        self._fast_poll = False
         self.health_refresh_s = health_refresh_s
         self._last_health = 0.0
         self._homing_until = 0.0
@@ -157,10 +162,21 @@ class Controller:
         self._listeners.append(fn)
 
     # ---- poll loop --------------------------------------------------------------------------
+    def effective_poll_interval(self) -> float:
+        """The active telemetry cadence: the finer print interval while recording, else normal."""
+        return self.print_poll_interval_s if self._fast_poll else self.poll_interval_s
+
+    def set_fast_poll(self, on: bool) -> None:
+        """Toggle the finer print-time telemetry cadence (called when a run starts/stops recording).
+
+        A plain bool store — the poll loop reads it each iteration, so the next wait uses it.
+        """
+        self._fast_poll = bool(on)
+
     def _loop(self, dev: PrinterDevice, stop: threading.Event) -> None:
         while not stop.is_set():
             self._tick(dev, stop)
-            stop.wait(self.poll_interval_s)
+            stop.wait(self.effective_poll_interval())
 
     def _tick(self, dev: PrinterDevice, stop: threading.Event) -> None:
         if stop.is_set() or dev is not self._device:
@@ -549,6 +565,7 @@ class Controller:
                     "host_timestamp_ns": tel.host_timestamp_ns,
                     "positions": {str(k): v for k, v in tel.positions.items()},
                     "referenced": {str(k): (k in self._referenced_axes) for k in tel.positions},
+                    "actual_speed": {str(k): v for k, v in tel.actual_speed.items()},
                     "motion_complete": {str(k): v for k, v in tel.motion_complete.items()},
                     "estop_triggered": tel.estop_triggered,
                     "drives_ready": tel.drives_ready,

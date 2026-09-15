@@ -28,6 +28,14 @@ def main(argv: list[str] | None = None) -> int:
         help="IO module id,pin for the heater relay (UNVERIFIED default; confirm in commissioning)",
     )
     ap.add_argument("--poll-interval", type=float, default=0.2)
+    ap.add_argument(
+        "--print-poll-interval",
+        type=float,
+        default=0.1,
+        help="finer telemetry cadence (s) while a run records, for smoother motion profiles / "
+        "build-piston accuracy. Each poll makes several HTTP calls, so go below 0.1 only after "
+        "checking the controller keeps up. Default 0.1 (10 Hz); equal to --poll-interval = off.",
+    )
     ap.add_argument("--experiments-root", type=Path, default=None)
     ap.add_argument(
         "--jobs-root",
@@ -54,6 +62,7 @@ def main(argv: list[str] | None = None) -> int:
         backend=backend,
         ip=args.ip,
         poll_interval_s=args.poll_interval,
+        print_poll_interval_s=args.print_poll_interval,
         experiments_root=args.experiments_root,
         jobs_roots=args.jobs_root,
         site_origin=args.site_origin or None,

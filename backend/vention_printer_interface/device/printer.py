@@ -8,7 +8,7 @@ scope (spec Non-goals), so they cannot be called by accident.
 from __future__ import annotations
 
 import time
-from dataclasses import asdict, dataclass
+from dataclasses import asdict, dataclass, field
 from typing import Any
 
 from vention_printer_interface.device.base import Transport, TransportError
@@ -51,6 +51,9 @@ class Telemetry:
     drives_ready: bool | None
     health_ok: bool
     heater_on: bool | None
+    # Native per-axis measured speed (mm/s) from /smartDrives/get/actualSpeed. Empty when the
+    # controller doesn't report it (old software / transient) -- unknown, never fabricated.
+    actual_speed: dict[int, float] = field(default_factory=dict)
 
 
 class PrinterDevice:
@@ -100,6 +103,12 @@ class PrinterDevice:
         if refresh_health or self._health is None:
             self.health()
         positions = p.parse_positions(self._t.http_get(r.POSITION_PATH))
+        # Native measured speed is an enhancement: best-effort so an old controller (pre-2.2.0) or a
+        # transient never breaks the poll. Empty dict => the profile falls back to finite diffs.
+        try:
+            actual_speed = p.parse_actual_speed(self._t.http_get(r.ACTUAL_SPEED_PATH))
+        except (TransportError, p.ProtocolError):
+            actual_speed = {}
         complete = {n: p.parse_complete(self._t.http_get(r.complete_path(n))) for n in self.axes}
         estop_raw = self._t.mqtt_latest(r.TOPIC_ESTOP_STATUS)
         ready_raw = self._t.mqtt_latest(r.TOPIC_DRIVES_READY)
@@ -123,6 +132,7 @@ class PrinterDevice:
             drives_ready=ready,
             health_ok=health_ok,
             heater_on=self.heater_read(),
+            actual_speed=actual_speed,
         )
 
     def endstops(self) -> dict[str, str]:

@@ -69,9 +69,13 @@ export function armHint(g: Gates, faultReasons: string[]): string {
   return "Armed. Motion, heater and print_settings controls are live.";
 }
 
-/** Part height agreement: measured vs print_settings-expected, amber when off by more than half a layer. */
+/** Part height agreement: measured piston displacement vs the print_settings-expected height.
+ *  The compiled expected height increments at layer_start — BEFORE the build piston physically drops
+ *  — so during every layer the measured value legitimately trails expected by up to one full layer
+ *  (the in-flight drop). Warn only past that: >1.5 layers off, which is where a genuinely missed or
+ *  stalled drop shows up (≈two layers behind at the next layer boundary). Amber advisory only. */
 export function heightMismatch(measured: number | null, expected: number, layerMm: number): boolean {
-  return measured !== null && Math.abs(measured - expected) > Math.max(layerMm / 2, 0.05);
+  return measured !== null && Math.abs(measured - expected) > layerMm + Math.max(layerMm / 2, 0.05);
 }
 
 /** Layer-cycle step (1-6) for the current print_settings step, from its kind/axis/value sequence. */

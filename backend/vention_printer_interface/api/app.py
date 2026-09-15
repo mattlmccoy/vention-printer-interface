@@ -524,6 +524,7 @@ def create_app(
     backend: str = "none",
     ip: str | None = None,
     poll_interval_s: float = 0.2,
+    print_poll_interval_s: float | None = None,
     experiments_root: Path | None = None,
     limits: SafetyLimits | None = None,
     frontend_dist: Path | None = None,
@@ -561,8 +562,13 @@ def create_app(
 
     @asynccontextmanager
     async def lifespan(app: FastAPI) -> AsyncIterator[None]:
-        controller = Controller(poll_interval_s=poll_interval_s, limits=limits or load_limits(root))
-        recorder = Recorder(root)
+        controller = Controller(
+            poll_interval_s=poll_interval_s,
+            print_poll_interval_s=print_poll_interval_s,
+            limits=limits or load_limits(root),
+        )
+        # The recorder tells the controller to poll faster while a run records (finer motion data).
+        recorder = Recorder(root, on_active_change=controller.set_fast_poll)
         printer = PrintController(
             controller, min_wait_s=print_min_wait_s, step_timeout_s=print_step_timeout_s
         )
