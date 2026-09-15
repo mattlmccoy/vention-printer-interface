@@ -61,7 +61,15 @@ test("arm hint is state-specific", () => {
 test("height mismatch and cycle index", () => {
   assert.equal(heightMismatch(null, 2, 2), false);
   assert.equal(heightMismatch(2.4, 2, 2), false);
-  assert.equal(heightMismatch(3.2, 2, 2), true);
+  // A running print's compiled height leads the physical drop by up to one full layer (the height
+  // increments at layer_start, before the piston drops), so measured trailing by ~one layer is
+  // NORMAL and must NOT warn — this was the spurious "part height differs" trigger.
+  assert.equal(heightMismatch(0, 2, 2), false);   // trailing exactly one 2 mm layer (in-flight drop)
+  assert.equal(heightMismatch(2.9, 2, 2), false); // ~one layer off incl. settling noise
+  assert.equal(heightMismatch(0, 0.2, 0.2), false); // one precoat layer behind
+  // A genuinely missed/stalled drop leaves the piston ~two layers behind at the next boundary → warn.
+  assert.equal(heightMismatch(0, 4, 2), true);    // two 2 mm layers behind (missed drop)
+  assert.equal(heightMismatch(5.2, 2, 2), true);  // > 1.5 layers off
   const plan = { recoater_end_mm: 950, heater_end_mm: 600, printhead_end_mm: 900 };
   assert.equal(cycleIndex({ kind: "move_rel", axis: 1, value: 2, phase: "printing" }, plan), 1);
   assert.equal(cycleIndex({ kind: "move_abs", axis: 4, value: 950, phase: "printing" }, plan), 2);
