@@ -180,44 +180,48 @@ export function PrimingView({ status, gates, call, onJob, onPrint }: { status: S
 
             {cur.id === "level" && (
               <>
-                <div className="hint" style={{ marginTop: 0 }}>Each thick precoat: advance the feed piston up to supply powder, move the recoater to the start position (past the feed piston), then spread across the bed to fill the runway and the build-piston cavity. The build piston stays fixed. Repeat until the bed is even.</div>
+                <div className="hint" style={{ marginTop: 0 }}>Each thick precoat runs three moves in order — the build piston stays fixed. Repeat until the bed is even.</div>
                 <div className="kv">
                   <span>thick precoats</span><span>{target("n_thick_precoats") ?? "—"}</span>
                   <span>feed / precoat</span><span>{fmt(target("thick_feed_mm"))}</span>
                   <span>start (past feed)</span><span>{fmt(target("level_recoat_start_mm"))}</span>
                   <span>spread to</span><span>{fmt(target("level_recoat_end_mm"))}</span>
                 </div>
-                <div className="btnrow">
-                  <button className="cta primary" disabled={!ok || !target("thick_feed_mm")} title="Raise the feed piston by one precoat's worth of powder (feed / precoat), supplying powder above the bed for the spread." onClick={() => call("advance feed", () => api.move(2, "rel", -(target("thick_feed_mm") as number)))}>Feed ▲ supply</button>
-                  <button className="cta primary" disabled={!ok || target("level_recoat_start_mm") === null} onClick={() => call("move to start", () => api.move(4, "abs", target("level_recoat_start_mm") as number))}>Move to start</button>
-                  <button className="cta" disabled={!ok || target("level_recoat_end_mm") === null} onClick={() => call("spread", () => api.move(4, "abs", target("level_recoat_end_mm") as number))}>Spread ▶</button>
-                  <button className="cta" onClick={skip}>Next →</button>
+                {/* the primary 3-move precoat sequence, IN ORDER: recoater clear of feed → raise powder → spread */}
+                <div className="seq">
+                  <button className="cta primary" disabled={!ok || target("level_recoat_start_mm") === null} title="① Move the recoater past the feed piston to the start position, clear of the powder about to be raised." onClick={() => call("move to start", () => api.move(4, "abs", target("level_recoat_start_mm") as number))}><b>①</b> Move to start</button>
+                  <span className="seq-arrow" aria-hidden="true">→</span>
+                  <button className="cta primary" disabled={!ok || !target("thick_feed_mm")} title="② Raise the feed piston by one precoat's worth (feed / precoat) to supply powder above the bed." onClick={() => call("advance feed", () => api.move(2, "rel", -(target("thick_feed_mm") as number)))}><b>②</b> Feed ▲ supply</button>
+                  <span className="seq-arrow" aria-hidden="true">→</span>
+                  <button className="cta primary" disabled={!ok || target("level_recoat_end_mm") === null} title="③ Sweep the recoater across the bed, dragging the raised powder to fill the runway and build cavity." onClick={() => call("spread", () => api.move(4, "abs", target("level_recoat_end_mm") as number))}><b>③</b> Spread ▶</button>
                 </div>
-                {/* feed-piston jog for manual fine powder supply (axis 2; UP = negative rel = supply) */}
-                <div className="btnrow">
-                  <span className="hint" style={{ marginTop: 0 }}>feed jog</span>
-                  <input type="number" inputMode="decimal" value={feedJog} onChange={(e) => setFeedJog(e.target.value)} style={{ width: 70 }} />
-                  <span className="hint" style={{ marginTop: 0 }}>mm</span>
-                  <button className="cta" disabled={!ok || n(feedJog) <= 0} title="Raise the feed piston (supply powder)" onClick={() => call("jog feed up (supply)", () => api.move(2, "rel", -n(feedJog)))}>▲ up (supply)</button>
-                  <button className="cta" disabled={!ok || n(feedJog) <= 0} title="Lower the feed piston" onClick={() => call("jog feed down", () => api.move(2, "rel", n(feedJog)))}>▼ down</button>
-                </div>
-                {/* jog + rates for fine leveling — the recoater moves at these controller rates; watch the dock */}
-                <div className="sec-h" style={{ marginTop: 14 }}>recoater · jog &amp; rates <span className="hint" style={{ textTransform: "none", letterSpacing: 0, fontWeight: 400 }}>watch the machine in the dock →</span></div>
-                <div className="btnrow">
-                  <span className="hint" style={{ marginTop: 0 }}>jog step</span>
-                  <input type="number" inputMode="decimal" value={jogStep} onChange={(e) => setJogStep(e.target.value)} style={{ width: 70 }} />
-                  <span className="hint" style={{ marginTop: 0 }}>mm</span>
-                  <button className="cta" disabled={!ok || n(jogStep) <= 0} onClick={() => call("jog recoater away", () => api.move(4, "rel", n(jogStep)))}>◀ away</button>
-                  <button className="cta" disabled={!ok || n(jogStep) <= 0} onClick={() => call("jog recoater home", () => api.move(4, "rel", -n(jogStep)))}>home ▶</button>
-                </div>
-                <div className="btnrow">
-                  <span className="hint" style={{ marginTop: 0 }}>speed</span>
-                  <input type="number" inputMode="decimal" value={rcSpeed} placeholder={am4?.max_speed != null ? String(am4.max_speed) : "mm/s"} disabled={!ok} onChange={(e) => setRcSpeed(e.target.value)} style={{ width: 90 }} />
-                  <button className="small" disabled={!ok || rcSpeed === ""} onClick={() => call("set recoater speed", () => api.setAxisMotion(4, { max_speed: Number(rcSpeed) }).then(() => setRcSpeed("")))}>set</button>
-                  <span className="hint" style={{ marginTop: 0 }}>accel</span>
-                  <input type="number" inputMode="decimal" value={rcAccel} placeholder={am4?.max_accel != null ? String(am4.max_accel) : "mm/s²"} disabled={!ok} onChange={(e) => setRcAccel(e.target.value)} style={{ width: 90 }} />
-                  <button className="small" disabled={!ok || rcAccel === ""} onClick={() => call("set recoater accel", () => api.setAxisMotion(4, { max_accel: Number(rcAccel) }).then(() => setRcAccel("")))}>set</button>
-                </div>
+                {/* everything below is fine manual adjustment — tucked away so the sequence stays clear */}
+                <details className="params" style={{ marginTop: 16 }}>
+                  <summary>fine adjust · feed &amp; recoater jog</summary>
+                  <div className="body">
+                    <div className="btnrow">
+                      <span className="hint" style={{ marginTop: 0, minWidth: 84 }}>feed jog</span>
+                      <input type="number" inputMode="decimal" value={feedJog} onChange={(e) => setFeedJog(e.target.value)} style={{ width: 70 }} />
+                      <span className="hint" style={{ marginTop: 0 }}>mm</span>
+                      <button className="cta" disabled={!ok || n(feedJog) <= 0} title="Raise the feed piston (supply powder)" onClick={() => call("jog feed up (supply)", () => api.move(2, "rel", -n(feedJog)))}>feed ▲ up</button>
+                      <button className="cta" disabled={!ok || n(feedJog) <= 0} title="Lower the feed piston" onClick={() => call("jog feed down", () => api.move(2, "rel", n(feedJog)))}>feed ▼ down</button>
+                    </div>
+                    <div className="btnrow">
+                      <span className="hint" style={{ marginTop: 0, minWidth: 84 }}>recoater jog</span>
+                      <input type="number" inputMode="decimal" value={jogStep} onChange={(e) => setJogStep(e.target.value)} style={{ width: 70 }} />
+                      <span className="hint" style={{ marginTop: 0 }}>mm</span>
+                      <button className="cta" disabled={!ok || n(jogStep) <= 0} onClick={() => call("jog recoater away", () => api.move(4, "rel", n(jogStep)))}>◀ away</button>
+                      <button className="cta" disabled={!ok || n(jogStep) <= 0} onClick={() => call("jog recoater home", () => api.move(4, "rel", -n(jogStep)))}>home ▶</button>
+                    </div>
+                    <div className="btnrow">
+                      <span className="hint" style={{ marginTop: 0, minWidth: 84 }}>recoater rate</span>
+                      <input type="number" inputMode="decimal" value={rcSpeed} placeholder={am4?.max_speed != null ? String(am4.max_speed) : "mm/s"} disabled={!ok} onChange={(e) => setRcSpeed(e.target.value)} style={{ width: 90 }} />
+                      <button className="small" disabled={!ok || rcSpeed === ""} onClick={() => call("set recoater speed", () => api.setAxisMotion(4, { max_speed: Number(rcSpeed) }).then(() => setRcSpeed("")))}>set speed</button>
+                      <input type="number" inputMode="decimal" value={rcAccel} placeholder={am4?.max_accel != null ? String(am4.max_accel) : "mm/s²"} disabled={!ok} onChange={(e) => setRcAccel(e.target.value)} style={{ width: 90 }} />
+                      <button className="small" disabled={!ok || rcAccel === ""} onClick={() => call("set recoater accel", () => api.setAxisMotion(4, { max_accel: Number(rcAccel) }).then(() => setRcAccel("")))}>set accel</button>
+                    </div>
+                  </div>
+                </details>
               </>
             )}
 
