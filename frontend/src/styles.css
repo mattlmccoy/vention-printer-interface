@@ -556,6 +556,9 @@ button.small { height: 34px; padding: 0 12px; border: 1px solid var(--line-contr
 .chart-controls { display: flex; flex-wrap: wrap; gap: 12px; align-items: center; margin-bottom: 10px; }
 .chart-axes { display: flex; flex-wrap: wrap; gap: 6px; }
 .axtog { font: 11px var(--font-mono); letter-spacing: .04em; padding: 4px 9px; border-radius: 12px; border: 1px solid var(--line); background: transparent; color: var(--muted); cursor: pointer; }
+.axpanels { display: flex; flex-direction: column; gap: 6px; }
+.axpanel + .axpanel { border-top: 1px solid var(--line); padding-top: 4px; }
+.axtime { font: 9px var(--font-mono); color: var(--faint); text-align: center; margin-top: 2px; }
 /* staged/fixed-size sections so switching runs never resizes the boxes */
 .chart-empty { min-height: 130px; display: grid; place-items: center; color: var(--muted); font-size: 13px; border: 1px dashed var(--line); border-radius: 10px; background: var(--bg-deep); }
 .stills-wrap { min-height: 150px; }

@@ -48,6 +48,24 @@ export function motionColumn(csv: string, metric: Metric, axis: number): number[
   return out;
 }
 
+/** motion_profiles.csv -> {t (s from run start), v} points for one axis+metric; blanks dropped. */
+export function motionSeries(csv: string, metric: Metric, axis: number): { t: number; v: number }[] {
+  const { header, rows } = parseCsv(csv);
+  const ti = header.indexOf("host_timestamp_ns");
+  const vi = header.indexOf(`${metric}_${axis}`);
+  if (ti < 0 || vi < 0) return [];
+  let t0: number | null = null;
+  const out: { t: number; v: number }[] = [];
+  for (const r of rows) {
+    const ts = num(r[ti]);
+    const v = num(r[vi]);
+    if (ts === null || v === null) continue;
+    if (t0 === null) t0 = ts;
+    out.push({ t: (ts - t0) / 1e9, v });
+  }
+  return out;
+}
+
 /** True when motion_profiles.csv carries at least one native-speed sample (vspeed_*), i.e. the
  *  velocity series came from the controller's measured speed rather than finite differences. */
 export function hasNativeSpeed(csv: string): boolean {

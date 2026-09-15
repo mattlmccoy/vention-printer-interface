@@ -5,6 +5,7 @@ import {
   hasNativeSpeed,
   layerAccuracySummary,
   motionColumn,
+  motionSeries,
   parseLayerAccuracy,
 } from "./motion.ts";
 
@@ -21,6 +22,12 @@ test("motionColumn reads one axis+metric, dropping blanks", () => {
   assert.deepEqual(motionColumn(MOTION, "accel", 1), [3.0]);
   assert.deepEqual(motionColumn(MOTION, "vel", 3), [0, 0, 0]);
   assert.deepEqual(motionColumn(MOTION, "vel", 9), []); // no such axis column
+});
+
+test("motionSeries returns time (s from start) + value points, blanks dropped", () => {
+  const s = motionSeries(MOTION, "vel", 1);
+  assert.deepEqual(s, [{ t: 0, v: 2.5 }, { t: 1, v: 4.0 }]); // 0 s and 1 s (500 ms row blank → dropped)
+  assert.deepEqual(motionSeries(MOTION, "vel", 9), []);
 });
 
 test("hasNativeSpeed detects the vspeed columns", () => {
