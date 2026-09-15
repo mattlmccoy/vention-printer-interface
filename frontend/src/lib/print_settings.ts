@@ -229,9 +229,6 @@ export function compilePrint(plan: PrintSettings): Step[] {
       // Multipass shuttles the printhead back only to printhead_multipass_return_mm between passes
       // (saves travel), and home on the LAST pass to clear the next recoat.
       add(name, layerNo, "move_abs", RECOATER, plan.recoater_home_mm);
-      // Heater off + no pre-heater drop: defer the printhead's last-pass return home so it runs
-      // concurrently with the recoater's reposition below (independent axes, one wait).
-      const concurrentReturn = !plan.heater_enabled && plan.pre_heater_drop_mm === 0;
       for (let j = 0; j < plan.n_jet_passes; j++) {
         if (purgeEveryPass || (purgeFirstPass && j === 0)) {
           add(name, layerNo, "move_abs", PRINTHEAD, plan.printhead_start_mm);
@@ -241,7 +238,6 @@ export function compilePrint(plan: PrintSettings): Step[] {
         add(name, layerNo, "move_abs", PRINTHEAD, plan.printhead_end_mm);
         add(name, layerNo, "wait");
         const last = j === plan.n_jet_passes - 1;
-        if (last && concurrentReturn) continue; // return home issued with the recoater reposition below
         const back = last ? plan.printhead_home_mm : plan.printhead_multipass_return_mm;
         add(name, layerNo, "move_abs", PRINTHEAD, back);
         add(name, layerNo, "wait");
@@ -267,15 +263,9 @@ export function compilePrint(plan: PrintSettings): Step[] {
         add(name, layerNo, "move_rel", PART, -plan.pre_heater_drop_mm, "raise to layer");
         add(name, layerNo, "wait");
       }
-      if (concurrentReturn) {
-        // Heater off: printhead home ‖ recoater reposition to the spread start — one wait.
-        add(name, layerNo, "move_abs", PRINTHEAD, plan.printhead_home_mm);
-        add(name, layerNo, "move_abs", RECOATER, plan.recoater_end_mm);
-        add(name, layerNo, "wait");
-      } else {
-        add(name, layerNo, "move_abs", RECOATER, plan.recoater_end_mm);
-        add(name, layerNo, "wait");
-      }
+      // NO end-of-layer recoater reposition. The recoater stays where the spread (home) or the heater
+      // sweep (600) left it and moves out to the spread start (950) only at the NEXT layer's start,
+      // AFTER that layer's feed preload. Parking it at 950 here made the next preload land too late.
       add(name, layerNo, "mark", null, null, "layer_end");
     }
     if (exhausted) break;

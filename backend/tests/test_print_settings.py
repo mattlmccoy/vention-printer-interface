@@ -396,8 +396,9 @@ def test_compile_one_printing_layer_full_sequence() -> None:
         ("heater", None, 0.0),
         ("set_speed", RECOATER, 100.0),    # restore printing recoater profile
         ("set_accel", RECOATER, 500.0),
-        ("move_abs", RECOATER, 950.0),     # recoater back to end
-        ("wait", None, None),
+        # NO end-of-layer recoater->950. The recoater stays at the heater sweep end (600) and
+        # repositions to the spread start (950) only at the NEXT layer's start, AFTER its feed
+        # preload. Parking it at 950 here made the next preload land too late (bug report).
         ("mark", None, None),              # layer_end
     ]
     assert kinds[i : i + len(layer)] == layer
@@ -434,25 +435,23 @@ def test_compile_one_printing_layer_full_sequence() -> None:
 # ---- (e) multi-pass jetting ----------------------------------------------------------------------
 
 
-def test_heater_off_returns_printhead_and_recoater_concurrently() -> None:
-    # With the heater OFF, the printhead's return home and the recoater's reposition to the spread
-    # start (950) are independent axes -> issued back-to-back under ONE wait, not two serial waits.
-    p = dataclasses.replace(one_layer(), heater_enabled=False)
-    ks = [(s.kind, s.axis, s.value) for s in compile_print(p) if s.phase == "printing"]
-    i_jet = ks.index(("move_abs", PRINTHEAD, 900.0))
-    assert ks[i_jet : i_jet + 5] == [
-        ("move_abs", PRINTHEAD, 900.0),  # jet out
-        ("wait", None, None),
-        ("move_abs", PRINTHEAD, 5.0),    # printhead home  \  concurrent: two moves,
-        ("move_abs", RECOATER, 950.0),   # recoater reposition /  then ONE wait
-        ("wait", None, None),
-    ]
-    assert ks[i_jet + 5] == ("mark", None, None)  # layer_end immediately after
-    assert ("move_abs", RECOATER, 425.0) not in ks  # heater sweep absent
+def test_recoater_repositions_after_preload_never_at_layer_end() -> None:
+    # Anti-backlash: the recoater moves out to the spread start (950) AFTER that layer's feed
+    # preload drop — NEVER at the previous layer's end (which would park it at 950 before the next
+    # preload). So each printing layer has exactly ONE recoater->950, and the feed move before it is
+    # preload DOWN. Bug report: the feed drop happened after the recoater had already gone to 950.
+    two = dataclasses.replace(one_layer(), feed_backlash_mm=2.0)
+    two = dataclasses.replace(two, printing=dataclasses.replace(two.printing, n_layers=2))
+    ks = [(s.kind, s.axis, s.value) for s in compile_print(two) if s.phase == "printing"]
+    idx_950 = [i for i, k in enumerate(ks) if k == ("move_abs", RECOATER, 950.0)]
+    assert len(idx_950) == 2  # one reposition per layer, and NONE at layer end
+    for i in idx_950:
+        prev_feed = [ks[j] for j in range(i) if ks[j][:2] == ("move_rel", FEED)]
+        assert prev_feed[-1] == ("move_rel", FEED, 2.0)  # preload DOWN immediately precedes each
 
 
 def test_heater_on_keeps_printhead_return_serial_before_the_sweep() -> None:
-    # Heater ON is unchanged: printhead returns home (its own wait) BEFORE the heater sweep starts.
+    # Heater ON: printhead returns home (its own wait) BEFORE the heater sweep starts.
     ks = [(s.kind, s.axis, s.value) for s in compile_print(one_layer()) if s.phase == "printing"]
     i_home = ks.index(("move_abs", PRINTHEAD, 5.0))
     assert ks[i_home + 1] == ("wait", None, None)
@@ -648,9 +647,11 @@ def test_capture_marks_emitted_without_added_motion() -> None:
     assert last_move(RECOATER, i_post_jet) == plan.recoater_home_mm
     assert last_move(PRINTHEAD, i_post_jet) == plan.printhead_home_mm
 
-    # post_heat: recoater back to its far/clear end after the heater dwell, printhead still home.
+    # post_heat: the recoater sits at the heater sweep end (600) after the dwell, printhead home.
+    # There is NO end-of-layer reposition to 950 — the recoater moves out to the spread start only
+    # at the next layer's start, after that layer's feed preload (anti-backlash bug fix).
     i_post_heat = next(i for i, s in enumerate(steps) if s.label == "capture:post_heat")
-    assert last_move(RECOATER, i_post_heat) == plan.recoater_end_mm
+    assert last_move(RECOATER, i_post_heat) == plan.heater_end_mm
     assert last_move(PRINTHEAD, i_post_heat) == plan.printhead_home_mm
 
     # capture:post_heat still precedes the ordinary layer_end mark.
