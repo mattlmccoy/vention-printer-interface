@@ -481,7 +481,6 @@ def compile_print(plan: PrintSettings) -> tuple[Step, ...]:
             # reposition to the spread start (950) are independent axes, so run them CONCURRENTLY
             # (one wait) instead of two serial returns. Heater ON keeps them serial (the printhead
             # must be home before the recoater sweeps 425->600).
-            concurrent_return = not plan.heater_enabled and plan.pre_heater_drop_mm == 0.0
             for pass_no in range(plan.n_jet_passes):
                 if purge_every_pass or (purge_first_pass and pass_no == 0):
                     add(name, layer_no, "move_abs", PRINTHEAD, purge_pos)
@@ -490,14 +489,11 @@ def compile_print(plan: PrintSettings) -> tuple[Step, ...]:
                 add(name, layer_no, "move_abs", PRINTHEAD, plan.printhead_end_mm)
                 add(name, layer_no, "wait")
                 last = pass_no == plan.n_jet_passes - 1
-                if last and concurrent_return:
-                    continue  # defer the return home; issued with the recoater reposition below
                 back = plan.printhead_home_mm if last else plan.printhead_multipass_return_mm
                 add(name, layer_no, "move_abs", PRINTHEAD, back)
                 add(name, layer_no, "wait")
-            if plan.capture_stages and not concurrent_return:
-                # Gantries are already parked here: recoater retracted home for the jet pass,
-                # printhead back home (or midpoint) after the last pass above.
+            if plan.capture_stages:
+                # Gantries parked: recoater home from the jet pass, printhead back home.
                 add(name, layer_no, "mark", label="capture:post_jet")
             if plan.pre_heater_drop_mm > 0:  # drop before heating (net descent stays one layer)
                 add(name, layer_no, "move_rel", PART, plan.pre_heater_drop_mm, "pre-heater drop")
@@ -519,19 +515,12 @@ def compile_print(plan: PrintSettings) -> tuple[Step, ...]:
                     name, layer_no, "move_rel", PART, -plan.pre_heater_drop_mm, "raise to layer"
                 )
                 add(name, layer_no, "wait")
-            if concurrent_return:
-                # Heater off: printhead home ‖ recoater reposition to the spread start — independent
-                # axes, ONE wait. (The printhead return was deferred out of the jet loop above.)
-                add(name, layer_no, "move_abs", PRINTHEAD, plan.printhead_home_mm)
-                add(name, layer_no, "move_abs", RECOATER, plan.recoater_end_mm)
-                add(name, layer_no, "wait")
-                if plan.capture_stages:
-                    add(name, layer_no, "mark", label="capture:post_jet")
-            else:
-                add(name, layer_no, "move_abs", RECOATER, plan.recoater_end_mm)  # recoater far end
-                add(name, layer_no, "wait")
+            # NO end-of-layer recoater reposition. The recoater stays where the spread (home) or the
+            # heater sweep (600) left it, and repositions out to the spread start (950) at the NEXT
+            # layer's START -- AFTER that layer's anti-backlash feed preload. Parking it at 950 here
+            # made the next layer's preload land too late (recoater already at 950); the feed must
+            # drop BEFORE the recoater moves out. (Precoat layers return to 350 above.)
             if plan.capture_stages:
-                # Gantries parked again: recoater back at its far/clear end, printhead home.
                 add(name, layer_no, "mark", label="capture:post_heat")
             add(name, layer_no, "mark", label="layer_end")
         if exhausted:

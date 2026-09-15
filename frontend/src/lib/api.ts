@@ -154,6 +154,11 @@ export const api = {
   estopResetDrives: () => req<StatusPayload>("POST", "/api/estop/reset-drives"),
   clearFault: () => req<StatusPayload>("POST", "/api/clear-fault"),
   home: (axes: number[]) => req<StatusPayload>("POST", "/api/motion/home", { axes }),
+  // Reference every axis at its current reported position WITHOUT homing (machine kept power).
+  referenceCurrent: () => req<StatusPayload>("POST", "/api/reference/current"),
+  // Re-launch the operator process in place (refused while a print is running). The server exits
+  // right after replying, so the UI briefly shows "operator unreachable" then reconnects.
+  operatorRestart: () => req<{ ok: boolean; restarting_in_s: number }>("POST", "/api/operator/restart"),
   move: (axis: number, mode: "abs" | "rel", mm: number) => req<{ applied_mm: number }>("POST", "/api/motion/move", { axis, mode, mm }),
   stop: () => req<StatusPayload>("POST", "/api/motion/stop", {}),
   axisMotion: (n: number) => req<AxisMotion>("GET", `/api/axes/${n}/motion`),

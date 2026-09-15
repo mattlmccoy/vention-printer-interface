@@ -15,6 +15,8 @@ import os
 import platform
 import shutil
 import socket
+import sys
+import threading
 import time
 import zipfile
 from collections.abc import AsyncIterator, Callable
@@ -116,11 +118,30 @@ RUN_FILES = frozenset(
         "manifest.json",
         "layers.csv",
         "motion_profiles.csv",
+        "layer_accuracy.csv",
     }
 )
 VISION_FILE_MEDIA_TYPES = {".png": "image/png", ".json": "application/json"}
 _DEFAULT_FRONTEND_DIST = Path(__file__).resolve().parents[3] / "frontend" / "dist"
 DEFAULT_HEATER_IO: tuple[int, int] = (1, 0)  # UNVERIFIED: identify during commissioning
+OPERATOR_RESTART_DELAY_S = 0.4  # let the HTTP response flush before the process replaces itself
+
+
+def schedule_operator_restart(delay_s: float = OPERATOR_RESTART_DELAY_S) -> None:
+    """Replace THIS operator process with a fresh copy of itself (same interpreter, same argv),
+    after a short delay so the POST /api/operator/restart response reaches the browser first.
+
+    os.execv keeps the PID and re-runs the exact command line, so it works whether the operator
+    was launched by `uv run`, a launchd/KeepAlive agent, or by hand — no external supervisor is
+    required. Serving the console-script entry through the interpreter (sys.executable + sys.argv)
+    avoids depending on the entry file's executable bit / shebang. Module-level so tests can patch
+    it away without actually re-execing the test process."""
+
+    def _do() -> None:
+        time.sleep(delay_s)
+        os.execv(sys.executable, [sys.executable, *sys.argv])
+
+    threading.Thread(target=_do, daemon=True, name="operator-restart").start()
 
 
 def _vision_file_url(run: str, rel_path: str) -> str:
@@ -906,6 +927,25 @@ def create_app(
         ctrl().disarm()
         ev("disarmed")
         return status_payload()
+
+    @app.post("/api/reference/current")
+    def reference_current() -> dict[str, Any]:
+        # Operator asserts the machine kept power and the reported positions are real: reference
+        # every axis at its current position WITHOUT homing. The UI gates this behind a confirm.
+        axes = guarded(ctrl().reference_current)
+        ev("referenced_current", {"axes": sorted(axes)})
+        return status_payload()
+
+    @app.post("/api/operator/restart")
+    def operator_restart() -> dict[str, Any]:
+        """Re-launch the operator process in place (same command line). Refused while a print is
+        RUNNING or PAUSED so an in-progress build is never dropped. The current process replaces
+        itself a moment after this response is sent, so the browser reconnects after a beat."""
+        if printer().state in (PrintState.RUNNING, PrintState.PAUSED):
+            raise HTTPException(409, "a print is running; abort it before restarting the operator")
+        ev("operator_restart")
+        schedule_operator_restart()
+        return {"ok": True, "restarting_in_s": OPERATOR_RESTART_DELAY_S}
 
     @app.post("/api/estop")
     def estop() -> Any:

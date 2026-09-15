@@ -231,7 +231,12 @@ class Controller:
                     self._heater_cmd_on_since = None  # observed off after the command settled
             heater_on_s = self._heater_on_s(now)
             if tel.estop_triggered:
-                self._referenced_axes.clear()  # e-stop cuts drive power -> re-home required
+                # An e-stop is Safe-Torque-Off: it cuts MOTOR TORQUE, not the controller/encoder
+                # that counts position. Referenced axes SURVIVE an e-stop -- do NOT clear them (only
+                # a full power-cycle loses position, and reconcile_reference handles that on the
+                # next reconnect). Clearing here undefined the operator's positions on every e-stop.
+                # A home that was IN PROGRESS is aborted, though: it never settled, so drop it from
+                # the pending-home set rather than promoting it to referenced later.
                 self._homing_axes.clear()
             done = all(tel.motion_complete.values())
             if done:
@@ -531,6 +536,26 @@ class Controller:
             self._reference_positions = dict(tel.positions)
             self._reference_suspect = False
         self._notify()
+
+    def reference_current(self) -> set[int]:
+        """Operator-asserted reference WITHOUT homing: trust the CURRENT reported positions and mark
+        every axis referenced. Valid ONLY when the machine kept power so the positions are real (the
+        UI confirms that first). Requires a connected device, a fresh good telemetry sample,
+        no active fault, and settled motion (stable positions). Moves nothing."""
+        with self._lock:
+            dev = self._require_device()
+            if self.state == ControllerState.FAULT:
+                raise RuntimeError("faulted: " + "; ".join(self._fault_reasons))
+            tel = self._telemetry
+            if tel is None or self._read_error is not None:
+                raise RuntimeError("no fresh telemetry to reference from")
+            if not tel.motion_complete or not all(tel.motion_complete.values()):
+                raise RuntimeError("motion in progress — let the axes settle, then reference")
+            self._referenced_axes = set(dev.axes)
+            self._reference_positions = dict(tel.positions)
+            self._reference_suspect = False
+        self._notify()
+        return set(self._referenced_axes)
 
     def reference_state(self) -> tuple[set[int], dict[int, float]]:
         """Current (referenced axes, last positions) — for the app to persist to disk."""

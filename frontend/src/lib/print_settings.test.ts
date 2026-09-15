@@ -24,17 +24,19 @@ test("printability and travel reasons", () => {
   assert.match(validate({ ...DEFAULT_PLAN, recoater_end_mm: 5000 })[0], /recoater_end_mm/);
 });
 
-test("compile matches the backend order for one print layer (52 steps, heater on)", () => {
+test("compile matches the backend order for one print layer (50 steps, heater on)", () => {
   const one = { ...DEFAULT_PLAN,
     thin_precoat: { ...DEFAULT_PLAN.thin_precoat, n_layers: 0 },
     printing: { ...DEFAULT_PLAN.printing, n_layers: 1 }, postcoat: { ...DEFAULT_PLAN.postcoat, n_layers: 0 }, heater_enabled: true };
   const steps = compilePrint(one);
-  // 12 setup (gantry homes + profiles, no printhead park) + 8 phase setup + 26 layer + 6 finish = 52
-  assert.equal(steps.length, 52);
+  // 12 setup (gantry homes + profiles, no printhead park) + 8 phase setup + 24 layer + 6 finish = 50.
+  // The layer is 24 (not 26): no end-of-layer recoater->950 reposition — it moves out to the spread
+  // start only at the NEXT layer's start, after that layer's feed preload (anti-backlash bug fix).
+  assert.equal(steps.length, 50);
   assert.equal(steps[20].label, "layer_start");
-  assert.equal(steps[45].label, "layer_end");
-  assert.equal(steps[45].part_height_mm, 2);
-  assert.deepEqual(steps.map((s) => s.index), [...Array(52).keys()]);
+  assert.equal(steps[43].label, "layer_end");
+  assert.equal(steps[43].part_height_mm, 2);
+  assert.deepEqual(steps.map((s) => s.index), [...Array(50).keys()]);
   // part drop is the FIRST layer move (V1.py order), before the recoater reposition
   const layer = steps.slice(20).map((s) => [s.kind, s.axis, s.value] as const);
   assert.deepEqual(layer[1], ["move_rel", 1, 2]);          // part drop 2.0 (PART=1)
@@ -60,7 +62,7 @@ test("printing layer: multi-pass jetting + pre-heater drop and return-up", () =>
   assert.ok(Math.max(...jet) < iDrop && iDrop < iHeaterOn && iHeaterOn < iUp);
 });
 
-test("heater off: printhead home + recoater reposition run concurrently (one wait)", () => {
+test("heater off: printhead returns home, then layer_end with NO end-of-layer recoater reposition", () => {
   const p = { ...DEFAULT_PLAN,
     thin_precoat: { ...DEFAULT_PLAN.thin_precoat, n_layers: 0 },
     printing: { ...DEFAULT_PLAN.printing, n_layers: 1 }, postcoat: { ...DEFAULT_PLAN.postcoat, n_layers: 0 },
@@ -68,10 +70,13 @@ test("heater off: printhead home + recoater reposition run concurrently (one wai
   const ks = compilePrint(p).filter((s) => s.phase === "printing").map((s) => [s.kind, s.axis, s.value] as const);
   const iJet = ks.findIndex((k) => k[0] === "move_abs" && k[1] === 3 && k[2] === p.printhead_end_mm);
   assert.deepEqual(ks[iJet + 1], ["wait", null, null]);
-  assert.deepEqual(ks[iJet + 2], ["move_abs", 3, p.printhead_home_mm]);   // printhead home  \ concurrent
-  assert.deepEqual(ks[iJet + 3], ["move_abs", 4, p.recoater_end_mm]);     // recoater reposition / one wait
-  assert.deepEqual(ks[iJet + 4], ["wait", null, null]);
-  assert.equal(ks[iJet + 5][0], "mark"); // layer_end right after
+  assert.deepEqual(ks[iJet + 2], ["move_abs", 3, p.printhead_home_mm]);   // printhead home (its own wait)
+  assert.deepEqual(ks[iJet + 3], ["wait", null, null]);
+  assert.equal(ks[iJet + 4][0], "mark"); // layer_end right after — no recoater->950 at layer end
+  // the recoater's LAST move this layer is the spread home (5), not a reposition to the far end
+  const rc = ks.filter((k) => k[0] === "move_abs" && k[1] === 4);
+  assert.deepEqual(rc[rc.length - 1], ["move_abs", 4, p.recoater_home_mm]);
+  assert.equal(ks.filter((k) => k[0] === "move_abs" && k[1] === 4 && k[2] === p.recoater_end_mm).length, 1);
 });
 
 test("compile of the full default plan: 13 layers, heights, resets", () => {
