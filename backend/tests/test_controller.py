@@ -225,6 +225,26 @@ def test_estop_release_then_clear_fault() -> None:
         c.stop()
 
 
+def test_estop_preserves_referenced_positions() -> None:
+    # An e-stop triggers Safe-Torque-Off: it cuts MOTOR TORQUE, not the controller/encoder that
+    # counts position. Referenced positions therefore SURVIVE an e-stop -- only a full power-cycle
+    # loses them, and that path is handled on reconnect by reconcile_reference. Regression guard:
+    # hitting the e-stop must NOT undefine the motor positions. This has regressed repeatedly
+    # because nothing pinned it; the operator sees "positions undefined" the instant they e-stop.
+    c, _ = make()
+    try:
+        c.arm()
+        c.home_all()
+        assert wait(lambda: all(c.snapshot()["telemetry"]["referenced"].values()), timeout=6.0)
+        c.estop()
+        assert wait(lambda: c.state == ControllerState.FAULT)
+        assert wait(lambda: (c.snapshot()["telemetry"] or {}).get("estop_triggered") is True)
+        # torque was cut, position was not: every axis stays referenced through the e-stop
+        assert all(c.snapshot()["telemetry"]["referenced"].values())
+    finally:
+        c.stop()
+
+
 def test_unreachable_faults_and_clear_requires_clean() -> None:
     c, t = make()
     try:

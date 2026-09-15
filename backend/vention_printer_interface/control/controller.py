@@ -231,7 +231,12 @@ class Controller:
                     self._heater_cmd_on_since = None  # observed off after the command settled
             heater_on_s = self._heater_on_s(now)
             if tel.estop_triggered:
-                self._referenced_axes.clear()  # e-stop cuts drive power -> re-home required
+                # An e-stop is Safe-Torque-Off: it cuts MOTOR TORQUE, not the controller/encoder
+                # that counts position. Referenced axes SURVIVE an e-stop -- do NOT clear them (only
+                # a full power-cycle loses position, and reconcile_reference handles that on the
+                # next reconnect). Clearing here undefined the operator's positions on every e-stop.
+                # A home that was IN PROGRESS is aborted, though: it never settled, so drop it from
+                # the pending-home set rather than promoting it to referenced later.
                 self._homing_axes.clear()
             done = all(tel.motion_complete.values())
             if done:
