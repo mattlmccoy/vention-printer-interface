@@ -90,6 +90,14 @@ class DimensionalReport:
     features: dict[str, Any] = field(default_factory=dict)
     compensation: dict[str, Any] | None = None
     tool_provenance: dict[str, Any] = field(default_factory=dict)
+    # How the feature ROIs were anchored: "auto" | "manual_rois" | "circle".
+    roi_source: str = "auto"
+    # The operator-marked outer circle (cx_px/cy_px/radius_px), when the circle path ran.
+    circle: dict[str, float] | None = None
+    # Where the scale came from: "sidecar" | "circle" | "circle+sidecar".
+    calibration_source: str | None = None
+    # Honest cross-check note when a marked circle and the sidecar disagree.
+    calibration_warning: str | None = None
 
     def to_dict(self) -> dict[str, Any]:
         return asdict(self)
@@ -330,6 +338,7 @@ def analyze_run(
     layer: int | None = None,
     stage: str = "post_jet",
     rois: dict[str, list[int]] | None = None,
+    circle: dict[str, float] | None = None,
     nominals: dict[str, Any] = DEFAULTS,
 ) -> DimensionalReport:
     """Analyze one recorded run's gold-standard capture and persist the report.
@@ -341,9 +350,15 @@ def analyze_run(
     layer, stage : capture selectors
         Which registered still to analyze. ``stage`` defaults to ``post_jet``.
     rois : {feature: [x, y, w, h]}, optional
-        Manual pixel ROIs (trusted). When omitted, auto-location is attempted.
+        Manual pixel ROIs (trusted). Highest precedence.
+    circle : {"cx_px", "cy_px", "radius_px"}, optional
+        An operator-marked Ø100 mm outer circle. When given (and ``rois`` is not), it
+        supplies both ``px_per_mm`` and the four feature ROIs, so a run with no sidecar
+        calibration can still be analyzed. Lower precedence than ``rois``.
     nominals : dict
         Nominal geometry (defaults to the gold standard).
+
+    Precedence for ROIs/scale is explicit ``rois`` > ``circle`` > auto-location.
     """
     run_dir = Path(run_dir)
     run = run_dir.name
@@ -362,22 +377,51 @@ def analyze_run(
     if not image_path.exists():
         return _fail(run, "no_capture", f"capture file missing on disk: {registered_rel}")
 
-    mm_per_px = _read_mm_per_px(_sidecar_path_for(run_dir, registered_rel))
-    if mm_per_px is None:
-        return _fail(
-            run,
-            "no_calibration",
-            f"capture {registered_rel} has no registered_space.mm_per_px (not registered)",
-            captured_from={"layer": chosen.get("layer"), "stage": chosen.get("stage")},
-        )
+    # Read the sidecar scale but do NOT early-return no_calibration yet — a marked circle
+    # can supply px_per_mm on its own (the case that unblocks uncalibrated runs).
+    sidecar_mm_per_px = _read_mm_per_px(_sidecar_path_for(run_dir, registered_rel))
 
     image = cv2.imread(str(image_path))
     if image is None:
         return _fail(run, "no_capture", f"capture image unreadable: {registered_rel}")
 
-    px_per_mm = 1.0 / mm_per_px
+    captured_from = {"layer": chosen.get("layer"), "stage": chosen.get("stage")}
+    no_calibration_msg = (
+        f"capture {registered_rel} has no registered_space.mm_per_px (not registered)"
+    )
+    cal_tol = 0.03  # 3% agreement band between circle- and sidecar-derived scale
 
-    if rois is None:
+    roi_source = "auto"
+    calibration_source: str | None = None
+    calibration_warning: str | None = None
+
+    # Precedence: explicit rois > circle > auto-location.
+    if rois is not None:
+        roi_source = "manual_rois"
+        if sidecar_mm_per_px is None:
+            return _fail(run, "no_calibration", no_calibration_msg, captured_from=captured_from)
+        px_per_mm = 1.0 / sidecar_mm_per_px
+        calibration_source = "sidecar"
+    elif circle is not None:
+        roi_source = "circle"
+        diameter_mm = nominals["outer_circle"]["diameter_mm"]
+        px_per_mm = px_per_mm_from_circle(circle["radius_px"], diameter_mm)
+        rois = rois_from_circle((circle["cx_px"], circle["cy_px"]), px_per_mm, nominals)
+        if sidecar_mm_per_px is not None:
+            calibration_source = "circle+sidecar"
+            rel = abs(px_per_mm - 1.0 / sidecar_mm_per_px) / px_per_mm
+            if rel > cal_tol:
+                calibration_warning = (
+                    f"circle scale differs from camera calibration by "
+                    f"{rel * 100:.1f}% — using the circle"
+                )
+        else:
+            calibration_source = "circle"
+    else:
+        if sidecar_mm_per_px is None:
+            return _fail(run, "no_calibration", no_calibration_msg, captured_from=captured_from)
+        px_per_mm = 1.0 / sidecar_mm_per_px
+        calibration_source = "sidecar"
         rois = _auto_rois(image, px_per_mm, nominals)
         if rois is None:
             return _fail(
@@ -385,9 +429,9 @@ def analyze_run(
                 "roi_failed",
                 "could not auto-locate the Ø100 mm outer circle to anchor ROIs; "
                 "supply manual rois",
-                captured_from={"layer": chosen.get("layer"), "stage": chosen.get("stage")},
+                captured_from=captured_from,
                 px_per_mm=px_per_mm,
-                mm_per_px=mm_per_px,
+                mm_per_px=sidecar_mm_per_px,
             )
 
     features: dict[str, Any] = {}
@@ -411,13 +455,17 @@ def analyze_run(
         status="ok",
         generated_utc=_now_utc(),
         message="",
-        captured_from={"layer": chosen.get("layer"), "stage": chosen.get("stage")},
+        captured_from=captured_from,
         px_per_mm=px_per_mm,
-        mm_per_px=mm_per_px,
+        mm_per_px=sidecar_mm_per_px,
         rois=used_rois,
         features=features,
         compensation=asdict(comp),
         tool_provenance=_provenance(),
+        roi_source=roi_source,
+        circle=circle if roi_source == "circle" else None,
+        calibration_source=calibration_source,
+        calibration_warning=calibration_warning,
     )
 
     _persist(run_dir, report)

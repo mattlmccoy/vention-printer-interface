@@ -152,3 +152,93 @@ def test_missing_calibration_is_honest(tmp_path: Path) -> None:
     assert report.features == {}
     assert report.px_per_mm is None
     assert report.message
+
+
+# ---------------------------------------------------------------------------
+# (f) circle override: precedence, scale, calibration cross-check, persistence
+# ---------------------------------------------------------------------------
+# A marked Ø100 circle of radius R implies px_per_mm = 2R/100 = R/50. Pick R so the
+# implied scale matches (R_AGREE) or clearly disagrees (R_OFF, ~10% high) with the
+# fixture's sidecar calibration, to exercise the cross-check honestly.
+_CX, _CY = 1860.0, 1804.0  # anywhere on the readable capture; scale is what matters
+R_AGREE = FIXTURE_PX_PER_MM * 50.0  # -> ppm == FIXTURE_PX_PER_MM (agrees with sidecar)
+R_OFF = FIXTURE_PX_PER_MM * 55.0  # -> ppm 10% high (disagrees with sidecar > 3%)
+
+
+def test_analyze_run_with_circle_is_ok_and_labels_source(tmp_path: Path) -> None:
+    dot = cv2.imread(str(FX / "dot_roi.png"))
+    run = _make_run(tmp_path, dot, FIXTURE_MM_PER_PX)
+    circle = {"cx_px": _CX, "cy_px": _CY, "radius_px": R_AGREE}
+
+    report = analyze_run(run, circle=circle)
+    assert report.status == "ok"
+    assert report.roi_source == "circle"
+    assert abs(report.px_per_mm - (2.0 * R_AGREE) / 100.0) < 1e-6
+    assert report.calibration_source in ("circle", "circle+sidecar")
+    assert report.circle == circle
+
+    # New circle fields persist and round-trip through save + load_report. The circle path
+    # analyzes all four features; on this dot-only fixture the other analyzers emit NaN
+    # metrics, so compare the actual on-disk JSON (NaN-safe) rather than dataclass equality.
+    loaded = load_report(run)
+    assert loaded is not None
+    assert json.dumps(loaded, sort_keys=True) == json.dumps(report.to_dict(), sort_keys=True)
+    assert loaded["roi_source"] == "circle"
+    assert loaded["circle"] == circle
+    assert loaded["calibration_source"] == report.calibration_source
+    restored = DimensionalReport.from_dict(loaded)
+    assert restored.roi_source == "circle"
+    assert restored.circle == circle
+    assert restored.calibration_source == report.calibration_source
+
+
+def test_analyze_run_circle_works_without_calibration(tmp_path: Path) -> None:
+    dot = cv2.imread(str(FX / "dot_roi.png"))
+    run = _make_run(tmp_path, dot, None)  # no sidecar mm_per_px -> would be no_calibration
+    circle = {"cx_px": _CX, "cy_px": _CY, "radius_px": R_AGREE}
+
+    report = analyze_run(run, circle=circle)
+    assert report.status == "ok"
+    assert report.roi_source == "circle"
+    assert report.calibration_source == "circle"
+    assert report.calibration_warning is None
+    assert report.circle == circle
+
+
+def test_calibration_warning_on_disagreement(tmp_path: Path) -> None:
+    dot = cv2.imread(str(FX / "dot_roi.png"))
+    run = _make_run(tmp_path, dot, FIXTURE_MM_PER_PX)
+    circle = {"cx_px": _CX, "cy_px": _CY, "radius_px": R_OFF}
+
+    report = analyze_run(run, circle=circle)
+    assert report.status == "ok"
+    assert report.calibration_source == "circle+sidecar"
+    assert report.calibration_warning is not None
+    assert "%" in report.calibration_warning
+
+
+def test_calibration_warning_absent_when_scales_agree(tmp_path: Path) -> None:
+    dot = cv2.imread(str(FX / "dot_roi.png"))
+    run = _make_run(tmp_path, dot, FIXTURE_MM_PER_PX)
+    circle = {"cx_px": _CX, "cy_px": _CY, "radius_px": R_AGREE}
+
+    report = analyze_run(run, circle=circle)
+    assert report.calibration_source == "circle+sidecar"
+    assert report.calibration_warning is None
+
+
+def test_explicit_rois_beat_circle(tmp_path: Path) -> None:
+    dot = cv2.imread(str(FX / "dot_roi.png"))
+    h, w = dot.shape[:2]
+    run = _make_run(tmp_path, dot, FIXTURE_MM_PER_PX)
+
+    report = analyze_run(
+        run,
+        rois={"dot": [0, 0, w, h]},
+        circle={"cx_px": 1.0, "cy_px": 1.0, "radius_px": 1.0},
+    )
+    assert report.status == "ok"
+    assert report.roi_source == "manual_rois"
+    assert report.calibration_source == "sidecar"
+    assert abs(report.px_per_mm - FIXTURE_PX_PER_MM) < 1e-6
+    assert report.circle is None
