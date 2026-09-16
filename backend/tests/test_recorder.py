@@ -300,6 +300,33 @@ def test_layer_accuracy_excludes_the_finish_move() -> None:
     assert rows[1]["deviation_mm"] == pytest.approx(0.0)
 
 
+def test_layer_accuracy_samples_at_next_layer_start_not_completion_transient() -> None:
+    # With a pre-heater drop/raise the piston swings ~1 mm within each layer, so the layer_completed
+    # instant can catch a TRANSIENT position. Sampling at the NEXT layer's start (piston at rest,
+    # before its drop) gives the true settled height. Here the completion samples are transients;
+    # settled positions live at the layer_start timestamps.
+    telem = [
+        _tel(0, 10.0),                 # baseline (print start)
+        _tel(1_000_000_000, 10.9),     # layer-1 COMPLETION instant — transient mid pre-heater swing
+        _tel(1_800_000_000, 10.2),     # layer-2 START — settled: true layer-1 height (+0.2)
+        _tel(2_000_000_000, 10.1),     # layer-2 COMPLETION instant — transient
+        _tel(2_800_000_000, 10.4),     # layer-3 START — settled: true layer-2 height (+0.2)
+        _tel(3_000_000_000, 11.0),     # layer-3 COMPLETION instant — transient
+    ]
+    layers = [
+        _lay(1_000_000_000, 1, "printing", 0.2),
+        _lay(2_000_000_000, 2, "printing", 0.4),
+        _lay(3_000_000_000, 3, "printing", 0.6),
+    ]
+    starts = {2: 1_800_000_000, 3: 2_800_000_000}  # layer -> its layer_started timestamp
+    rows = layer_accuracy_rows(telem, layers, part_axis=1, layer_start_ts=starts)
+    # layer 1 settled = pos at layer-2 start (10.2 -> +0.2), NOT the completion transient (10.9)
+    assert rows[0]["actual_mm"] == pytest.approx(0.2)
+    assert rows[0]["actual_cum_mm"] == pytest.approx(0.2)
+    # layer 2 settled = pos at layer-3 start (10.4) minus layer-1 settled (10.2) -> +0.2
+    assert rows[1]["actual_mm"] == pytest.approx(0.2)
+
+
 def test_layer_accuracy_csv_written_on_stop(tmp_path: Path) -> None:
     rec = Recorder(tmp_path)
     run = rec.start("accuracy")

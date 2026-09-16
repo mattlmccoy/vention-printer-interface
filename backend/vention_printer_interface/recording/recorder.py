@@ -131,6 +131,7 @@ def layer_accuracy_rows(
     telemetry_rows: list[dict[str, Any]],
     layer_rows: list[dict[str, Any]],
     part_axis: int = 1,
+    layer_start_ts: dict[int, float] | None = None,
 ) -> list[dict[str, Any]]:
     """Per-layer build-piston height accuracy: commanded layer thickness vs the ACTUAL settled
     build-piston displacement.
@@ -160,7 +161,23 @@ def layer_accuracy_rows(
     # each layer (no off-by-one) and excludes the finish move, which runs AFTER the last completion.
     completions = [_to_float(r.get("host_timestamp_ns")) for r in ordered]
 
+    def _int(v: Any) -> int | None:
+        try:
+            return int(v)
+        except (TypeError, ValueError):
+            return None
+
     def settled_pos(i: int) -> float | None:
+        # Preferred: the piston position at the NEXT layer's start — a consistent settled phase
+        # (piston at rest, before that layer's drop), unaffected by this run's pre-heater drop/raise
+        # swing that makes the layer_completed instant a moving target. Falls back to the completion
+        # window when no next-start timestamp is available (e.g. the last layer, or no events).
+        if layer_start_ts and i + 1 < len(ordered):
+            nxt = layer_start_ts.get(_int(ordered[i + 1].get("layer")))  # type: ignore[arg-type]
+            if nxt is not None:
+                before = [p for ts, p in samples if ts <= nxt]
+                if before:
+                    return before[-1]
         hi = completions[i]
         lo = completions[i - 1] if i > 0 else base_ts
         if hi is None:
@@ -227,10 +244,29 @@ def _read_csv_rows(path: Path) -> list[dict[str, Any]]:
         return list(csv.DictReader(f))
 
 
+def _layer_start_timestamps(run: Path) -> dict[int, float]:
+    """Map layer number -> its layer_started host timestamp, from events.json. Used to sample each
+    layer's SETTLED build-piston height at a consistent phase (the next layer's start)."""
+    out: dict[int, float] = {}
+    try:
+        events = json.loads((run / "events.json").read_text())
+    except (OSError, ValueError):
+        return out
+    for e in events if isinstance(events, list) else []:
+        if e.get("label") == "layer_started":
+            layer = e.get("data", {}).get("layer")
+            ts = e.get("host_timestamp_ns")
+            if isinstance(layer, int) and ts is not None:
+                out[layer] = float(ts)
+    return out
+
+
 def _write_layer_accuracy(run: Path) -> None:
     """Write layer_accuracy.csv from the just-closed telemetry.csv + layers.csv (build-piston)."""
     rows = layer_accuracy_rows(
-        _read_csv_rows(run / "telemetry.csv"), _read_csv_rows(run / "layers.csv")
+        _read_csv_rows(run / "telemetry.csv"),
+        _read_csv_rows(run / "layers.csv"),
+        layer_start_ts=_layer_start_timestamps(run),
     )
     with (run / "layer_accuracy.csv").open("w", newline="") as f:
         writer = csv.writer(f)
