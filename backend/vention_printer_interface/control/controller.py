@@ -104,6 +104,11 @@ class Controller:
         # asserts. Unreferenced positions must never be presented as truth (data-contract §5).
         self._referenced_axes: set[int] = set()
         self._homing_axes: set[int] = set()
+        # Axes with an operator move in flight -> the only axes whose per-axis completeness is worth
+        # polling. Idle axes are settled, so we skip their /smartDrives/complete GET entirely and
+        # report them complete. This bounds the expensive part of each poll to what's actually
+        # moving, so position streams faster without more MM HTTP load (2026-09-16 saturation).
+        self._pending_axes: set[int] = set()
         self._reference_positions: dict[int, float] = {}  # last good positions, for reconnect match
         self._reference_suspect = False  # a read failed; reconcile reference on the next good read
 
@@ -187,9 +192,13 @@ class Controller:
             self.health_refresh_s > 0
             and time.monotonic() - self._last_health >= self.health_refresh_s
         )
+        with self._lock:
+            # Poll completeness only for axes with an operator move in flight (plus any that are
+            # homing, whose settle we must detect). Idle axes are reported settled without a GET.
+            watch = self._pending_axes | self._homing_axes
         try:
             with self._io_lock:
-                tel = dev.read_telemetry(refresh_health=refresh)
+                tel = dev.read_telemetry(refresh_health=refresh, completeness_axes=watch)
         except Exception as exc:  # noqa: BLE001 - a lost read DEGRADES; it is not a fault
             if stop.is_set() or dev is not self._device:
                 return  # orphaned thread: its device is gone, its result is meaningless
@@ -249,6 +258,13 @@ class Controller:
                 # A home that was IN PROGRESS is aborted, though: it never settled, so drop it from
                 # the pending-home set rather than promoting it to referenced later.
                 self._homing_axes.clear()
+                self._pending_axes.clear()  # torque cut: every in-flight move is aborted
+            # Drop axes that reached their target from the watch set: a completed move no longer
+            # needs its per-axis completeness GET. Only WATCHED axes carry a real reading here (the
+            # rest are synthesized True), so this prunes exactly the moves we were tracking.
+            self._pending_axes = {
+                a for a in self._pending_axes if not tel.motion_complete.get(a, True)
+            }
             done = all(tel.motion_complete.values())
             if done:
                 self._move_pending = False
@@ -425,6 +441,7 @@ class Controller:
             dev = self._require_armed()
             with self._lock:
                 self._move_pending = True
+                self._pending_axes.add(axis)  # watch this axis's completeness until it settles
             dev.move_absolute(axis, v)
         return v
 
@@ -440,6 +457,7 @@ class Controller:
                 here = tel.positions[axis]
                 target = self.limits.clamp_position(axis, here + mm)
                 self._move_pending = True
+                self._pending_axes.add(axis)  # watch this axis's completeness until it settles
             dev.move_absolute(axis, target)
         return target - here
 

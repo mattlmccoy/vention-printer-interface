@@ -8,6 +8,7 @@ scope (spec Non-goals), so they cannot be called by accident.
 from __future__ import annotations
 
 import time
+from collections.abc import Collection
 from dataclasses import asdict, dataclass, field
 from typing import Any
 
@@ -99,7 +100,17 @@ class PrinterDevice:
         }
 
     # ---- telemetry --------------------------------------------------------------------------
-    def read_telemetry(self, *, refresh_health: bool = False) -> Telemetry:
+    def read_telemetry(
+        self, *, refresh_health: bool = False, completeness_axes: Collection[int] | None = None
+    ) -> Telemetry:
+        """One telemetry poll. ``completeness_axes`` bounds the expensive per-axis
+        ``/smartDrives/complete/<L>`` GETs (one HTTP call each) to the axes that actually have a
+        move outstanding: ``None`` polls every axis (the default / full read), a subset polls only
+        those axes, and an empty set polls none. Unpolled axes report ``motion_complete = True``
+        (settled) — a poll that finds no move in flight has nothing to wait on. This keeps the idle
+        rest state at 2 GETs and a single-axis jog at 3, so position streams faster WITHOUT issuing
+        more (or concurrent) requests to the MachineMotion's single HTTP service (see the
+        2026-09-16 saturation incident)."""
         if refresh_health or self._health is None:
             self.health()
         positions = p.parse_positions(self._t.http_get(r.POSITION_PATH))
@@ -109,7 +120,14 @@ class PrinterDevice:
             actual_speed = p.parse_actual_speed(self._t.http_get(r.ACTUAL_SPEED_PATH))
         except (TransportError, p.ProtocolError):
             actual_speed = {}
-        complete = {n: p.parse_complete(self._t.http_get(r.complete_path(n))) for n in self.axes}
+        complete = {
+            n: (
+                p.parse_complete(self._t.http_get(r.complete_path(n)))
+                if completeness_axes is None or n in completeness_axes
+                else True
+            )
+            for n in self.axes
+        }
         estop_raw = self._t.mqtt_latest(r.TOPIC_ESTOP_STATUS)
         ready_raw = self._t.mqtt_latest(r.TOPIC_DRIVES_READY)
         estop = p.parse_json_bool(estop_raw) if estop_raw is not None else None

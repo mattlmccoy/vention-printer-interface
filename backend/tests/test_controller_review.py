@@ -181,13 +181,15 @@ def test_move_relative_requires_fresh_telemetry_and_idle_axis() -> None:
 
 # H6 ---------------------------------------------------------------------------------------------
 def test_slow_reads_warn_but_do_not_fault() -> None:
-    # x5 GETs per sample; a 0.5 s reply delay = ~2.5 s reads: slow but SUCCESSFUL, under
-    # stale_fault_s (6.0 s). The loop must WARN and keep running — a slow read during a jog/home is
-    # not a reason to fault and abort the motion (2026-09-09 field bug).
+    # An idle poll now makes 2 GETs (position + actualSpeed; completeness is polled only for axes
+    # with a move in flight). A 1.5 s reply delay = ~3 s reads: slow but SUCCESSFUL, past the warn
+    # threshold (telemetry_timeout_s 2.0 s) yet under stale_fault_s (6.0 s). The loop must WARN and
+    # keep running — a slow read during a jog/home is not a reason to fault and abort the motion
+    # (2026-09-09 field bug). Behaviour is age-driven, so it holds at any GET count.
     c, t = make()
     try:
         tel(c)
-        t.read_delay_s = 0.5
+        t.read_delay_s = 1.5
         assert wait(lambda: any("slow" in w for w in c.snapshot()["warnings"]), timeout=8)
         assert c.state == ControllerState.CONNECTED
     finally:
@@ -196,13 +198,15 @@ def test_slow_reads_warn_but_do_not_fault() -> None:
 
 
 def test_persistently_blind_reads_fault() -> None:
-    # x5 GETs per sample; a 1.4 s reply delay = ~7 s reads > stale_fault_s (6.0 s): a real blind
-    # period, so the loop still latches a stale fault.
+    # 2 GETs per idle sample; a 3.5 s reply delay = ~7 s reads > stale_fault_s (6.0 s): a real blind
+    # period from SLOW-BUT-SUCCESSFUL reads, so the loop still latches a stale fault. (A read that
+    # FAILS instead just degrades and never faults — that is the v0.8.5 change; this is the distinct
+    # slow-successful path evaluate() still trips on real telemetry age.)
     c, t = make()
     try:
         tel(c)
-        t.read_delay_s = 1.4
-        assert wait(lambda: c.state == ControllerState.FAULT, timeout=16)
+        t.read_delay_s = 3.5
+        assert wait(lambda: c.state == ControllerState.FAULT, timeout=20)
         assert any("stale" in x for x in c.snapshot()["fault_reasons"])
     finally:
         t.read_delay_s = 0.0

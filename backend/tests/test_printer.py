@@ -73,6 +73,61 @@ def test_read_telemetry_native_speed_degrades_gracefully(monkeypatch: pytest.Mon
     assert tel.positions  # the rest of telemetry is intact
 
 
+def _count_complete_gets(t: SimulatedTransport) -> tuple[dict[str, int], object]:
+    """Spy that counts per-axis /smartDrives/complete/<L> GETs the device issues."""
+    seen: dict[str, int] = {}
+    real_get = t.http_get
+
+    def counting(path: str, *, timeout_s: float | None = None) -> bytes:
+        if "/smartDrives/complete/" in path:
+            seen[path.rsplit("/", 1)[-1]] = seen.get(path.rsplit("/", 1)[-1], 0) + 1
+        return real_get(path, timeout_s=timeout_s)
+
+    return seen, counting
+
+
+def test_read_telemetry_default_reads_completeness_for_all_axes() -> None:
+    # Baseline: with no restriction, one completeness GET per axis (the pre-change behaviour).
+    d, t = make()
+    d.identify()
+    seen, spy = _count_complete_gets(t)
+    with pytest.MonkeyPatch.context() as mp:
+        mp.setattr(t, "http_get", spy)
+        d.read_telemetry()
+    assert seen == {"X": 1, "Y": 1, "Z": 1, "W": 1}  # 4 completeness GETs
+
+
+def test_read_telemetry_completeness_axes_polls_only_named_axes() -> None:
+    # The per-tick cost is the 4 completeness GETs; completeness only matters for axes with a move
+    # outstanding. Restricting to {3} issues ONE completeness GET (Z); every other axis reports
+    # settled (True) without a GET. This is what lets a single-axis jog stream position ~2x faster.
+    d, t = make()
+    d.identify()
+    d.home_all()
+    t.advance(60)
+    d.set_max_speed(3, 100)
+    d.move_absolute(3, 50)  # axis 3 moving -> its completeness is False and worth polling
+    seen, spy = _count_complete_gets(t)
+    with pytest.MonkeyPatch.context() as mp:
+        mp.setattr(t, "http_get", spy)
+        tel = d.read_telemetry(completeness_axes={3})
+    assert seen == {"Z": 1}  # ONLY axis 3 polled
+    assert tel.motion_complete[3] is False  # really read: axis 3 is mid-move
+    assert tel.motion_complete == {1: True, 2: True, 3: False, 4: True}  # others synthesized done
+
+
+def test_read_telemetry_completeness_axes_empty_skips_all_completeness() -> None:
+    # Idle rest state: no move outstanding -> zero completeness GETs, every axis reported settled.
+    d, t = make()
+    d.identify()
+    seen, spy = _count_complete_gets(t)
+    with pytest.MonkeyPatch.context() as mp:
+        mp.setattr(t, "http_get", spy)
+        tel = d.read_telemetry(completeness_axes=set())
+    assert seen == {}  # NO completeness GETs at all
+    assert tel.motion_complete == {1: True, 2: True, 3: True, 4: True}
+
+
 def test_move_and_speed() -> None:
     d, t = make()
     d.home_all()

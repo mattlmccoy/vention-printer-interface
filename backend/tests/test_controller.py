@@ -206,6 +206,51 @@ def test_move_is_clamped_and_speed_bounded() -> None:
         c.stop()
 
 
+def _count_complete_by_axis(t: SimulatedTransport) -> dict[str, int]:
+    """Spy: per-axis /smartDrives/complete/<L> GET counter, keyed by the axis letter."""
+    seen: dict[str, int] = {}
+    orig = t.http_get
+
+    def counting(path: str, **kw: Any) -> bytes:
+        if "/smartDrives/complete/" in path:
+            letter = path.rsplit("/", 1)[-1]
+            seen[letter] = seen.get(letter, 0) + 1
+        return orig(path, **kw)
+
+    t.http_get = counting  # type: ignore[method-assign]
+    return seen
+
+
+def test_idle_poll_skips_completeness_and_a_move_polls_only_its_axis() -> None:
+    # Telemetry-cadence perf: completeness is only worth polling for axes with a move outstanding.
+    # Idle -> zero completeness GETs (position still streams every tick); a single-axis move polls
+    # ONLY that axis; once the move settles the axis drops from the watch set. Fewer GETs/tick =
+    # shorter read phase = faster position feedback, with no extra load on the MM (2026-09-16).
+    c, t = make()  # poll_interval_s = 0.05
+    seen = _count_complete_by_axis(t)
+    try:
+        assert wait(lambda: c.snapshot()["telemetry"] is not None)
+        c.arm()
+        seen.clear()
+        time.sleep(0.3)  # several idle ticks
+        assert sum(seen.values()) == 0  # IDLE: no completeness polling at all
+
+        c.set_max_speed(3, 5.0)  # slow -> axis 3 stays in flight across the window
+        c.move_absolute(3, 60.0)
+        seen.clear()
+        time.sleep(0.3)  # several ticks while axis 3 travels
+        assert seen.get("Z", 0) >= 1  # the moving axis IS polled
+        assert seen.get("X", 0) == 0 and seen.get("Y", 0) == 0 and seen.get("W", 0) == 0
+
+        c.stop_all()
+        assert wait(lambda: all((c.snapshot()["telemetry"] or {})["motion_complete"].values()))
+        seen.clear()
+        time.sleep(0.25)
+        assert seen.get("Z", 0) == 0  # settled -> axis 3 dropped from the watch set
+    finally:
+        c.stop()
+
+
 def test_estop_bypasses_gate_and_kills_heater() -> None:
     c, t = make()
     try:
