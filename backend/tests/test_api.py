@@ -70,6 +70,14 @@ def test_recordings_report_capture_count(client: TestClient, tmp_path: Path) -> 
     assert runs["20260101_000001_nocaps"]["capture_count"] == 0
 
 
+def test_science_frame_no_camera_is_5xx_not_500(client: TestClient) -> None:
+    # The capture-pose calibration preview grabs a science still. With no usable science camera it
+    # answers 503 (none configured) or 502 (configured but the grab failed) — never a 500 — so the
+    # UI can show a clean "no science camera" state.
+    r = client.get("/api/vision/science/frame.jpg")
+    assert r.status_code in (502, 503)
+
+
 def test_operator_restart_reexecs_when_idle(
     client: TestClient, monkeypatch: pytest.MonkeyPatch
 ) -> None:

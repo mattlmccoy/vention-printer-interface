@@ -85,7 +85,7 @@ from vention_printer_interface.vision.cameras import (
 )
 from vention_printer_interface.vision.capture import VisionService
 from vention_printer_interface.vision.frame_source import FrameSource, UvcFrameSource
-from vention_printer_interface.vision.overview import OverviewStreamer
+from vention_printer_interface.vision.overview import OverviewStreamer, encode_jpeg
 from vention_printer_interface.vision.registration import (
     BoardDetection,
     BoardSpec,
@@ -2019,6 +2019,20 @@ def create_app(
         if not resolved.is_file():
             raise HTTPException(404, "not found")
         return FileResponse(resolved, media_type=VISION_FILE_MEDIA_TYPES[resolved.suffix.lower()])
+
+    @app.get("/api/vision/science/frame.jpg")
+    def vision_science_frame() -> Response:
+        """One still from the SCIENCE camera as a JPEG, on demand (open -> grab -> close). Used by
+        the capture-pose calibration overlay to aim the overhead cam over the bed. 503 when no
+        science camera is available."""
+        vision = vision_service()
+        if vision is None:
+            raise HTTPException(503, "no science camera available")
+        try:
+            frame = vision.grab_once()
+        except Exception as exc:  # noqa: BLE001 - a grab failure -> 502, never a 500
+            raise HTTPException(502, f"frame grab failed: {exc}") from exc
+        return Response(content=encode_jpeg(frame.image), media_type="image/jpeg")
 
     @app.get("/api/vision/overview/stream")
     def vision_overview_stream() -> StreamingResponse:
