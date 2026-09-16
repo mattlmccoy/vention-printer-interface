@@ -61,6 +61,8 @@ export interface PrintSettings {
   feed_fast_speed: number;
   feed_fast_accel: number;
   capture_stages: boolean; // emit layerwise vision capture marks (OFF by default; no cameras yet)
+  capture_recoater_mm: number; // overhead science cam: recoater pose to centre it over the bed (0 = fixed cam)
+  capture_settle_s: number; // dwell after moving to the capture pose before the shot
 }
 
 const basePhase: PhasePlan = {
@@ -80,7 +82,7 @@ export const DEFAULT_PLAN: PrintSettings = {
   purge_dwell_s: 0, purge_mode: "per_layer", purge_every_n_layers: 5, purge_position_mm: null,
   heater_speed: 50, heater_accel: 250, n_heater_passes: 1,
   heater_enabled: false, settle_s: 1, feed_backlash_mm: 0, feed_fast_speed: 5, feed_fast_accel: 30,
-  capture_stages: false,
+  capture_stages: false, capture_recoater_mm: 0, capture_settle_s: 0.5,
 };
 
 export type StepKind = "home" | "set_speed" | "set_accel" | "move_abs" | "move_rel" | "wait" | "dwell" | "heater" | "mark";

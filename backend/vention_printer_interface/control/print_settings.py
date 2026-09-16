@@ -151,6 +151,13 @@ class PrintSettings:
     # off of. Purely additive: NO motion is added in either state (the camera rides the recoater
     # gantry, so no printhead park is needed). OFF by default — no cameras are installed yet.
     capture_stages: bool = False
+    # Overhead science camera rides the recoater gantry. When >0 (and capture_stages on), the
+    # per-layer capture drives the recoater to this ABSOLUTE pose (centred over the bed), dwells
+    # capture_settle_s to let vibration settle, then shoots — imaging the freshly printed layer at
+    # the constant recoat plane (so scale/focus don't drift across the build). 0 = fixed camera:
+    # emit the capture mark in place, no capture move (the original behaviour).
+    capture_recoater_mm: float = 0.0
+    capture_settle_s: float = 0.5
 
     @property
     def total_thickness_mm(self) -> float:
@@ -311,6 +318,10 @@ class PrintSettings:
                 num("heater_section_power_w", base.heater_section_power_w), 1e-6, 1e5
             ),
             capture_stages=bool(d.get("capture_stages", base.capture_stages)),
+            capture_recoater_mm=_clamp(
+                num("capture_recoater_mm", base.capture_recoater_mm), 0.0, base.recoater_end_mm
+            ),
+            capture_settle_s=_clamp(num("capture_settle_s", base.capture_settle_s), 0.0, 10.0),
         )
 
 
@@ -493,7 +504,14 @@ def compile_print(plan: PrintSettings) -> tuple[Step, ...]:
                 add(name, layer_no, "move_abs", PRINTHEAD, back)
                 add(name, layer_no, "wait")
             if plan.capture_stages:
-                # Gantries parked: recoater home from the jet pass, printhead back home.
+                if plan.capture_recoater_mm > 0:
+                    # Overhead science cam rides the recoater: drive it to the capture pose (centred
+                    # over the bed), let it settle, then shoot the freshly printed layer — it sits
+                    # at the constant recoat plane, so scale/focus don't drift across the build.
+                    add(name, layer_no, "move_abs", RECOATER, plan.capture_recoater_mm)
+                    add(name, layer_no, "wait")
+                    add(name, layer_no, "dwell", value=plan.capture_settle_s, label="camera settle")
+                # else fixed camera: gantries are already parked (recoater home, printhead home).
                 add(name, layer_no, "mark", label="capture:post_jet")
             if plan.pre_heater_drop_mm > 0:  # drop before heating (net descent stays one layer)
                 add(name, layer_no, "move_rel", PART, plan.pre_heater_drop_mm, "pre-heater drop")

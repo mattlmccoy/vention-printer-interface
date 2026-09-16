@@ -618,6 +618,27 @@ def test_capture_stages_defaults_to_disabled() -> None:
     assert PrintSettings().capture_stages is False
 
 
+def test_overhead_capture_moves_recoater_to_pose_then_settles() -> None:
+    # Overhead science cam on the recoater gantry: with capture_stages + capture_recoater_mm set,
+    # the per-layer capture drives the recoater to the capture pose, waits, dwells to settle, then
+    # marks (imaging the printed layer at the recoat plane). With capture_recoater_mm=0 (fixed cam)
+    # it is just the mark in place — no capture move.
+    base = dataclasses.replace(one_layer(), capture_stages=True)
+
+    fixed = compile_print(dataclasses.replace(base, capture_recoater_mm=0.0))
+    i = next(k for k, s in enumerate(fixed) if s.label == "capture:post_jet")
+    assert fixed[i - 1].kind != "dwell"  # no camera-settle dwell; the mark fires in place
+
+    over = compile_print(
+        dataclasses.replace(base, capture_recoater_mm=475.0, capture_settle_s=0.3)
+    )
+    j = next(k for k, s in enumerate(over) if s.label == "capture:post_jet")
+    assert (over[j - 3].kind, over[j - 3].axis, over[j - 3].value) == ("move_abs", RECOATER, 475.0)
+    assert over[j - 2].kind == "wait"
+    assert over[j - 1].kind == "dwell" and over[j - 1].value == 0.3
+    assert over[j - 1].label == "camera settle"
+
+
 def test_capture_marks_emitted_without_added_motion() -> None:
     # one_layer() disables captures for the pinned-sequence tests above; re-enable it here.
     plan = dataclasses.replace(one_layer(), capture_stages=True)
