@@ -222,7 +222,8 @@ function CameraSettingsStep({ call, reachable }: { call: Call; reachable: boolea
  *  the bed centre sits under the crosshair, then save the recoater position as capture_recoater_mm
  *  (the every-layer overhead capture pose). Grabs an on-demand science frame to check alignment. */
 function CaptureCalibration({ status, gates, call, base }: { status: StatusPayload | null; gates: Gates; call: Call; base: string }) {
-  const [frameUrl, setFrameUrl] = useState("");
+  const [streaming, setStreaming] = useState(false);
+  const [streamKey, setStreamKey] = useState(0);
   const [err, setErr] = useState(false);
   const [step, setStep] = useState(5);
   const [pose, setPose] = useState<number | null>(null);
@@ -234,7 +235,8 @@ function CaptureCalibration({ status, gates, call, base }: { status: StatusPaylo
   }, []);
   const rc = status?.controller.telemetry?.positions?.["4"];
   const ok = gates.controllable && !gates.printActive;
-  const grab = () => { setErr(false); setFrameUrl(`${base}/api/vision/science/frame.jpg?t=${Date.now()}`); };
+  const streamUrl = `${base}/api/vision/science/stream?t=${streamKey}`;
+  const toggleStream = () => { if (streaming) { setStreaming(false); } else { setErr(false); setStreamKey(Date.now()); setStreaming(true); } };
   const jog = (sign: 1 | -1) => call("jog recoater", () => api.move(4, "rel", sign * step));
   const savePose = () => {
     if (typeof rc !== "number") return;
@@ -245,12 +247,12 @@ function CaptureCalibration({ status, gates, call, base }: { status: StatusPaylo
   };
   return (
     <div className="body">
-      <div className="hint" style={{ marginTop: 0 }}>The science camera rides the recoater. Jog the recoater until the bed centre sits under the crosshair, grab a fresh frame to check, then save the pose — it becomes the capture_recoater_mm the print uses for every-layer overhead captures.</div>
+      <div className="hint" style={{ marginTop: 0 }}>The science camera rides the recoater. Start the live stream, jog the recoater until the bed centre sits under the crosshair, then save the pose — it becomes the capture_recoater_mm the print uses for every-layer overhead captures. (Setup only — the stream is unavailable during a print.)</div>
       <div style={{ position: "relative", maxWidth: 480, margin: "10px 0", background: "var(--image-bg)", borderRadius: "var(--radius)", overflow: "hidden", aspectRatio: "4 / 3" }}>
-        {frameUrl && !err
-          ? <img src={frameUrl} alt="science camera frame" onError={() => setErr(true)} style={{ width: "100%", display: "block" }} />
-          : <div className="chart-empty" style={{ height: "100%" }}>{err ? "no science frame — no camera, or grab failed" : "grab a frame to begin"}</div>}
-        {frameUrl && !err && (
+        {streaming && !err
+          ? <img src={streamUrl} alt="science camera live view" onError={() => setErr(true)} style={{ width: "100%", display: "block" }} />
+          : <div className="chart-empty" style={{ height: "100%" }}>{err ? "no science stream — no camera, or busy during a print" : "start the stream to align"}</div>}
+        {streaming && !err && (
           <svg viewBox="0 0 100 100" preserveAspectRatio="none" style={{ position: "absolute", inset: 0, width: "100%", height: "100%", pointerEvents: "none" }}>
             <circle cx="50" cy="50" r="24" fill="none" stroke="var(--accent)" strokeWidth="0.6" opacity="0.9" />
             <circle cx="50" cy="50" r="1.2" fill="var(--accent)" />
@@ -262,7 +264,7 @@ function CaptureCalibration({ status, gates, call, base }: { status: StatusPaylo
         )}
       </div>
       <div className="actions" style={{ marginTop: 0 }}>
-        <button className="cta" onClick={grab}>grab frame</button>
+        <button className={`cta${streaming ? "" : " primary"}`} onClick={toggleStream}>{streaming ? "stop stream" : "start alignment stream"}</button>
         <span className="hint" style={{ marginTop: 0 }}>recoater jog</span>
         {[1, 5, 10].map((s) => <button key={s} type="button" className={`small${s === step ? " on" : ""}`} onClick={() => setStep(s)}>{s} mm</button>)}
         <button className="small" disabled={!ok} onClick={() => jog(-1)}>◀</button>

@@ -19,7 +19,7 @@ import sys
 import threading
 import time
 import zipfile
-from collections.abc import AsyncIterator, Callable
+from collections.abc import AsyncIterator, Callable, Iterator
 from contextlib import asynccontextmanager
 from datetime import UTC, datetime
 from pathlib import Path
@@ -2033,6 +2033,34 @@ def create_app(
         except Exception as exc:  # noqa: BLE001 - a grab failure -> 502, never a 500
             raise HTTPException(502, f"frame grab failed: {exc}") from exc
         return Response(content=encode_jpeg(frame.image), media_type="image/jpeg")
+
+    @app.get("/api/vision/science/stream")
+    def vision_science_stream() -> StreamingResponse:
+        """Live MJPEG from the SCIENCE camera for the capture-pose alignment overlay. Setup-only: it
+        holds the science source open, so it is refused (409) while a print/routine runs (that owns
+        the capture source). 503 when no science camera is available."""
+        if printer().state in (PrintState.RUNNING, PrintState.PAUSED):
+            raise HTTPException(409, "a print is running; the science stream is for setup only")
+        vision = vision_service()
+        if vision is None:
+            raise HTTPException(503, "no science camera available")
+        stream = vision.stream_jpeg()
+        try:
+            first = next(stream)  # eager open so a broken camera -> 503, not a half-open 200
+        except StopIteration as exc:
+            raise HTTPException(503, "science camera produced no frame") from exc
+        except Exception as exc:  # noqa: BLE001 - a failed open -> 503, not a 500
+            stream.close()
+            raise HTTPException(503, f"science camera unavailable: {exc}") from exc
+
+        def gen() -> Iterator[bytes]:
+            try:
+                yield first
+                yield from stream
+            finally:
+                stream.close()  # closes the source + releases the lock on client disconnect
+
+        return StreamingResponse(gen(), media_type="multipart/x-mixed-replace; boundary=frame")
 
     @app.get("/api/vision/overview/stream")
     def vision_overview_stream() -> StreamingResponse:
