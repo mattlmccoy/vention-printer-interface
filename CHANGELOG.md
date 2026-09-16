@@ -3,6 +3,17 @@
 Notable changes to the Vention Printer Interface. Versions follow semantic versioning; each entry
 corresponds to a tagged merge to `main`.
 
+## v0.3.1 — 2026-09-16
+
+### Added
+- **Actual-thickness-vs-target chart** on the Runs page (replaces the per-layer deviation scatter):
+  each layer's actual build-piston thickness as a bar against its commanded target tick with a
+  ±tolerance band — a dropped (empty bar) or doubled layer is obvious at a glance.
+
+### Fixed
+- **Run-scoped event log** — the Runs event log shows the selected run's own `events.json` instead
+  of the live session feed (which looked like it "disappeared" after an operator restart).
+
 ## v0.3.0 — 2026-09-15
 
 Reliability, diagnostics, and data-forward run analysis.
