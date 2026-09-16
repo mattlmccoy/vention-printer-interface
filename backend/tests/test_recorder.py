@@ -7,10 +7,46 @@ import pytest
 from vention_printer_interface.recording.recorder import (
     MOTION_PROFILE_FIELDS,
     Recorder,
+    derive_run_status,
     layer_accuracy_rows,
     layer_accuracy_summary,
     motion_profile_rows,
 )
+
+
+def test_derive_run_status_finished_on_print_done() -> None:
+    assert derive_run_status(["print_started", "print_done"], complete=True) == "finished"
+
+
+def test_derive_run_status_aborted_on_print_aborted() -> None:
+    assert derive_run_status(["print_started", "print_aborted"], complete=True) == "aborted"
+
+
+def test_derive_run_status_fault_on_print_fault() -> None:
+    assert derive_run_status(["print_started", "print_fault"], complete=True) == "fault"
+
+
+def test_derive_run_status_estop_escalates_to_fault_over_abort() -> None:
+    # An e-stop during a run is an emergency condition — it must read as a fault (danger), not a
+    # graceful abort, even though the print controller also emits print_aborted in its wake.
+    labels = ["print_started", "estop", "print_aborted"]
+    assert derive_run_status(labels, complete=True) == "fault"
+
+
+def test_derive_run_status_incomplete_when_started_but_no_terminal() -> None:
+    # A run that began a print but recorded no terminal outcome (crashed/stopped mid-print) is
+    # NOT healthy — it reads as incomplete, distinct from finished (data-contract §5).
+    assert derive_run_status(["print_started", "layer_started"], complete=True) == "incomplete"
+
+
+def test_derive_run_status_recorded_when_no_print() -> None:
+    # A telemetry-only session (manual jogging / capture, no print) is neither pass nor fail.
+    assert derive_run_status(["recording_started", "heater_on"], complete=True) == "recorded"
+
+
+def test_derive_run_status_running_for_active_incomplete_run() -> None:
+    # The live, still-recording run (no manifest yet) reads as running, not incomplete/crashed.
+    assert derive_run_status(["print_started"], complete=False, active=True) == "running"
 
 
 def snap(z: float = 1.0, heater: bool = False) -> dict[str, Any]:
@@ -166,6 +202,34 @@ def test_list_runs_enriched_fields(tmp_path: Path) -> None:
     assert isinstance(item["started_at"], str) and item["started_at"]
     assert item["layer_count"] == 2  # two layer rows recorded (layers.csv minus header)
     assert item["duration_s"] == 2.0  # (last - first) host_timestamp_ns / 1e9
+
+
+def test_list_runs_includes_status_from_events(tmp_path: Path) -> None:
+    # The runs list carries a derived outcome status so the UI needn't fetch each run's events.
+    rec = Recorder(tmp_path)
+    rec.start("Aborted Run", metadata={"backend": "simulated"})
+    rec.event("print_started", {})
+    rec.event("print_aborted", {"reason": "operator abort"})
+    rec.stop()
+    item = rec.list_runs()[0]
+    assert item["status"] == "aborted"
+
+
+def test_list_runs_surfaces_job_link_when_recorded(tmp_path: Path) -> None:
+    # A run whose metadata records the printed job (going forward) surfaces the job folder/name so
+    # the Runs card can show that job's preview thumbnail. Runs without a job link report None.
+    rec = Recorder(tmp_path)
+    rec.start("Linked", metadata={"job_folder": "20260909_120000_widget", "job_name": "widget"})
+    rec.stop()
+    rec.start("Manual", metadata={"backend": "simulated"})
+    rec.stop()
+    runs = {r["run"]: r for r in rec.list_runs()}
+    linked = next(r for k, r in runs.items() if "Linked" in k)
+    manual = next(r for k, r in runs.items() if "Manual" in k)
+    assert linked["job_folder"] == "20260909_120000_widget"
+    assert linked["job_name"] == "widget"
+    assert manual["job_folder"] is None
+    assert manual["job_name"] is None
 
 
 def test_list_runs_bare_run_reports_nulls_without_error(tmp_path: Path) -> None:

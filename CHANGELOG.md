@@ -3,6 +3,21 @@
 Notable changes to the Vention Printer Interface. Versions follow semantic versioning; each entry
 corresponds to a tagged merge to `main`.
 
+## v0.8.0 — 2026-09-16
+
+### Fixed
+- **Multi-axis homing no longer drops earlier homes** — pressing Home on several axes in quick succession (or homing one axis while another is still inside its homing window) referenced only the *last* axis; the earlier axes stayed "unreferenced" and lost their homed position. `control/controller.py` `home()`/`home_all()` now **union** into the pending-home set instead of overwriting it, so every axis that homes records its true homed position and stays referenced. Regression test in `test_controller.py` (home axis 1, then home axis 2 mid-window → both referenced).
+
+### Added
+- **Runs outcome status** — each run now carries a derived outcome, shown as a coloured chip on its list card and in the run detail. `recording/recorder.derive_run_status` maps a run's `events.json` labels to `finished` (green), `aborted` (warn), `fault`/e-stop (danger), `running`, `incomplete`, or `recorded` (verified against the real experiment set; an unknown/absent outcome never renders as success). `GET /api/recordings` carries the `status`, so the list needs no per-run event fetch.
+- **Runs print-history thumbnails** — a run card shows the printed job's slicer preview when the run is linked to a job. Runs now record the selected job (`experiment.job_folder`/`job_name`) going forward; runs with no job (every existing run, and manual prints) show a neutral layer-stack placeholder — no fabricated image.
+- **Reveal a run on disk** — `POST /api/recordings/{run}/reveal` opens the run's `metadata.json` in the OS file browser (the operator runs locally) and returns the absolute path; a "Reveal on disk" button on the run detail shows/opens it. Path resolution is guarded to the experiments root (traversal → 400).
+
+### Changed
+- **Layer-accuracy chart tolerance now reads as tolerance** — the per-layer build-piston chart drew a faint grey block above each bar for the ±tolerance band, which read as an unreached remainder even when the layer was on target. It is replaced by a solid target tick across each bar plus a capped ±tolerance error-bar whisker centred on the target — a range marker, not a "missed" box.
+- **Setup page reorganised into a clear hierarchy** — the Setup tab is now three labelled tiers: **Guided setup** (the primary 7-step spine), **Review captures** (current-layer stills + capture browser), and **Calibration tools** (the capture-pose and manual raw-point calibrations, grouped and collapsed as a clearly-secondary tier). All existing functionality is preserved.
+- **Run cards say "N layers"** instead of the ambiguous "N L" (which read as litres).
+
 ## v0.7.0 — 2026-09-16
 
 ### Added

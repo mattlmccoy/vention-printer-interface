@@ -12,9 +12,42 @@ import {
   type Metric,
 } from "../../lib/motion.ts";
 import { EventLog } from "../EventLog.tsx";
+import { runStatusChip } from "../../lib/runs.ts";
 import type { Call } from "./types.ts";
 
 const STAGE_LABEL: Record<string, string> = { pre_jet: "pre-jet", post_jet: "post-jet", post_heat: "post-heat" };
+// Pure run-card label helpers (shared by the list item and the detail header).
+const runLabel = (run: string) => `${run.slice(0, 8)} ${run.slice(9, 11)}:${run.slice(11, 13)}`;
+const runDispName = (r: RunMeta) => r.name || r.run.slice(16) || r.run;
+const runLayers = (r: RunMeta) =>
+  r.layer_count != null ? `${r.layer_count} ${r.layer_count === 1 ? "layer" : "layers"}` : fmtSize(r.size_bytes);
+
+/** One run in the left list: a print-history card with a splash thumbnail (the job's slicer
+ *  preview when the run is linked to a job, else a neutral placeholder — no fabricated image) and
+ *  a coloured outcome chip. */
+function RunListItem({ r, selected, onSelect }: { r: RunMeta; selected: boolean; onSelect: () => void }) {
+  const [imgErr, setImgErr] = useState(false);
+  const chip = runStatusChip(r.status);
+  const showImg = !!r.job_folder && !imgErr;
+  return (
+    <button className={`runitem${selected ? " on" : ""}`} onClick={onSelect}>
+      <span className="rthumb" aria-hidden="true">
+        {showImg ? (
+          <img src={api.jobPreviewUrl(r.job_folder!)} alt="" loading="lazy" onError={() => setImgErr(true)} />
+        ) : (
+          <svg className="rthumb-ph" viewBox="0 0 24 24" fill="none" stroke="var(--faint)" strokeWidth="1.6" strokeLinejoin="round">
+            <path d="M12 3 3 7.5 12 12l9-4.5L12 3Z" /><path d="m3 12 9 4.5L21 12" /><path d="m3 16.5 9 4.5 9-4.5" />
+          </svg>
+        )}
+      </span>
+      <span className="rbody">
+        <span className="rn">{runDispName(r)}</span>
+        <span className="rd">{runLabel(r.run)} · {runLayers(r)}</span>
+        <span className="rchip" style={{ color: chip.color }} title={chip.title}>{chip.label}</span>
+      </span>
+    </button>
+  );
+}
 const fmtSize = (b: number) => (b > 1e9 ? `${(b / 1e9).toFixed(1)} GB` : b > 1e6 ? `${(b / 1e6).toFixed(0)} MB` : `${(b / 1e3).toFixed(0)} kB`);
 const fmtDur = (s?: number | null) => {
   if (s == null || !Number.isFinite(s)) return "—";
@@ -77,9 +110,10 @@ function AxisPanel({ series, tMax, label, color, unit }: { series: { t: number; 
   );
 }
 
-/** layer_accuracy.csv → per-layer ACTUAL build-piston thickness as bars against the commanded
- *  target (a tick per bar) with a ±tolerance band. A layer that didn't move (empty bar under a
- *  floating target tick) or doubled (bar well over target) is immediately obvious. (Approach D.) */
+/** layer_accuracy.csv → per-layer ACTUAL build-piston thickness as bars, each against its own
+ *  commanded target (a solid tick across the bar) with the tolerance shown as an error-bar whisker
+ *  (±tol, capped, centred on the target) — NOT a filled block, which read as an unreached remainder.
+ *  A layer that didn't move (bar below the whisker) or doubled (bar above it) is obvious. */
 function ActualThicknessChart({ rows, tolUm }: { rows: LayerAccuracy[]; tolUm: number }) {
   const [hov, setHov] = useState<number | null>(null);
   const pts = rows
@@ -109,9 +143,13 @@ function ActualThicknessChart({ rows, tolUm }: { rows: LayerAccuracy[]; tolUm: n
         const left = cx(i) - bw / 2;
         return (
           <g key={p.layer}>
-            <rect x={left} y={y(p.cmd + tol)} width={bw} height={Math.max(1, y(p.cmd - tol) - y(p.cmd + tol))} fill="var(--plot-band)" />
             <rect x={left} y={y(p.act)} width={bw} height={Math.max(0, y0 - y(p.act))} fill={col} fillOpacity={on ? 1 : 0.82} rx="2" />
+            {/* target: a solid tick across the bar. tolerance: a capped ±tol error-bar whisker
+                centred on the target — a range marker, never a filled "missed" box over the bar. */}
             <line x1={left - 2} y1={y(p.cmd)} x2={left + bw + 2} y2={y(p.cmd)} stroke="var(--fg-strong)" strokeWidth="2" />
+            <line x1={cx(i)} y1={y(p.cmd + tol)} x2={cx(i)} y2={y(p.cmd - tol)} stroke="var(--muted)" strokeWidth="1" />
+            <line x1={cx(i) - 4} y1={y(p.cmd + tol)} x2={cx(i) + 4} y2={y(p.cmd + tol)} stroke="var(--muted)" strokeWidth="1" />
+            <line x1={cx(i) - 4} y1={y(p.cmd - tol)} x2={cx(i) + 4} y2={y(p.cmd - tol)} stroke="var(--muted)" strokeWidth="1" />
             {(i % stepEvery === 0 || i === pts.length - 1) && <text x={cx(i)} y={H - padB + 13} fontSize="8.5" fill="var(--faint)" textAnchor="middle" fontFamily={PLOT_FONT} style={tnum}>{p.layer}</text>}
             <rect x={left} y={padT} width={bw} height={plotH} fill="transparent" onMouseEnter={() => setHov(i)} onMouseLeave={() => setHov(null)} style={{ cursor: "pointer" }}>
               <title>{`layer ${p.layer}: actual ${p.act.toFixed(3)} mm / target ${p.cmd.toFixed(3)} mm`}</title>
@@ -137,7 +175,7 @@ function ActualThicknessChart({ rows, tolUm }: { rows: LayerAccuracy[]; tolUm: n
         );
       })()}
       <text x={padL - 34} y={padT + plotH / 2} fontSize="9.5" fill="var(--muted)" textAnchor="middle" fontFamily={PLOT_FONT} transform={`rotate(-90 ${padL - 34} ${padT + plotH / 2})`}>thickness (mm)</text>
-      <text x={padL + plotW / 2} y={H - 3} fontSize="9.5" fill="var(--faint)" textAnchor="middle" fontFamily={PLOT_FONT}>layer number · — target{nOut > 0 ? ` · ${nOut} of ${pts.length} off by >${tolUm} µm` : ` · all ${pts.length} on target`}</text>
+      <text x={padL + plotW / 2} y={H - 3} fontSize="9.5" fill="var(--faint)" textAnchor="middle" fontFamily={PLOT_FONT}>layer · — target · ⊢ ±{tolUm} µm{nOut > 0 ? ` · ${nOut} of ${pts.length} off` : ` · all ${pts.length} on target`}</text>
     </svg>
   );
 }
@@ -228,6 +266,7 @@ export function RunsView({ status, gates, call, base }: { status: StatusPayload 
   const [name, setName] = useState("");
   const [notes, setNotes] = useState("");
   const [dirty, setDirty] = useState(false);
+  const [revealMsg, setRevealMsg] = useState(""); // absolute on-disk path, shown after Reveal
   const [viewIdx, setViewIdx] = useState(-1); // index into `caps` of the open lightbox still, or -1
   const [viewJobFolder, setViewJobFolder] = useState<string | null>(null); // for the CAD-slice compare
   const [viewCadErr, setViewCadErr] = useState(false); // CAD slice failed to load (e.g. archived job)
@@ -241,7 +280,7 @@ export function RunsView({ status, gates, call, base }: { status: StatusPayload 
   useEffect(() => { refresh(); }, [status?.recording.active, gates.reachable]);
 
   const selRun = runs.find((r) => r.run === sel) ?? null;
-  useEffect(() => { setName(selRun?.name ?? ""); setNotes(selRun?.notes ?? ""); setDirty(false); setViewIdx(-1); }, [sel]); // eslint-disable-line react-hooks/exhaustive-deps
+  useEffect(() => { setName(selRun?.name ?? ""); setNotes(selRun?.notes ?? ""); setDirty(false); setViewIdx(-1); setRevealMsg(""); }, [sel]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // Lightbox: fetch the open capture's sidecar to learn its job folder, so we can show the matching
   // CAD slice beside the science-cam image (both are bed-plane-registered → a 1:1 comparison).
@@ -294,6 +333,8 @@ export function RunsView({ status, gates, call, base }: { status: StatusPayload 
   const label = (run: string) => `${run.slice(0, 8)} ${run.slice(9, 11)}:${run.slice(11, 13)}`;
   const dispName = (r: RunMeta) => r.name || r.run.slice(16) || r.run;
   const saveMeta = () => call("save run name/notes", () => api.recordingSetMeta(sel, { name, notes }).then(() => { setDirty(false); return refresh(); }));
+  const revealRun = () =>
+    call("reveal on disk", () => api.recordingReveal(sel).then((res) => { setRevealMsg(res.path); return res; }));
   const delRun = () => {
     if (!selRun) return;
     if (window.confirm(`Delete run "${dispName(selRun)}"?\n\nThis permanently removes its stills, telemetry, motion profiles, and all data. This cannot be undone.`)) {
@@ -313,10 +354,7 @@ export function RunsView({ status, gates, call, base }: { status: StatusPayload 
       <div style={{ display: "grid", gridTemplateColumns: "262px minmax(0,1fr)", gap: 16, alignItems: "start" }}>
         <div className="runlist">
           {[...runs].reverse().map((r) => (
-            <button key={r.run} className={`runitem${r.run === sel ? " on" : ""}`} onClick={() => setSel(r.run)}>
-              <span className="rn">{dispName(r)}</span>
-              <span className="rd">{label(r.run)} · {r.layer_count != null ? `${r.layer_count} L` : fmtSize(r.size_bytes)}{r.complete ? "" : " · incomplete"}</span>
-            </button>
+            <RunListItem key={r.run} r={r} selected={r.run === sel} onSelect={() => setSel(r.run)} />
           ))}
           {runs.length === 0 && <div className="hint">no runs yet</div>}
         </div>
@@ -328,16 +366,20 @@ export function RunsView({ status, gates, call, base }: { status: StatusPayload 
                 <h3>{dispName(selRun)} · {label(selRun.run)}
                   <span className="btnrow" style={{ display: "inline-flex" }}>
                     <a className="cta primary sm" href={`${base}/api/recordings/${encodeURIComponent(selRun.run)}/archive.zip`} target="_blank" rel="noreferrer" style={{ textDecoration: "none", display: "inline-flex", alignItems: "center" }}>⬇ Download run (.zip)</a>
+                    <button className="cta sm" disabled={!gates.reachable} onClick={revealRun} title="Show this run's metadata.json in Finder (operator runs locally)">⧉ Reveal on disk</button>
                     <button className="cta danger sm" disabled={!gates.reachable} onClick={delRun}>Delete run</button>
                   </span>
                 </h3>
                 <div className="statrow">
-                  <div className="stat"><span className="k">Status</span><span className="v">{selRun.complete ? "complete" : "incomplete"}</span></div>
+                  {(() => { const chip = runStatusChip(selRun.status); return (
+                    <div className="stat"><span className="k">Status</span><span className="v" style={{ color: chip.color }} title={chip.title}>{chip.label}{selRun.complete ? "" : " · incomplete"}</span></div>
+                  ); })()}
                   <div className="stat"><span className="k">Layers</span><span className="v">{selRun.layer_count ?? "—"}</span></div>
                   <div className="stat"><span className="k">Duration</span><span className="v">{fmtDur(selRun.duration_s)}</span></div>
                   <div className="stat"><span className="k">Stills</span><span className="v">{caps.length}</span></div>
                   <div className="stat"><span className="k">Size</span><span className="v">{fmtSize(selRun.size_bytes)}</span></div>
                 </div>
+                {revealMsg && <div className="zipwrap" style={{ userSelect: "text" }}>on disk: {revealMsg}</div>}
                 <div className="zipwrap">{selRun.run}.zip ⟶ vision/ (stills + .json sidecars) · telemetry.csv · motion_profiles.csv · events.json · manifest.json · layers.csv</div>
               </div>
 
