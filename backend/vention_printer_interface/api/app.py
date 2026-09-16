@@ -48,6 +48,7 @@ from vention_printer_interface.control.events import EventLog
 from vention_printer_interface.control.heater_model import exposure
 from vention_printer_interface.control.limits_store import load_limits, save_limits
 from vention_printer_interface.control.macros import MACROS, macro_steps
+from vention_printer_interface.control.meteor import HotFolderMeteorAdapter
 from vention_printer_interface.control.primed_state import PrimedState, load_primed, save_primed
 from vention_printer_interface.control.priming import PrimingSettings, compile_priming_setup
 from vention_printer_interface.control.priming_store import load_priming, save_priming
@@ -1184,6 +1185,16 @@ def create_app(
     @app.get("/api/jobs")
     def list_jobs() -> dict[str, Any]:
         return {"jobs": [j.to_dict() for j in jobs.scan()], "roots": [str(r) for r in jobs.roots]}
+
+    @app.get("/api/meteor/status")
+    def meteor_status() -> dict[str, Any]:
+        """Pre-flight: does Meteor have a complete job loaded to fire for the selected build?
+
+        Read-only (no motion, no firing). Firing itself is done by MetPrint from the hot folder;
+        this only reports whether the selected job's RIP output is present + complete there, so the
+        operator never sweeps the printhead over a bed that will receive no binder."""
+        adapter = HotFolderMeteorAdapter(list(jobs.roots))
+        return adapter.status(app.state.job).to_dict()
 
     @app.post("/api/jobs/select")
     def select_job(body: JobSelectBody) -> dict[str, Any]:

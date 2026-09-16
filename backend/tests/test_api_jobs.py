@@ -153,3 +153,27 @@ def test_status_job_tracks_current_layer_during_print(client: TestClient) -> Non
             break
         time.sleep(0.05)
     assert 4 in seen and s["print"]["state"] == "done"
+
+
+def test_meteor_status_reflects_selected_job(client: TestClient) -> None:
+    # Before selecting a job, Meteor is available (the hot folder exists) but NOT ready — absence
+    # must never read as a false green.
+    r = client.get("/api/meteor/status")
+    assert r.status_code == 200
+    st = r.json()
+    assert st["backend"] == "hot_folder"
+    assert st["available"] is True
+    assert st["ready"] is False
+    assert st["job_name"] is None
+
+    # Select the complete 4-layer job -> ready, with the layer counts surfaced.
+    jobs = client.get("/api/jobs").json()["jobs"]
+    assert client.post("/api/jobs/select", json={"path": jobs[0]["path"]}).status_code == 200
+    st = client.get("/api/meteor/status").json()
+    assert st["ready"] is True
+    assert st["job_name"] == "8MM-ROD-CLAMPS-03MM-TOL"
+    assert st["layers_ready"] == 4 and st["layers_expected"] == 4
+
+    # Clearing the job returns to not-ready.
+    assert client.post("/api/jobs/clear").status_code == 200
+    assert client.get("/api/meteor/status").json()["ready"] is False
