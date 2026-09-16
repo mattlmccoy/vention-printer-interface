@@ -276,6 +276,14 @@ def test_build_backlash_preload_overshoots_the_part_drop() -> None:
     )
 
 
+def test_build_backlash_mm_is_clamped_to_0_5() -> None:
+    # The preload is a small overshoot to take up lash, never a large plunge: bounded() (the
+    # clamping constructor; from_dict is a raw round-trip) bounds it to [0, 5] mm, so an over-large
+    # value can't drive the part well past its layer target.
+    assert PrintSettings.bounded({"build_backlash_mm": 99}, SafetyLimits()).build_backlash_mm == 5.0
+    assert PrintSettings.bounded({"build_backlash_mm": -3}, SafetyLimits()).build_backlash_mm == 0.0
+
+
 def test_bounded_clamps_new_position_fields() -> None:
     lim = SafetyLimits()
     p = PrintSettings.bounded(
