@@ -193,6 +193,7 @@ class Controller:
         except Exception as exc:  # noqa: BLE001 - any read error is a protection event
             if stop.is_set() or dev is not self._device:
                 return  # orphaned thread: its device is gone, its result is meaningless
+            blind_s = time.monotonic() - self._last_read_done
             with self._lock:
                 self._read_error = str(exc)
                 # Lost contact: don't drop reference yet — a reconnect where the MM kept power comes
@@ -200,8 +201,13 @@ class Controller:
                 # whose position moved, i.e. a real power-cycle). Homing can't survive the gap.
                 self._reference_suspect = True
                 self._homing_axes.clear()
-            if self.state != ControllerState.FAULT:
-                self._enter_fault((f"telemetry read failed: {exc}",))
+            # A SINGLE transient read timeout (the MM momentarily busy — saturated by a sweep, the
+            # HMI, or an HTTP stall) must NOT hard-fault-and-latch into perpetual stop_all that then
+            # fights every move (2026-09-16 regression). Only a genuinely blind period longer than
+            # stale_fault_s faults — the same tolerance evaluate() applies to slow SUCCESSFUL reads.
+            # A brief stall just surfaces read_error (gating commands); recovery is the next read.
+            if blind_s > self.limits.stale_fault_s and self.state != ControllerState.FAULT:
+                self._enter_fault((f"telemetry read failed for {blind_s:.0f}s: {exc}",))
             self._notify()
             return
         if stop.is_set() or dev is not self._device:
