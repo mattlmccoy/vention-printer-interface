@@ -269,18 +269,24 @@ def test_estop_preserves_referenced_positions() -> None:
         c.stop()
 
 
-def test_unreachable_faults_and_clear_requires_clean() -> None:
-    c, t = make_lim(stale=2.0)  # a sustained read outage still faults (after the blind window)
+def test_real_fault_clear_requires_clean_and_a_reachable_link() -> None:
+    # A REAL hazard (heater watchdog, tripped from a SUCCESSFUL read) faults and kills the heater.
+    # Clearing then requires a clean sample AND a reachable link: if telemetry drops while faulted,
+    # clear_fault refuses ("last read failed") until the link returns and a fresh clean read lands.
+    c, t = make_lim(stale=2.0)
     try:
+        c.set_limits(SafetyLimits(telemetry_timeout_s=0.5, stale_fault_s=2.0, heater_max_on_s=5.0))
         c.arm()
         c.heater_on()
-        t._unreachable = True
+        c._heater_on_since = time.monotonic() - 10  # fast-forward the watchdog past its limit
         assert wait(lambda: c.state == ControllerState.FAULT)
+        assert t.mqtt_latest(HEATER) == "0"  # heater killed on fault
+        t._unreachable = True  # link drops WHILE faulted
+        assert wait(lambda: c.snapshot()["read_error"] is not None)
         with pytest.raises(RuntimeError):
-            c.clear_fault()
+            c.clear_fault()  # cannot clear on a blind link
         t._unreachable = False
-        assert wait(lambda: c.snapshot()["read_error"] is None)
-        assert wait(lambda: t.mqtt_latest(HEATER) == "0")  # re-enforced once the link returns
+        assert wait(lambda: c.snapshot()["read_error"] is None)  # link back, clean sample
         assert wait(lambda: c.snapshot()["heater"]["on"] is False)
         c.clear_fault()
         assert c.state == ControllerState.CONNECTED
@@ -374,9 +380,10 @@ def make_lim(
 
 
 def test_transient_read_timeout_does_not_fault() -> None:
-    # A brief telemetry read failure (MM momentarily busy) must NOT hard-fault the operator; only a
-    # blind period exceeding stale_fault_s faults. Regression (2026-09-16): ONE timed-out
-    # /smartDrives/position GET latched FAULT -> perpetual stop_all that fought even the HMI.
+    # A telemetry read failure (MM momentarily busy) must NOT hard-fault the operator: no read
+    # outage faults, of any length (see test_sustained_read_outage_degrades_never_faults). It only
+    # surfaces read_error. Regression (2026-09-16): ONE timed-out /smartDrives/position GET latched
+    # FAULT -> perpetual stop_all that fought even the HMI.
     c, t = make_lim(stale=2.0)
     try:
         assert wait(lambda: c.snapshot()["telemetry"] is not None)  # a good read first
@@ -391,12 +398,24 @@ def test_transient_read_timeout_does_not_fault() -> None:
         c.stop()
 
 
-def test_sustained_unreachable_still_faults() -> None:
-    # Safety preserved: a genuinely blind period longer than stale_fault_s must still FAULT.
+def test_sustained_read_outage_degrades_never_faults() -> None:
+    # Durable fix (2026-09-16, "we cant keep having our motors fail"): losing telemetry is NOT a
+    # fault. A read outage of ANY length must only DEGRADE — surface read_error (which gates
+    # telemetry-derived commands) — and never latch FAULT. Faulting on a blind link is what fired
+    # the perpetual stop_all that fought every move. Nothing faulty has happened, so nothing faults;
+    # recovery is simply the next good read. Real hazards still fault, but only from real data
+    # (see test_heater_watchdog_trips, which trips evaluate() on a SUCCESSFUL read).
     c, t = make_lim(stale=2.0)
     try:
-        assert wait(lambda: c.snapshot()["telemetry"] is not None)
+        assert wait(lambda: c.snapshot()["telemetry"] is not None)  # a good read first
+        c.arm()
         t._unreachable = True
-        assert wait(lambda: c.state == ControllerState.FAULT, timeout=5.0)
+        assert wait(lambda: c.snapshot()["read_error"] is not None)  # outage surfaced
+        time.sleep(3.0)  # WELL beyond stale_fault_s (2.0s): the old code would have faulted by now
+        assert c.state != ControllerState.FAULT  # degraded, NOT faulted
+        assert c.snapshot()["read_error"] is not None  # still blind, still gating commands
+        t._unreachable = False
+        assert wait(lambda: c.snapshot()["read_error"] is None)  # resumes on the next good read
+        assert c.state != ControllerState.FAULT  # never faulted across the whole outage
     finally:
         c.stop()

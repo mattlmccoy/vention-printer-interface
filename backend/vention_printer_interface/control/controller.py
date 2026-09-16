@@ -190,10 +190,9 @@ class Controller:
         try:
             with self._io_lock:
                 tel = dev.read_telemetry(refresh_health=refresh)
-        except Exception as exc:  # noqa: BLE001 - any read error is a protection event
+        except Exception as exc:  # noqa: BLE001 - a lost read DEGRADES; it is not a fault
             if stop.is_set() or dev is not self._device:
                 return  # orphaned thread: its device is gone, its result is meaningless
-            blind_s = time.monotonic() - self._last_read_done
             with self._lock:
                 self._read_error = str(exc)
                 # Lost contact: don't drop reference yet — a reconnect where the MM kept power comes
@@ -201,21 +200,27 @@ class Controller:
                 # whose position moved, i.e. a real power-cycle). Homing can't survive the gap.
                 self._reference_suspect = True
                 self._homing_axes.clear()
-            # A SINGLE transient read timeout (the MM momentarily busy — saturated by a sweep, the
-            # HMI, or an HTTP stall) must NOT hard-fault-and-latch into perpetual stop_all that then
-            # fights every move (2026-09-16 regression). Only a genuinely blind period longer than
-            # stale_fault_s faults — the same tolerance evaluate() applies to slow SUCCESSFUL reads.
-            # A brief stall just surfaces read_error (gating commands); recovery is the next read.
-            if blind_s > self.limits.stale_fault_s and self.state != ControllerState.FAULT:
-                self._enter_fault((f"telemetry read failed for {blind_s:.0f}s: {exc}",))
+            # Losing telemetry is NOT a fault, at ANY duration. Faulting on a blind link latched a
+            # perpetual stop_all that fought every move — HMI included — and "our motors fail"
+            # (2026-09-16). Nothing faulty has happened when the link merely stalls, so nothing
+            # faults: we only surface read_error, which gates the one telemetry-derived command
+            # (relative moves via _fresh_sample) and re-arming. Recovery is simply the next good
+            # read, where reconcile_reference and evaluate() (heater watchdog, e-stop, drives-ready)
+            # resume from real data. The MachineMotion hardware — limit switches, e-stop, drive
+            # faults — remains the real safety net while the supervisor is blind.
             self._notify()
             return
         if stop.is_set() or dev is not self._device:
             return
         now = time.monotonic()
         # A health refresh includes a slow /health call; don't judge that tick stale on its own
-        # duration. Normal ticks measure age after the read (review H6).
-        age = self.poll_interval_s if refresh else now - previous_read
+        # duration. Normal ticks measure age after the read (review H6). The FIRST good read after a
+        # read-outage gap is likewise fresh — its wall-age spans the whole blind period, but that
+        # staleness was already surfaced (and command-gated) as read_error, not faulted; judging
+        # this recovery sample "stale" would re-introduce the very fault we degrade instead of. A
+        # read that succeeds-but-slow (no read_error) still measures real age and can trip evaluate.
+        recovering = self._read_error is not None
+        age = self.poll_interval_s if (refresh or recovering) else now - previous_read
         self._last_read_done = now
         if refresh:
             self._last_health = now
