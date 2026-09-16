@@ -3,6 +3,11 @@
 Notable changes to the Vention Printer Interface. Versions follow semantic versioning; each entry
 corresponds to a tagged merge to `main`.
 
+## v0.6.0 — 2026-09-16
+
+### Added
+- **Lane B deviation heatmap, end-to-end** — the Analysis tab now renders a per-layer CAD-vs-real deviation heatmap for an arbitrary part. `GET /api/analysis/{run}/lane-b?layer=N&folder=F` resolves the registered science capture and its CAD slice, extracts both outlines (Otsu, largest external contour — never a false empty shape), centroid-aligns the CAD to the print so the result is shape+size deviation independent of bed placement, and returns the signed deviation field plus the capture URL. The `LaneBCard` overlays a diverging blue→grey→red heatmap on the capture and shows mean|·| / RMS / max / area-ratio. Registration is centroid-translation only and its absolute numbers want validation on real on-powder captures.
+
 ## v0.5.0 — 2026-09-16
 
 ### Added
