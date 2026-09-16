@@ -9,7 +9,31 @@ from typing import Any
 import pytest
 from fastapi.testclient import TestClient
 
-from vention_printer_interface.api.app import create_app
+from vention_printer_interface.api.app import _run_reveal_target, create_app
+
+
+def test_run_reveal_target_points_at_metadata(tmp_path: Path) -> None:
+    run = tmp_path / "20260101_000000_run"
+    run.mkdir()
+    (run / "metadata.json").write_text("{}")
+    assert _run_reveal_target(tmp_path, "20260101_000000_run") == run / "metadata.json"
+
+
+def test_run_reveal_target_falls_back_to_dir_without_metadata(tmp_path: Path) -> None:
+    run = tmp_path / "20260101_000000_run"
+    run.mkdir()
+    assert _run_reveal_target(tmp_path, "20260101_000000_run") == run
+
+
+def test_run_reveal_target_refuses_traversal(tmp_path: Path) -> None:
+    (tmp_path / "20260101_000000_run").mkdir()
+    with pytest.raises(ValueError, match="bad run"):
+        _run_reveal_target(tmp_path, "../../etc")
+
+
+def test_run_reveal_target_refuses_unknown_run(tmp_path: Path) -> None:
+    with pytest.raises(ValueError, match="bad run"):
+        _run_reveal_target(tmp_path, "nope")
 
 
 @pytest.fixture
@@ -68,6 +92,30 @@ def test_recordings_report_capture_count(client: TestClient, tmp_path: Path) -> 
     runs = {r["run"]: r for r in client.get("/api/recordings").json()["runs"]}
     assert runs["20260101_000000_withcaps"]["capture_count"] == 2
     assert runs["20260101_000001_nocaps"]["capture_count"] == 0
+
+
+def test_recording_reveal_returns_path_and_invokes_opener(
+    client: TestClient, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # The reveal endpoint returns the absolute metadata path and best-effort opens a file browser.
+    import vention_printer_interface.api.app as appmod
+
+    run = tmp_path / "20260101_000000_run"
+    run.mkdir(parents=True)
+    (run / "metadata.json").write_text("{}")
+    calls: list[Any] = []
+    monkeypatch.setattr(appmod.subprocess, "run", lambda *a, **k: calls.append(a))
+    r = client.post("/api/recordings/20260101_000000_run/reveal")
+    assert r.status_code == 200
+    body = r.json()
+    assert body["path"].endswith("metadata.json")
+    assert body["revealed"] is True
+    assert calls  # a file-browser opener was invoked
+
+
+def test_recording_reveal_unknown_run_is_400(client: TestClient) -> None:
+    r = client.post("/api/recordings/does_not_exist/reveal")
+    assert r.status_code == 400
 
 
 def test_science_frame_no_camera_is_5xx_not_500(client: TestClient) -> None:

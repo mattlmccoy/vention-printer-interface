@@ -15,6 +15,7 @@ import os
 import platform
 import shutil
 import socket
+import subprocess
 import sys
 import threading
 import time
@@ -480,6 +481,18 @@ def _resolve_run_dir(root: Path, run: str) -> Path:
     if not run_dir.is_dir():
         raise HTTPException(404, "unknown run")
     return run_dir
+
+
+def _run_reveal_target(root: Path, run: str) -> Path:
+    """Absolute path to reveal in Finder for a run: its metadata.json when present, else the run
+    directory. Same within-root guard as the recordings routes — a traversing/bad name or a
+    nonexistent run raises ``ValueError`` (the caller maps it to a 400). Touches nothing on disk
+    beyond an ``exists()`` check, so it is safe to unit-test."""
+    run_dir = (root / run).resolve()
+    if run_dir.parent != root.resolve() or not run_dir.is_dir():
+        raise ValueError("bad run")
+    meta = run_dir / "metadata.json"
+    return meta if meta.exists() else run_dir
 
 
 def _fresh_axis_motion() -> dict[int, dict[str, float | None]]:
@@ -1112,6 +1125,7 @@ def create_app(
             if reasons:
                 raise HTTPException(409, "print settings invalid: " + "; ".join(reasons))
             name = body.name or ("dry-run" if body.dry_run else "print")
+            job: JobInfo | None = app.state.job
             rec().start(
                 name,
                 notes=body.notes,
@@ -1121,6 +1135,13 @@ def create_app(
                     "limits": ctrl().limits.to_dict(),
                     "print_settings": plan.to_dict(),
                     "dry_run": body.dry_run,
+                    # Link the run to the selected job so Runs is a print-history page (its card can
+                    # show the job preview). Absent for a manual print with no job selected.
+                    **(
+                        {"job_folder": job.dir.name, "job_name": job.name}
+                        if job is not None
+                        else {}
+                    ),
                 },
             )
             app.state.auto_run_open = True
@@ -1434,6 +1455,36 @@ def create_app(
             experiment["notes"] = body.notes
         meta_path.write_text(json.dumps(meta, indent=2, default=str))
         return {"name": experiment.get("name", ""), "notes": experiment.get("notes", "")}
+
+    @app.post("/api/recordings/{run}/reveal")
+    def recording_reveal(run: str) -> dict[str, Any]:
+        """Reveal a run's metadata on disk in the OS file browser (operator is local — localhost).
+
+        Returns the absolute path either way so the UI can show/copy it even where opening a file
+        browser isn't possible (headless/remote). The ``open`` call is best-effort glue: a failure
+        (or a non-desktop host) still returns the path with ``revealed: false`` and a reason.
+        """
+        try:
+            target = _run_reveal_target(root, run)
+        except ValueError as exc:
+            raise HTTPException(400, str(exc)) from exc
+        revealed, note = False, ""
+        # macOS: `open -R` selects the file in Finder; Linux/Windows: open the containing folder.
+        opener = (
+            ["open", "-R", str(target)] if sys.platform == "darwin"
+            else ["xdg-open", str(target.parent)] if sys.platform.startswith("linux")
+            else ["explorer", str(target.parent)] if sys.platform.startswith("win") else None
+        )
+        if opener is None:
+            note = f"no file browser opener for platform {sys.platform!r}"
+        else:
+            try:
+                subprocess.run(opener, check=True, capture_output=True, timeout=5.0)
+                revealed = True
+            except Exception as exc:  # noqa: BLE001 - reveal is best-effort; report, never 500
+                note = f"could not open a file browser: {exc}"
+                log.warning("reveal failed for %s: %s", run, exc)
+        return {"run": run, "path": str(target), "revealed": revealed, "note": note}
 
     @app.get("/api/recordings/{run}/{name}")
     def recording_file(run: str, name: str) -> FileResponse:

@@ -320,9 +320,11 @@ export function CamerasView({ status, gates, call, base, onOpenQuickStart }: {
 
   return (
     <div className="view fixed-page setup-view">
+      <div className="sec-h">guided setup</div>
+      <p className="setup-intro">Commission the cameras end to end — connect the controller, assign the overview and science roles, calibrate, and validate. Work top to bottom; each step says what it needs.</p>
       <div className="setup-grid">
         <div className="card">
-          <h3>guided setup</h3>
+          <h3>steps</h3>
           <ol className="srail">
             {STEPS.map((s, i) => (
               <li key={s.title} className={i === step ? "on" : i < step ? "done" : ""} aria-current={i === step ? "step" : undefined} onClick={() => setStep(i)}>
@@ -379,6 +381,7 @@ export function CamerasView({ status, gates, call, base, onOpenQuickStart }: {
       </div>
 
       <div className="sec-h">review captures</div>
+      <p className="setup-intro">Inspect the stills the science camera recorded — the current run's layer as it prints, or browse any past run.</p>
       <div className="cards-2">
         <div className="card">
           <h3>{run ? `current layer stills · layer ${layer ?? "—"}` : "current layer stills"}</h3>
@@ -401,15 +404,18 @@ export function CamerasView({ status, gates, call, base, onOpenQuickStart }: {
         <div className="card"><h3>capture browser</h3><CaptureBrowser base={base} /></div>
       </div>
 
-      <details className="rp-drawer" open>
-        <summary>capture-pose calibration (overhead science cam)</summary>
-        <CaptureCalibration status={status} gates={gates} call={call} base={base} />
-      </details>
-
-      <details className="rp-drawer">
-        <summary>manual calibration (raw points)</summary>
-        <div className="body"><CalibrationForm call={call} disabled={!gates.reachable} /></div>
-      </details>
+      <div className="sec-h">calibration tools</div>
+      <p className="setup-intro">Manual and standalone calibration — set the overhead capture pose, or enter raw image↔world points by hand. The guided steps above are the normal commissioning path; reach for these only to adjust one thing directly.</p>
+      <div className="setup-tools">
+        <details className="rp-drawer">
+          <summary>capture-pose calibration (overhead science cam)</summary>
+          <CaptureCalibration status={status} gates={gates} call={call} base={base} />
+        </details>
+        <details className="rp-drawer">
+          <summary>manual calibration (raw points)</summary>
+          <div className="body"><CalibrationForm call={call} disabled={!gates.reachable} /></div>
+        </details>
+      </div>
     </div>
   );
 }

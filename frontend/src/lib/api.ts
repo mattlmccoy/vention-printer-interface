@@ -56,7 +56,7 @@ export interface VisionDevice { index: number; stable_id: string | null; name: s
 // NOT an error; the devices are still listable/assignable. ok/denied/no_devices as before.
 export interface VisionDevicesResponse { devices: VisionDevice[]; camera_access: "ok" | "unknown" | "denied" | "no_devices" }
 // GET/PUT /api/vision/roles body/response shape: a stable_id -> role ("overview"/"science") map.
-export interface RunMeta { run: string; complete: boolean; size_bytes: number; name?: string; notes?: string; started_at?: string | number | null; layer_count?: number | null; duration_s?: number | null; capture_count?: number | null }
+export interface RunMeta { run: string; complete: boolean; status?: string; size_bytes: number; name?: string; notes?: string; started_at?: string | number | null; layer_count?: number | null; duration_s?: number | null; capture_count?: number | null; job_folder?: string | null; job_name?: string | null }
 // Lane A dimensional analysis — GET/POST /api/analysis/{run}/dimensional (see backend
 // vention_printer_interface/analysis/dimensional.py DimensionalReport). Non-"ok" statuses are
 // honest 200 reports with features:{} and compensation:null — never fabricated metrics.
@@ -206,6 +206,8 @@ export const api = {
   analysisRun: (run: string, body: AnalysisRequest = {}) => req<DimensionalReport>("POST", `/api/analysis/${encodeURIComponent(run)}/dimensional`, body),
   recordingSetMeta: (run: string, body: { name?: string; notes?: string }) => req<{ name: string; notes: string }>("PUT", `/api/recordings/${encodeURIComponent(run)}/meta`, body),
   recordingDelete: (run: string) => req<{ run: string; deleted: boolean }>("DELETE", `/api/recordings/${encodeURIComponent(run)}`),
+  // Reveal a run's metadata on disk in the OS file browser (operator is local). Returns the path.
+  recordingReveal: (run: string) => req<{ run: string; path: string; revealed: boolean; note: string }>("POST", `/api/recordings/${encodeURIComponent(run)}/reveal`),
   jobs: () => req<{ jobs: Array<Omit<StatusPayload["job"] & object, "current_layer">>; roots: string[] }>("GET", "/api/jobs"),
   selectJob: (path: string) => req<{ job: StatusPayload["job"]; print_settings: PrintSettingsPayload }>("POST", "/api/jobs/select", { path }),
   clearJob: () => req<{ job: null }>("POST", "/api/jobs/clear"),

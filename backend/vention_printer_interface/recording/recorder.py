@@ -289,6 +289,43 @@ def _write_motion_profiles(run: Path) -> None:
             writer.writerow(["" if v is None else v for v in row])
 
 
+def _event_labels(run: Path) -> list[str]:
+    """All event labels from a run's events.json, in order; ``[]`` when missing/unreadable."""
+    try:
+        events = json.loads((run / "events.json").read_text())
+    except (OSError, ValueError):
+        return []
+    return [e.get("label", "") for e in events if isinstance(e, dict)] if isinstance(events, list) \
+        else []
+
+
+# Fault signals rank above every other outcome: a print fault, a controller fault, or an e-stop
+# means the run ended in an emergency condition regardless of what abort was emitted in its wake.
+_FAULT_LABELS = frozenset({"print_fault", "fault", "estop"})
+
+
+def derive_run_status(labels: list[str], *, complete: bool, active: bool = False) -> str:
+    """Outcome of a run from its event labels (verified against real events.json, data-contract §1).
+
+    Returns one of: ``fault`` (danger), ``finished`` (clean print_done), ``aborted`` (operator
+    abort), ``running`` (the live still-recording run), ``incomplete`` (a print began but recorded
+    no terminal outcome, or the recording never closed cleanly), ``recorded`` (a telemetry-only
+    session with no print). ``incomplete`` and ``recorded`` are deliberately NOT healthy-green so an
+    unknown/absent outcome never reads as success (data-contract §5)."""
+    s = set(labels)
+    if s & _FAULT_LABELS:
+        return "fault"
+    if "print_done" in s:
+        return "finished"
+    if "print_aborted" in s:
+        return "aborted"
+    if active and not complete:
+        return "running"
+    if "print_started" in s or not complete:
+        return "incomplete"
+    return "recorded"
+
+
 def _read_run_meta(run: Path) -> dict[str, Any]:
     """Best-effort read of a run's metadata.json; ``{}`` when missing or unreadable."""
     try:
@@ -518,10 +555,14 @@ class Recorder:
             meta = _read_run_meta(d)
             raw_experiment = meta.get("experiment")
             experiment: dict[str, Any] = raw_experiment if isinstance(raw_experiment, dict) else {}
+            complete = (d / "manifest.json").exists()
             out.append(
                 {
                     "run": d.name,
-                    "complete": (d / "manifest.json").exists(),
+                    "complete": complete,
+                    "status": derive_run_status(
+                        _event_labels(d), complete=complete, active=(d == self.active)
+                    ),
                     "size_bytes": size,
                     "name": experiment.get("name", ""),
                     "notes": experiment.get("notes", ""),
@@ -529,6 +570,10 @@ class Recorder:
                     "layer_count": _layer_count(d),
                     "duration_s": _telemetry_duration_s(d),
                     "capture_count": captures,
+                    # Job link (recorded going forward): lets a Runs card show that job's preview.
+                    # None for manual prints and every pre-existing run (data-contract: no link).
+                    "job_folder": experiment.get("job_folder"),
+                    "job_name": experiment.get("job_name"),
                 }
             )
         return out
