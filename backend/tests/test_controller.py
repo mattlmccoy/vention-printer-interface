@@ -246,7 +246,7 @@ def test_estop_preserves_referenced_positions() -> None:
 
 
 def test_unreachable_faults_and_clear_requires_clean() -> None:
-    c, t = make()
+    c, t = make_lim(stale=2.0)  # a sustained read outage still faults (after the blind window)
     try:
         c.arm()
         c.heater_on()
@@ -335,3 +335,44 @@ def test_print_poll_interval_defaults_to_poll_interval_when_unset() -> None:
     c = Controller(poll_interval_s=0.2)
     c.set_fast_poll(True)
     assert c.effective_poll_interval() == 0.2
+
+
+def make_lim(
+    stale: float, timeout: float = 0.5, **sim: Any
+) -> tuple[Controller, SimulatedTransport]:
+    t = SimulatedTransport(realtime=True, **sim)
+    c = Controller(
+        poll_interval_s=0.05,
+        limits=SafetyLimits(telemetry_timeout_s=timeout, stale_fault_s=stale),
+    )
+    c.attach_device(PrinterDevice(t, heater_io=(1, 2)), backend="simulated")
+    return c, t
+
+
+def test_transient_read_timeout_does_not_fault() -> None:
+    # A brief telemetry read failure (MM momentarily busy) must NOT hard-fault the operator; only a
+    # blind period exceeding stale_fault_s faults. Regression (2026-09-16): ONE timed-out
+    # /smartDrives/position GET latched FAULT -> perpetual stop_all that fought even the HMI.
+    c, t = make_lim(stale=2.0)
+    try:
+        assert wait(lambda: c.snapshot()["telemetry"] is not None)  # a good read first
+        t._unreachable = True
+        time.sleep(0.7)  # << stale_fault_s: several failed polls, short blind period
+        assert c.state == ControllerState.CONNECTED  # tolerated, NOT faulted
+        assert c.snapshot()["read_error"] is not None  # but the read error is surfaced
+        t._unreachable = False
+        assert wait(lambda: c.snapshot()["read_error"] is None)  # recovers on the next good read
+        assert c.state == ControllerState.CONNECTED
+    finally:
+        c.stop()
+
+
+def test_sustained_unreachable_still_faults() -> None:
+    # Safety preserved: a genuinely blind period longer than stale_fault_s must still FAULT.
+    c, t = make_lim(stale=2.0)
+    try:
+        assert wait(lambda: c.snapshot()["telemetry"] is not None)
+        t._unreachable = True
+        assert wait(lambda: c.state == ControllerState.FAULT, timeout=5.0)
+    finally:
+        c.stop()

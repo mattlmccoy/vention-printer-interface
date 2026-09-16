@@ -3,6 +3,11 @@
 Notable changes to the Vention Printer Interface. Versions follow semantic versioning; each entry
 corresponds to a tagged merge to `main`.
 
+## v0.8.2 — 2026-09-16
+
+### Fixed
+- **Operator no longer breaks all motion on a transient telemetry timeout** (critical). A single timed-out `/smartDrives/position` read hard-faulted the controller, which then re-fired `stop_all` every poll for as long as it saw motion — aborting even HMI-commanded moves (home / relative / absolute), until the operator was physically disconnected. Root cause: the read-failure path faulted on the FIRST failed read, bypassing the `stale_fault_s` blind-tolerance that `evaluate()` already applies to slow successful reads. Now a read failure only faults once the blind period exceeds `stale_fault_s`; a brief stall (e.g. the MachineMotion saturated by a sweep or the HMI) surfaces `read_error` and recovers on the next good read. Triggered 2026-09-16 by the piston-sweep load.
+
 ## v0.8.1 — 2026-09-16
 
 ### Fixed
