@@ -685,12 +685,23 @@ def create_app(
         def open_overview(spec: CameraSpec) -> None:
             app.state.overview_source = None
             app.state.overview_streamer = None
+            # Hot-plug reconnect: on sustained grab failure the streamer rebuilds its source via
+            # this factory, which RE-RESOLVES the overview camera's device index (the OS can hand
+            # out a different index on replug) — so unplug/replug recovers the live feed by itself.
+            def make_overview_source() -> FrameSource:
+                resolved = refresh_role_resolution()
+                ov = resolved.get("overview")
+                if ov is None:
+                    raise RuntimeError("overview camera not detected")
+                return UvcFrameSource(ov.index, ov.width, ov.height, ov.effective_backend())
+
             try:
+                factory = None if overview_source is not None else make_overview_source
                 ov_source = overview_source or UvcFrameSource(
                     spec.index, spec.width, spec.height, spec.effective_backend()
                 )
                 app.state.overview_source = ov_source
-                app.state.overview_streamer = OverviewStreamer(ov_source)
+                app.state.overview_streamer = OverviewStreamer(ov_source, source_factory=factory)
             except Exception as exc:  # noqa: BLE001 - constructing must never block startup
                 log.warning("overview streamer setup failed (%s); serving without overview", exc)
 

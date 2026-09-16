@@ -261,3 +261,74 @@ def test_overview_streamer_paces_grabs_instead_of_busy_looping() -> None:
     streamer.stop()
     # ~4-5 grabs expected at 20fps over 220ms; an unpaced busy loop would be thousands.
     assert 1 <= source.calls <= 15
+
+
+# ---- camera hot-plug auto-reconnect -------------------------------------------------------
+class _HotplugSource(FrameSource):
+    """A camera that can be 'unplugged' (attached=False) and 'replugged' (attached=True). Models
+    reality: a detached device's grab fails, and a stale handle keeps failing until it is
+    close()d and open()ed again — so recovery REQUIRES a reopen, not just the device returning."""
+
+    def __init__(self, attached: bool = True) -> None:
+        self.attached = attached
+        self.opens = 0
+        self.grabs = 0
+        self._open = False
+
+    def open(self) -> None:
+        self.opens += 1
+        if not self.attached:
+            raise RuntimeError("camera detached")
+        self._open = True
+
+    def close(self) -> None:
+        self._open = False
+
+    def grab(self) -> Frame:
+        self.grabs += 1
+        if not (self.attached and self._open):
+            raise RuntimeError("frame grab failed")
+        return Frame(image=np.zeros((2, 2, 3), dtype=np.uint8), timestamp_ns=self.grabs)
+
+
+def test_overview_reconnects_via_factory_after_detach() -> None:
+    # While a viewer is watching, unplugging the camera must not kill the stream: after sustained
+    # grab failure the streamer rebuilds the source via the factory (which re-resolves the device's
+    # current index) and reopens it, so the feed resumes when the camera is reattached.
+    initial = _HotplugSource(attached=True)
+    replaced = _HotplugSource(attached=True)  # the 'replugged' camera the factory returns
+    calls = {"n": 0}
+
+    def factory() -> FrameSource:
+        calls["n"] += 1
+        return replaced
+
+    streamer = OverviewStreamer(initial, target_fps=100.0, idle_grace_s=10.0,
+                                source_factory=factory, reconnect_after_s=0.05,
+                                reconnect_interval_s=0.02)
+    gen = streamer.frames()
+    try:
+        assert next(gen).startswith(b"--frame")           # frames flowing from `initial`
+        initial.attached = False                          # UNPLUG
+        assert _wait_until(lambda: calls["n"] >= 1 and replaced.opens >= 1, timeout=3.0)
+        assert next(gen).startswith(b"--frame")           # frames RESUMED from the replugged source
+    finally:
+        gen.close()
+
+
+def test_overview_reopens_same_source_when_camera_returns() -> None:
+    # With no factory, reconnect closes+reopens the same source (same-port replug, unchanged index).
+    src = _HotplugSource(attached=True)
+    streamer = OverviewStreamer(src, target_fps=100.0, idle_grace_s=10.0,
+                                reconnect_after_s=0.05, reconnect_interval_s=0.02)
+    gen = streamer.frames()
+    try:
+        assert next(gen).startswith(b"--frame")
+        src.attached = False                              # UNPLUG
+        assert _wait_until(lambda: src.opens >= 3, timeout=3.0)  # reconnect is retrying (reopens)
+        assert src._open is False                         # noqa: SLF001 - each retry closed it
+        src.attached = True                               # REPLUG (same device)
+        assert _wait_until(lambda: src._open is True, timeout=3.0)  # a reopen finally succeeded
+        assert next(gen).startswith(b"--frame")           # frames resumed
+    finally:
+        gen.close()

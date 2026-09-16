@@ -3,6 +3,11 @@
 Notable changes to the Vention Printer Interface. Versions follow semantic versioning; each entry
 corresponds to a tagged merge to `main`.
 
+## v0.8.4 — 2026-09-16
+
+### Added
+- **Camera hot-plug auto-reconnect (overview).** While a viewer is watching the overview live feed, unplugging the camera no longer kills the stream: after a sustained grab failure the `OverviewStreamer` closes the dead capture and rebuilds it via a factory that **re-resolves the camera's current device index** (macOS can hand out a different index on replug), retrying on a backoff until the camera returns — so unplug/replug recovers the feed by itself. A single transient grab failure is still tolerated (unchanged). (Science-capture reconnect is a follow-up.)
+
 ## v0.8.3 — 2026-09-16
 
 ### Added

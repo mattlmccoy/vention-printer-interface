@@ -21,7 +21,7 @@ from __future__ import annotations
 import logging
 import threading
 import time
-from collections.abc import Iterator
+from collections.abc import Callable, Iterator
 
 import numpy as np
 
@@ -72,9 +72,17 @@ class OverviewStreamer:
     """
 
     def __init__(
-        self, source: FrameSource, target_fps: float = 15.0, idle_grace_s: float = 2.5
+        self, source: FrameSource, target_fps: float = 15.0, idle_grace_s: float = 2.5,
+        source_factory: Callable[[], FrameSource] | None = None,
+        reconnect_after_s: float = 2.0, reconnect_interval_s: float = 2.0,
     ) -> None:
         self._source = source
+        # Rebuilds the source on a hot-plug reconnect. A factory re-resolves the camera's CURRENT
+        # device index (which the OS can change on replug); with no factory we reuse the same source
+        # (close + reopen the same index, fine for a same-port replug).
+        self._source_factory = source_factory or (lambda: self._source)
+        self._reconnect_after_s = max(reconnect_after_s, 0.0)
+        self._reconnect_interval_s = max(reconnect_interval_s, 0.0)
         self._interval_s = 1.0 / target_fps if target_fps > 0 else 0.0
         self._idle_grace_s = max(idle_grace_s, 0.0)
         self._cond = threading.Condition()
@@ -208,6 +216,7 @@ class OverviewStreamer:
             self._release_viewer()
 
     def _run(self) -> None:
+        first_fail_at: float | None = None
         while not self._grab_stop.is_set():
             t0 = time.monotonic()
             try:
@@ -215,10 +224,36 @@ class OverviewStreamer:
                 chunk = mjpeg_chunk(encode_jpeg(frame.image))
             except Exception as exc:  # noqa: BLE001 - a transient grab must not kill the streamer
                 log.warning("overview grab/encode failed: %s", exc)
+                if first_fail_at is None:
+                    first_fail_at = t0
+                elif t0 - first_fail_at >= self._reconnect_after_s:
+                    # Sustained failure = the camera was unplugged. Rebuild + reopen the source; if
+                    # it's still gone, back off and keep trying so the feed resumes on reattach.
+                    if self._try_reconnect():
+                        first_fail_at = None
+                    else:
+                        self._grab_stop.wait(self._reconnect_interval_s)
             else:
+                first_fail_at = None
                 with self._cond:
                     self._latest_chunk = chunk
                     self._cond.notify_all()
             remaining = self._interval_s - (time.monotonic() - t0)
             if remaining > 0:
                 self._grab_stop.wait(remaining)
+
+    def _try_reconnect(self) -> bool:
+        """Close the (dead) source, rebuild it via the factory — re-resolving the camera's current
+        device index — and reopen. Returns True once the camera is back and opened."""
+        try:
+            self._source.close()
+        except Exception as exc:  # noqa: BLE001 - a close on a detached device may raise; ignore
+            log.debug("overview close during reconnect failed: %s", exc)
+        try:
+            self._source = self._source_factory()
+            self._source.open()
+        except Exception as exc:  # noqa: BLE001 - camera still detached: report and keep retrying
+            log.warning("overview reconnect failed (camera still detached?): %s", exc)
+            return False
+        log.info("overview camera reconnected")
+        return True
