@@ -34,7 +34,15 @@ from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 
 from vention_printer_interface import __version__
-from vention_printer_interface.analysis.dimensional import DEFAULTS, analyze_run, load_report
+from vention_printer_interface.analysis.dimensional import (
+    DEFAULTS,
+    _read_mm_per_px,
+    _select_capture,
+    _sidecar_path_for,
+    analyze_run,
+    load_report,
+)
+from vention_printer_interface.analysis.lane_b import analyze_lane_b_from_pngs
 from vention_printer_interface.control.controller import REFERENCE_MATCH_TOL_MM, Controller
 from vention_printer_interface.control.events import EventLog
 from vention_printer_interface.control.heater_model import exposure
@@ -61,6 +69,7 @@ from vention_printer_interface.jobs.store import (
     JobInfo,
     JobStore,
     layer_png,
+    layer_png_scaled,
     load_job,
     preview_png,
 )
@@ -1992,6 +2001,43 @@ def create_app(
         if report is None:
             return {"status": "not_run", "run": run}
         return report
+
+    @app.get("/api/analysis/{run}/lane-b")
+    def analysis_lane_b(
+        run: str, layer: int, folder: str, stage: str = "post_jet"
+    ) -> dict[str, Any]:
+        """Lane B — CAD-vs-real deviation heatmap for one layer. Compares the run's registered
+        science capture of `layer` against that layer in job `folder`'s CAD slice. Non-ok statuses
+        (no_capture / no_calibration / no_contour) are honest 200 reports; a bad run (400/404) or
+        unknown job folder (404) are errors. NOTE: the two outlines are centroid-aligned, so this
+        reports shape+size deviation independent of bed placement; registration scale still wants
+        validation on real captures."""
+        run_dir = _resolve_run_dir(root, run)
+        cap = _select_capture(read_manifest(run_dir), layer, stage)
+        if cap is None:
+            return {"status": "no_capture", "run": run, "layer": layer, "stage": stage}
+        registered_rel = str(cap["registered"])
+        mm_per_px = _read_mm_per_px(_sidecar_path_for(run_dir, registered_rel))
+        if mm_per_px is None:
+            return {"status": "no_calibration", "message": "capture has no registered mm_per_px"}
+        job = next((j for j in jobs.scan() if j.dir.name == folder), None)
+        if job is None:
+            raise HTTPException(404, f"no job folder {folder!r}")
+        try:
+            cad_png, cad_mm_per_px = layer_png_scaled(job, layer)
+        except IndexError as exc:
+            raise HTTPException(404, str(exc)) from exc
+        cap_path = (run_dir / registered_rel).resolve()
+        if cap_path.parent != run_dir.resolve() and run_dir.resolve() not in cap_path.parents:
+            raise HTTPException(400, "capture path escapes the run directory")
+        report = analyze_lane_b_from_pngs(
+            cap_path.read_bytes(), cad_png, mm_per_px, cad_mm_per_px
+        )
+        return {
+            "run": run, "layer": layer, "folder": folder,
+            "capture_url": _vision_file_url(run, registered_rel),  # to overlay the heatmap on
+            **report,
+        }
 
     @app.get("/api/vision/runs/{run}/file")
     def vision_run_file(run: str, path: str) -> FileResponse:

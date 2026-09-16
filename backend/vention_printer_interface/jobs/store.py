@@ -170,6 +170,27 @@ def layer_png(job: JobInfo, layer: int, *, max_px: int = 700) -> bytes:
     return job._cache[key]
 
 
+def layer_png_scaled(job: JobInfo, layer: int, *, max_px: int = 1200) -> tuple[bytes, float]:
+    """Like ``layer_png`` but also returns the rendered PNG's millimetres-per-pixel, for Lane B
+    metrology. Native RIP resolution is ``25.4 / dpi`` mm/px; any downscale to ``max_px`` raises
+    mm/px by the same factor. Returns (png_bytes, mm_per_px); mm_per_px is 0.0 if dpi is unknown."""
+    if not 1 <= layer <= len(job.pages):
+        raise IndexError(f"layer {layer} not in 1..{len(job.pages)}")
+    native_mm_per_px = 25.4 / job.dpi if job.dpi else 0.0
+    with Image.open(job.pages[layer - 1]) as im:
+        gray = im.convert("L")
+        w, h = gray.size
+        scale = min(1.0, max_px / max(w, h))
+        if scale < 1.0:
+            gray = gray.resize(
+                (max(1, int(w * scale)), max(1, int(h * scale))), Image.Resampling.BOX
+            )
+        buf = io.BytesIO()
+        gray.save(buf, format="PNG", optimize=True)
+    mm_per_px = native_mm_per_px / scale if scale > 0 else native_mm_per_px
+    return buf.getvalue(), mm_per_px
+
+
 def preview_png(job: JobInfo, *, max_px: int = 512) -> bytes:
     """Render the slicer's splash/preview image as a downscaled RGB PNG the browser can show.
 

@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import type { PointerEvent as ReactPointerEvent } from "react";
-import { api, type DimensionalReport, type RunMeta } from "../../lib/api.ts";
+import { api, type DimensionalReport, type LaneBReport, type RunMeta } from "../../lib/api.ts";
 import type { Gates } from "../../lib/format.ts";
 import { analysisStatusKind, analysisStatusMessage, calibrationChip, compensationRows, featureTiles, roiEditPrompt } from "../../lib/analysis.ts";
 import { roiBoxesFromCircle, type Circle } from "../../lib/roi.ts";
@@ -119,6 +119,69 @@ function RoiEditor({ stillUrl, circle, natSize, onChange, onLoad }: {
           <circle className="roi-circle" cx={circle.cx} cy={circle.cy} r={circle.radius} strokeWidth={strokeW} onPointerDown={onDownBody} />
           <circle className="roi-handle" cx={circle.cx + circle.radius} cy={circle.cy} r={handleR} strokeWidth={strokeW} onPointerDown={onDownRim} />
         </svg>
+      )}
+    </div>
+  );
+}
+
+/** Lane B — CAD-vs-real deviation heatmap. Pick a layer + the CAD job folder; the printed contour is
+ *  drawn over the capture, each point coloured by its signed deviation (blue = under/inside CAD,
+ *  red = over/outside), with summary stats. */
+function heatColor(dev_mm: number, scale_mm: number): string {
+  const t = scale_mm > 0 ? Math.max(-1, Math.min(1, dev_mm / scale_mm)) : 0;
+  if (t >= 0) {
+    const g = Math.round(150 * (1 - t));
+    return `rgb(${150 + Math.round(105 * t)},${g},${g})`;   // grey -> red (over)
+  }
+  const u = -t, k = Math.round(150 * (1 - u));
+  return `rgb(${k},${k},${150 + Math.round(105 * u)})`;      // grey -> blue (under)
+}
+
+function LaneBCard({ run, base, gates }: { run: string; base: string; gates: Gates }) {
+  const [layer, setLayer] = useState("1");
+  const [folder, setFolder] = useState("");
+  const [rep, setRep] = useState<LaneBReport | null>(null);
+  const [busy, setBusy] = useState(false);
+  const [nat, setNat] = useState<{ w: number; h: number } | null>(null);
+  const analyze = () => {
+    if (!folder) return;
+    setBusy(true); setNat(null);
+    api.laneB(run, Number(layer) || 1, folder)
+      .then(setRep).catch(() => setRep({ status: "error", message: "request failed" }))
+      .finally(() => setBusy(false));
+  };
+  const ok = rep?.status === "ok" && !!rep.points_px && !!rep.deviations_mm;
+  const scale = ok ? Math.max(0.05, rep!.max_abs_mm || 0) : 1;
+  const um = (mm: number | undefined) => `${Math.round((mm || 0) * 1000)} µm`;
+  return (
+    <div className="card">
+      <h3>Lane B — CAD vs real deviation</h3>
+      <div className="chart-controls">
+        <span className="hint" style={{ marginTop: 0 }}>layer</span>
+        <input type="number" value={layer} onChange={(e) => setLayer(e.target.value)} style={{ width: 56 }} />
+        <span className="hint" style={{ marginTop: 0 }}>CAD job folder</span>
+        <input type="text" value={folder} onChange={(e) => setFolder(e.target.value)} placeholder="job folder name" style={{ width: 200 }} />
+        <button className="cta primary sm" disabled={!gates.reachable || !folder || busy} onClick={analyze}>{busy ? "analyzing…" : "Analyze deviation"}</button>
+      </div>
+      {rep && !ok && <div className="chart-empty" style={{ minHeight: 80 }}>{rep.message || rep.status}</div>}
+      {ok && (
+        <>
+          <div className="statrow">
+            <div className="stat"><span className="k">mean |dev|</span><span className="v">{um(rep!.mean_abs_mm)}</span></div>
+            <div className="stat"><span className="k">RMS</span><span className="v">{um(rep!.rms_mm)}</span></div>
+            <div className="stat"><span className="k">max |dev|</span><span className="v">{um(rep!.max_abs_mm)}</span></div>
+            <div className="stat"><span className="k">area ratio</span><span className="v">{(rep!.area_ratio || 0).toFixed(3)}</span></div>
+          </div>
+          <div style={{ position: "relative", maxWidth: 520, marginTop: 8 }}>
+            <img src={`${base}${rep!.capture_url}`} alt="deviation heatmap" onLoad={(e) => setNat({ w: e.currentTarget.naturalWidth, h: e.currentTarget.naturalHeight })} style={{ width: "100%", display: "block", borderRadius: "var(--radius)" }} />
+            {nat && (
+              <svg viewBox={`0 0 ${nat.w} ${nat.h}`} preserveAspectRatio="none" style={{ position: "absolute", inset: 0, width: "100%", height: "100%", pointerEvents: "none" }}>
+                {rep!.points_px!.map((p, i) => <circle key={i} cx={p[0]} cy={p[1]} r={Math.max(2, nat.w / 320)} fill={heatColor(rep!.deviations_mm![i], scale)} />)}
+              </svg>
+            )}
+          </div>
+          <div className="hint" style={{ textTransform: "none", letterSpacing: 0 }}>blue = under (inside CAD) · red = over (outside CAD) · scale ±{um(scale)}. Centroid-aligned; registration wants validation on real captures.</div>
+        </>
       )}
     </div>
   );
@@ -263,6 +326,8 @@ export function AnalysisView({ gates, call, base }: { gates: Gates; call: Call; 
                 <h3>calibration trend</h3>
                 <TrendChart points={trend} />
               </div>
+
+              <LaneBCard run={sel} base={base} gates={gates} />
 
               <div className="card">
                 <h3>provenance</h3>

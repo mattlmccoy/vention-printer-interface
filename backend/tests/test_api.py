@@ -78,6 +78,16 @@ def test_science_frame_no_camera_is_5xx_not_500(client: TestClient) -> None:
     assert r.status_code in (502, 503)
 
 
+def test_lane_b_reports_no_capture_honestly(client: TestClient, tmp_path: Path) -> None:
+    # Lane B on a run with no captures returns an honest 200 {status: no_capture}, not a 500 —
+    # checked before the job-folder lookup.
+    run = tmp_path / "20260101_000000_lb"
+    run.mkdir(parents=True)
+    r = client.get("/api/analysis/20260101_000000_lb/lane-b", params={"layer": 1, "folder": "x"})
+    assert r.status_code == 200
+    assert r.json()["status"] == "no_capture"
+
+
 def test_science_stream_refused_during_print(client: TestClient) -> None:
     # The science alignment stream holds the capture source open, so it is refused (409) while a
     # print/routine is running — checked before any camera access.

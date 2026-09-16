@@ -74,3 +74,64 @@ def deviation_field(printed_mm: np.ndarray, cad_mm: np.ndarray) -> DeviationFiel
         area_ratio=float(a_printed / a_cad) if a_cad > 0 else 0.0,
         n=len(printed),
     )
+
+
+def largest_contour(image: np.ndarray) -> np.ndarray | None:
+    """Extract the largest external contour from a grayscale/BGR image as (N, 2) pixel points.
+    Otsu-thresholds the foreground (the printed part / CAD fill) and returns None when nothing is
+    found — never a false empty shape."""
+    gray = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY) if image.ndim == 3 else image
+    gray = gray.astype(np.uint8)
+    _thr, mask = cv2.threshold(gray, 0, 255, cv2.THRESH_BINARY + cv2.THRESH_OTSU)
+    # If the fill is dark-on-light (most CAD/binder masks), invert so the part is the foreground.
+    if mask.mean() > 127:
+        mask = cv2.bitwise_not(mask)
+    contours, _ = cv2.findContours(mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_NONE)
+    if not contours:
+        return None
+    biggest = max(contours, key=cv2.contourArea)
+    if cv2.contourArea(biggest) <= 0:
+        return None
+    return biggest.reshape(-1, 2).astype(float)
+
+
+def analyze_lane_b(
+    printed_image: np.ndarray,
+    cad_image: np.ndarray,
+    printed_mm_per_px: float,
+    cad_mm_per_px: float,
+) -> dict[str, Any]:
+    """End-to-end Lane B for one layer: extract the printed part outline (from a registered capture)
+    and the CAD-slice outline, put both in millimetres, centroid-align them (translation — so the
+    result is the part's shape+size deviation, independent of where it landed on the bed), and
+    compute the deviation field. Returns the field plus the printed contour in CAPTURE PIXELS
+    (``points_px``) so the UI can draw the heatmap over the capture. ``status`` is ``no_contour``
+    when either outline can't be found (never a false zero-deviation result)."""
+    printed_px = largest_contour(printed_image)
+    cad_px = largest_contour(cad_image)
+    if printed_px is None or cad_px is None:
+        which = "printed capture" if printed_px is None else "CAD slice"
+        return {"status": "no_contour", "message": f"no outline found in the {which}"}
+
+    printed_mm = printed_px * float(printed_mm_per_px)
+    cad_mm = cad_px * float(cad_mm_per_px)
+    cad_mm = cad_mm - cad_mm.mean(axis=0) + printed_mm.mean(axis=0)  # centroid-align (translation)
+    field = deviation_field(printed_mm, cad_mm)
+    return {
+        "status": "ok",
+        **field.to_dict(),
+        "points_px": [[float(x), float(y)] for x, y in printed_px],  # capture-pixel overlay coords
+        "mm_per_px": float(printed_mm_per_px),
+    }
+
+
+def analyze_lane_b_from_pngs(
+    printed_png: bytes, cad_png: bytes, printed_mm_per_px: float, cad_mm_per_px: float
+) -> dict[str, Any]:
+    """``analyze_lane_b`` on encoded PNG bytes (registered capture + CAD layer). Decodes both
+    to grayscale; returns ``{status: decode_failed}`` if either can't be read."""
+    printed = cv2.imdecode(np.frombuffer(printed_png, np.uint8), cv2.IMREAD_GRAYSCALE)
+    cad = cv2.imdecode(np.frombuffer(cad_png, np.uint8), cv2.IMREAD_GRAYSCALE)
+    if printed is None or cad is None:
+        return {"status": "decode_failed", "message": "could not decode the capture or CAD image"}
+    return analyze_lane_b(printed, cad, printed_mm_per_px, cad_mm_per_px)
