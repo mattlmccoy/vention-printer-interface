@@ -381,18 +381,14 @@ class Controller:
     def home_all(self) -> None:
         dev = self._require_armed()
         with self._lock:
-            # union, don't overwrite: a home issued while other axes are still pending must not
-            # drop them from the set that gets promoted to referenced when the window settles.
-            self._homing_axes |= set(dev.axes)  # reference is granted when this home settles
+            self._homing_axes = set(dev.axes)  # reference is granted when this home settles
         self._begin_homing()  # suspend position limits so the home can finish and re-zero
         dev.home_all()  # not under _io_lock: the reply may block until homed (see module doc)
 
     def home(self, axis: int) -> None:
         dev = self._require_armed()
         with self._lock:
-            # union, not assignment: homing axis B while axis A is still homing (or awaiting its
-            # settle) must keep A pending so BOTH get referenced and record their homed positions.
-            self._homing_axes |= {axis}
+            self._homing_axes = {axis}
         self._begin_homing()
         dev.home(axis)
 

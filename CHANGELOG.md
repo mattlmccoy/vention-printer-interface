@@ -3,6 +3,11 @@
 Notable changes to the Vention Printer Interface. Versions follow semantic versioning; each entry
 corresponds to a tagged merge to `main`.
 
+## v0.8.1 — 2026-09-16
+
+### Fixed
+- **Reverted the v0.8.0 multi-axis homing change** — the v0.8.0 union of `_homing_axes` (`home()`/`home_all()`) regressed homing on real hardware ("home values aren't getting written properly"). Restored the known-good v0.7.0 per-home overwrite to unblock the machine. The original concurrent-multi-axis homing edge (an earlier home dropped when a second is issued mid-window) is re-opened and will be fixed with a hardware-verified per-axis promotion model, not the coarse all-pending-at-once union. No other v0.8.0 feature is affected.
+
 ## v0.8.0 — 2026-09-16
 
 ### Fixed
