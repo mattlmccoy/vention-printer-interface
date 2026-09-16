@@ -434,6 +434,7 @@ button.small { height: 34px; padding: 0 12px; border: 1px solid var(--line-contr
 .job-map span:nth-child(odd) { color: var(--muted); }
 .job-map span:nth-child(even) { font-family: var(--font-mono); color: var(--fg-strong); }
 .job-map .warnv { color: var(--warn); }
+.job-map .okv { color: var(--live); }
 
 /* ---- modules ---- */
 /* cards size to their own content height (align-items:flex-start) instead of stretching to the

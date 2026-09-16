@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from "react";
-import { api } from "../../lib/api.ts";
+import { api, type MeteorStatus } from "../../lib/api.ts";
 import { estimateDurationS } from "../../lib/estimate.ts";
 import { fmtSecs, type Gates } from "../../lib/format.ts";
 import { totalLayers, totalThickness, validate, type PrintSettings } from "../../lib/print_settings.ts";
@@ -22,9 +22,10 @@ export function JobView({ status, gates, call, onStarted }: { status: StatusPayl
   const [dry, setDry] = useState(true);
   const [single, setSingle] = useState(false);
   const [name, setName] = useState("");
+  const [meteor, setMeteor] = useState<MeteorStatus | null>(null);
   const job = status?.job ?? null;
   const running = gates.printActive;
-  const refresh = () => { api.jobs().then((r) => { setJobs(r.jobs as JobRow[]); setRoots(r.roots); }).catch(() => undefined); api.printSettings().then((r) => { setPlan(r.plan as unknown as PrintSettings); setDirty(false); }).catch(() => undefined); };
+  const refresh = () => { api.jobs().then((r) => { setJobs(r.jobs as JobRow[]); setRoots(r.roots); }).catch(() => undefined); api.printSettings().then((r) => { setPlan(r.plan as unknown as PrintSettings); setDirty(false); }).catch(() => undefined); api.meteorStatus().then(setMeteor).catch(() => setMeteor(null)); };
   useEffect(() => { refresh(); }, [gates.reachable, job?.path]);
   const edit = (patch: Partial<PrintSettings>) => plan && (setPlan({ ...plan, ...patch }), setDirty(true));
   const editPh = (ph: "thin_precoat" | "printing" | "postcoat", patch: Partial<PrintSettings["printing"]>) => plan && edit({ [ph]: { ...plan[ph], ...patch } } as Partial<PrintSettings>);
@@ -136,7 +137,11 @@ export function JobView({ status, gates, call, onStarted }: { status: StatusPayl
                 <span>part height</span><span>{job.height_mm} mm</span>
                 <span>footprint</span><span>{job.bbox_mm.x} × {job.bbox_mm.y} mm</span>
                 <span>print_settings</span><span className={mismatch ? "warnv" : ""}>{plan.printing.n_layers} × {plan.printing.layer_thickness_mm} mm{mismatch ? " ≠ job" : ""}</span>
-                <span>MetPrint</span><span className="warnv">queue the job's TIFFs in the hot folder (v2 automates this)</span>
+                <span>MetPrint firing</span>{meteor
+                  ? <span className={meteor.ready ? "okv" : "warnv"} title={meteor.detail}>{meteor.ready
+                      ? `ready · ${meteor.layers_expected} layers in the hot folder`
+                      : `not ready · ${meteor.detail}`}</span>
+                  : <span className="warnv">firing status unavailable</span>}
               </div>
             </div>
           )}

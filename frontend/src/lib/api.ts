@@ -35,6 +35,7 @@ async function req<T>(method: string, path: string, body?: unknown): Promise<T> 
 
 export interface Health { version: string; api_version: string; backend: string; platform: string }
 export interface Discovery { candidates: Array<{ backend: string; ip: string | null; label?: string; reachable: boolean }>; connected: { backend: string } }
+export interface MeteorStatus { backend: string; available: boolean; ready: boolean; job_name: string | null; layers_ready: number; layers_expected: number; detail: string }
 export interface PrintSettingsPayload { plan: Record<string, unknown>; validation: string[]; n_steps: number; estimated_duration_s: number; total_layers: number; total_thickness_mm: number; bounds: Record<string, unknown>; limits: Record<string, unknown>; exposure: { energy_j: number; time_s: number; sweep_speed_mm_s: number } }
 export interface AxisMotion { max_speed: number | null; max_accel: number | null; bounds: { max_speed: [number, number]; max_accel: [number, number] }; limit_speed: number; limit_accel: number }
 export interface PrimingPayload { settings: Record<string, number>; validation: string[]; n_steps: number; n_thick_precoats: number; limits: Record<string, unknown> }
@@ -208,6 +209,8 @@ export const api = {
   jobs: () => req<{ jobs: Array<Omit<StatusPayload["job"] & object, "current_layer">>; roots: string[] }>("GET", "/api/jobs"),
   selectJob: (path: string) => req<{ job: StatusPayload["job"]; print_settings: PrintSettingsPayload }>("POST", "/api/jobs/select", { path }),
   clearJob: () => req<{ job: null }>("POST", "/api/jobs/clear"),
+  // Meteor firing readiness: is a complete sliced job loaded in the hot folder MetPrint fires from?
+  meteorStatus: () => req<MeteorStatus>("GET", "/api/meteor/status"),
   jobLayerUrl: (layer: number, jobFolder = "") => `${base}/api/jobs/current/layers/${layer}.png?job=${encodeURIComponent(jobFolder)}`,
   // serve a specific job folder's layer (incl. archived jobs), regardless of the selected job
   jobLayerByFolderUrl: (layer: number, folder: string) => `${base}/api/jobs/by-folder/${encodeURIComponent(folder)}/layers/${layer}.png`,
