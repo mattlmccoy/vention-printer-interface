@@ -56,6 +56,30 @@ def test_positions_unreferenced_until_homed() -> None:
         c.stop()
 
 
+def test_homing_axes_in_succession_all_get_referenced() -> None:
+    # Pressing home on several axes in quick succession (or homing one axis while an earlier one is
+    # still inside its homing window) must reference EVERY axis that homed, not just the last. The
+    # per-home overwrite of the pending-home set dropped the earlier axis so it never got promoted
+    # to referenced. (Re-applied after v0.8.1 revert; the v0.8.0 hardware issue was the read-timeout
+    # hard-fault, NOT this — fixed in v0.8.2.)
+    c, _ = make()
+    try:
+        assert wait(lambda: c.snapshot()["telemetry"] is not None)
+        c.arm()
+        c.home(1)
+        c.home(2)  # issued while axis 1 is still within its homing window
+        assert wait(
+            lambda: c.snapshot()["telemetry"]["referenced"]["1"]
+            and c.snapshot()["telemetry"]["referenced"]["2"],
+            timeout=6.0,
+        )
+        assert c.snapshot()["telemetry"]["positions"]["1"] == 0.0
+        assert c.snapshot()["telemetry"]["positions"]["2"] == 0.0
+        assert c.snapshot()["telemetry"]["referenced"]["3"] is False
+    finally:
+        c.stop()
+
+
 def test_reference_current_marks_all_axes_without_homing() -> None:
     # Operator-asserted reference: when the machine kept power and the reported positions are real,
     # mark EVERY axis referenced WITHOUT homing (no motion, no arming required). Only valid when

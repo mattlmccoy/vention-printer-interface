@@ -3,6 +3,11 @@
 Notable changes to the Vention Printer Interface. Versions follow semantic versioning; each entry
 corresponds to a tagged merge to `main`.
 
+## v0.8.3 — 2026-09-16
+
+### Added
+- **Multi-axis homing (re-applied)** — `home()`/`home_all()` union into the pending-home set instead of overwriting it, so homing several axes in quick succession (or homing one while another is still in its homing window) references EVERY axis that homed, not just the last. This was shipped in v0.8.0, reverted in v0.8.1 during a hardware incident, and is now restored: that incident was the transient-read-timeout hard-fault (fixed in v0.8.2), not this change. Regression test re-added (`test_homing_axes_in_succession_all_get_referenced`).
+
 ## v0.8.2 — 2026-09-16
 
 ### Fixed
