@@ -1,0 +1,38 @@
+# Changelog
+
+Notable changes to the Vention Printer Interface. Versions follow semantic versioning; each entry
+corresponds to a tagged merge to `main`.
+
+## v0.3.0 — 2026-09-15
+
+Reliability, diagnostics, and data-forward run analysis.
+
+### Fixed
+- **E-stop no longer undefines motor positions.** An MM2 e-stop is Safe-Torque-Off (cuts motor
+  torque, not the encoder); referenced positions now survive it. Regression test pinned.
+- **Feed piston drops before the recoater on printing layers.** The recoater repositioned to the
+  spread start at layer end, so the anti-backlash preload landed too late; it now repositions at
+  layer start, after the preload.
+- **Build-piston deviation chart populates** — `layer_accuracy.csv` is served again.
+
+### Added
+- **Reference-at-current** — re-reference every axis at its current position without homing, for
+  recovery after an e-stop/restart when the machine kept power.
+- **One-click operator restart** — top-bar button; re-execs the operator in place.
+- **Runs analysis plots** — cumulative build height (commanded vs actual), per-axis activity
+  timeline, hover readouts; calm, data-forward styling.
+- **Analysis tab** lists only runs with vision captures (`capture_count`).
+- **Full Print Parameters surface** — per-axis speed/accel for all phases, heater accel, machine
+  geometry positions, timing; most-used up top, the rest in an advanced section.
+- **Build-piston characterization sweep** (`backend/scripts/piston_sweep.py`) — diagnostic to find
+  deterministic per-step position errors (the "one layer zero, next layer double" effect).
+
+### Performance
+- **Faster choreography** — move-started detection lets a wait end as soon as the move completes
+  instead of always sitting out the `min_wait_s` floor (default lowered 0.5→0.25 s, tunable via
+  `--print-min-wait`). Removes several seconds of dead time per layer.
+
+## v0.2.0 and earlier
+
+Pre-changelog. See the git history for the console redesign, recording/vision, priming, and the
+initial choreography work.
