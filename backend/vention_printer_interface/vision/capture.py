@@ -17,7 +17,7 @@ import logging
 import queue
 import threading
 import time
-from collections.abc import Callable
+from collections.abc import Callable, Generator
 from pathlib import Path
 from typing import Any
 
@@ -107,6 +107,26 @@ class VisionService:
             self._open_source_locked()
             try:
                 return self._source.grab_fresh()
+            finally:
+                self._close_source_locked()
+
+    def stream_jpeg(self, target_fps: float = 10.0) -> Generator[bytes, None, None]:
+        """Live MJPEG frames from the science source for interactive alignment (the capture-pose
+        calibration overlay). Holds the source open under the source lock and yields
+        boundary-framed JPEG chunks until the client disconnects (the generator is closed). Because
+        it holds the source lock, NO capture runs while a viewer streams — a setup/calibration
+        tool; the route refuses it while a print is running."""
+        from vention_printer_interface.vision.overview import encode_jpeg, mjpeg_chunk
+
+        interval = 1.0 / target_fps if target_fps > 0 else 0.0
+        with self._source_lock:
+            self._open_source_locked()
+            try:
+                while True:
+                    frame = self._source.grab_fresh()
+                    yield mjpeg_chunk(encode_jpeg(frame.image))
+                    if interval:
+                        time.sleep(interval)
             finally:
                 self._close_source_locked()
 

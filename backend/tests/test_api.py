@@ -78,6 +78,16 @@ def test_science_frame_no_camera_is_5xx_not_500(client: TestClient) -> None:
     assert r.status_code in (502, 503)
 
 
+def test_science_stream_refused_during_print(client: TestClient) -> None:
+    # The science alignment stream holds the capture source open, so it is refused (409) while a
+    # print/routine is running — checked before any camera access.
+    from vention_printer_interface.control.print_controller import PrintState
+
+    client.app.state.printer.state = PrintState.RUNNING  # type: ignore[attr-defined]
+    r = client.get("/api/vision/science/stream")
+    assert r.status_code == 409
+
+
 def test_operator_restart_reexecs_when_idle(
     client: TestClient, monkeypatch: pytest.MonkeyPatch
 ) -> None:
