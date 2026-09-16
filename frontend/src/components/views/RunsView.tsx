@@ -1,7 +1,7 @@
 import { useEffect, useState, type MouseEvent as ReactMouseEvent } from "react";
 import { api, type RunMeta } from "../../lib/api.ts";
 import type { Gates } from "../../lib/format.ts";
-import type { StatusPayload } from "../../lib/telemetry.ts";
+import type { EventItem, StatusPayload } from "../../lib/telemetry.ts";
 import { parseCaptures, type Capture } from "../../lib/vision.ts";
 import {
   hasNativeSpeed,
@@ -77,71 +77,67 @@ function AxisPanel({ series, tMax, label, color, unit }: { series: { t: number; 
   );
 }
 
-/** layer_accuracy.csv → per-layer build-piston deviation (actual − commanded) in microns, as signed
- *  lollipops around a zero line with a ±tolerance band; out-of-tolerance layers flagged red. */
-function BuildDeviationChart({ rows, tolUm }: { rows: LayerAccuracy[]; tolUm: number }) {
+/** layer_accuracy.csv → per-layer ACTUAL build-piston thickness as bars against the commanded
+ *  target (a tick per bar) with a ±tolerance band. A layer that didn't move (empty bar under a
+ *  floating target tick) or doubled (bar well over target) is immediately obvious. (Approach D.) */
+function ActualThicknessChart({ rows, tolUm }: { rows: LayerAccuracy[]; tolUm: number }) {
   const [hov, setHov] = useState<number | null>(null);
   const pts = rows
-    .filter((r) => (r.phase === "thin_precoat" || r.phase === "printing") && r.deviation_mm != null && r.layer != null)
-    .map((r) => ({ layer: r.layer as number, devUm: (r.deviation_mm as number) * 1000 }));
+    .filter((r) => (r.phase === "thin_precoat" || r.phase === "printing")
+      && r.actual_mm != null && r.commanded_mm != null && r.layer != null)
+    .map((r) => ({ layer: r.layer as number, act: r.actual_mm as number, cmd: r.commanded_mm as number }));
   if (pts.length === 0) return <div className="chart-empty">no build-piston layer data for this run</div>;
-  const W = 560, H = 205, padL = 54, padR = 12, padB = 30, padT = 12, plotH = H - padT - padB, plotW = W - padL - padR;
-  const maxAbs = Math.max(tolUm * 1.6, ...pts.map((p) => Math.abs(p.devUm))) * 1.08;
-  const y = (v: number) => padT + (1 - (v + maxAbs) / (2 * maxAbs)) * plotH;
-  const x = (i: number) => padL + (pts.length > 1 ? (i * plotW) / (pts.length - 1) : plotW / 2);
-  const zeroY = y(0);
-  const stepEvery = Math.max(1, Math.ceil(pts.length / 10));
+  const tol = tolUm / 1000;  // mm
+  const W = 560, H = 205, padL = 46, padR = 12, padB = 30, padT = 14, plotH = H - padT - padB, plotW = W - padL - padR;
+  const ymax = Math.max(...pts.map((p) => Math.max(p.act, p.cmd + tol))) * 1.2 || 1;
+  const y = (v: number) => padT + plotH * (1 - v / ymax);
+  const y0 = y(0);
+  const bw = Math.min(34, (plotW / pts.length) * 0.62);
+  const cx = (i: number) => padL + (plotW * (i + 0.5)) / pts.length;
   const tnum = { fontVariantNumeric: "tabular-nums" } as const;
-  const nOut = pts.filter((p) => Math.abs(p.devUm) > tolUm).length;
+  const nOut = pts.filter((p) => Math.abs(p.act - p.cmd) > tol).length;
+  const stepEvery = Math.max(1, Math.ceil(pts.length / 12));
   return (
-    <svg className="mchart" viewBox={`0 0 ${W} ${H}`} style={{ width: "100%", height: "auto" }} role="img" aria-label="build-piston per-layer deviation in microns">
-      {/* neutral tolerance band (not a semantic colour) + faint whitegrid at each tick */}
-      <rect x={padL} y={y(tolUm)} width={plotW} height={y(-tolUm) - y(tolUm)} fill="var(--plot-band)" />
-      {[maxAbs, tolUm, -tolUm, -maxAbs].map((v) => (
-        <line key={v} x1={padL} y1={y(v)} x2={W - padR} y2={y(v)} stroke="var(--line)" strokeWidth="1"
-          strokeDasharray={Math.abs(v) === tolUm ? "3 3" : undefined} />
-      ))}
-      <line x1={padL} y1={zeroY} x2={W - padR} y2={zeroY} stroke="var(--faint)" strokeWidth="1" />
-      {[maxAbs, tolUm, -tolUm, -maxAbs].map((v) => (
-        <text key={v} x={padL - 8} y={y(v) + 3} fontSize="9" fill="var(--faint)" textAnchor="end" fontFamily={PLOT_FONT} style={tnum}>{v > 0 ? "+" : ""}{Math.round(v)}</text>
-      ))}
+    <svg className="mchart" viewBox={`0 0 ${W} ${H}`} style={{ width: "100%", height: "auto" }} role="img" aria-label="per-layer actual build-piston thickness vs target">
+      {[0, 1, 2, 3, 4].map((g) => { const v = ymax * g / 4; return (
+        <g key={g}><line x1={padL} y1={y(v)} x2={W - padR} y2={y(v)} stroke="var(--line)" strokeWidth="1" />
+          <text x={padL - 6} y={y(v) + 3} fontSize="9" fill="var(--faint)" textAnchor="end" fontFamily={PLOT_FONT} style={tnum}>{v.toFixed(1)}</text></g>); })}
       {pts.map((p, i) => {
-        const col = Math.abs(p.devUm) <= tolUm ? "var(--plot-1)" : "var(--plot-warn)";
+        const out = Math.abs(p.act - p.cmd) > tol;
+        const col = out ? "var(--plot-warn)" : "var(--plot-1)";
         const on = hov === i;
+        const left = cx(i) - bw / 2;
         return (
           <g key={p.layer}>
-            <line x1={x(i)} y1={zeroY} x2={x(i)} y2={y(p.devUm)} stroke={col} strokeWidth={on ? 1.8 : 1.3} />
-            <circle cx={x(i)} cy={y(p.devUm)} r={on ? 3.6 : 2.4} fill={col} />
-            {(i % stepEvery === 0 || i === pts.length - 1) && <text x={x(i)} y={H - padB + 13} fontSize="8.5" fill="var(--faint)" textAnchor="middle" fontFamily={PLOT_FONT} style={tnum}>{p.layer}</text>}
+            <rect x={left} y={y(p.cmd + tol)} width={bw} height={Math.max(1, y(p.cmd - tol) - y(p.cmd + tol))} fill="var(--plot-band)" />
+            <rect x={left} y={y(p.act)} width={bw} height={Math.max(0, y0 - y(p.act))} fill={col} fillOpacity={on ? 1 : 0.82} rx="2" />
+            <line x1={left - 2} y1={y(p.cmd)} x2={left + bw + 2} y2={y(p.cmd)} stroke="var(--fg-strong)" strokeWidth="2" />
+            {(i % stepEvery === 0 || i === pts.length - 1) && <text x={cx(i)} y={H - padB + 13} fontSize="8.5" fill="var(--faint)" textAnchor="middle" fontFamily={PLOT_FONT} style={tnum}>{p.layer}</text>}
+            <rect x={left} y={padT} width={bw} height={plotH} fill="transparent" onMouseEnter={() => setHov(i)} onMouseLeave={() => setHov(null)} style={{ cursor: "pointer" }}>
+              <title>{`layer ${p.layer}: actual ${p.act.toFixed(3)} mm / target ${p.cmd.toFixed(3)} mm`}</title>
+            </rect>
           </g>
         );
       })}
-      {/* wide invisible hit targets so points are easy to hover; native <title> is the fallback */}
-      {pts.map((p, i) => (
-        <circle key={`hit-${p.layer}`} cx={x(i)} cy={y(p.devUm)} r={9} fill="transparent"
-          onMouseEnter={() => setHov(i)} onMouseLeave={() => setHov(null)} style={{ cursor: "pointer" }}>
-          <title>{`layer ${p.layer}: ${p.devUm >= 0 ? "+" : ""}${Math.round(p.devUm)} µm`}</title>
-        </circle>
-      ))}
       {hov != null && (() => {
         const p = pts[hov];
-        const out = Math.abs(p.devUm) > tolUm;
-        const dv = Number(p.devUm.toFixed(1)) + 0;  // normalize -0.0 -> 0.0
-        const label = `L${p.layer}   ${dv >= 0 ? "+" : ""}${dv.toFixed(1)} µm`;
-        const boxW = Math.max(84, label.length * 6.4), boxH = 30;
-        const bx = Math.max(padL, Math.min(x(hov) - boxW / 2, W - padR - boxW));
-        const above = y(p.devUm) > padT + boxH + 10;
-        const by = above ? y(p.devUm) - boxH - 9 : y(p.devUm) + 9;
+        const out = Math.abs(p.act - p.cmd) > tol;
+        const devUm = Number(((p.act - p.cmd) * 1000).toFixed(0)) + 0;
+        const label = `L${p.layer}   ${p.act.toFixed(2)} / ${p.cmd.toFixed(2)} mm`;
+        const boxW = Math.max(110, label.length * 6.2), boxH = 30;
+        const bx = Math.max(padL, Math.min(cx(hov) - boxW / 2, W - padR - boxW));
+        const by = Math.min(y(p.act), y(p.cmd)) - boxH - 8;
+        const byc = by < padT ? Math.max(y(p.act), y(p.cmd)) + 8 : by;
         return (
           <g pointerEvents="none">
-            <rect x={bx} y={by} width={boxW} height={boxH} rx={4} fill="var(--panel)" stroke="var(--line-strong)" strokeWidth="1" />
-            <text x={bx + boxW / 2} y={by + 13} fontSize="10" fill="var(--fg-strong)" textAnchor="middle" fontFamily={PLOT_FONT} style={tnum}>{label}</text>
-            <text x={bx + boxW / 2} y={by + 24} fontSize="8.5" fill={out ? "var(--plot-warn)" : "var(--muted)"} textAnchor="middle" fontFamily={PLOT_FONT}>{out ? `outside ±${tolUm} µm` : `within ±${tolUm} µm`}</text>
+            <rect x={bx} y={byc} width={boxW} height={boxH} rx={4} fill="var(--panel)" stroke="var(--line-strong)" strokeWidth="1" />
+            <text x={bx + boxW / 2} y={byc + 13} fontSize="10" fill="var(--fg-strong)" textAnchor="middle" fontFamily={PLOT_FONT} style={tnum}>{label}</text>
+            <text x={bx + boxW / 2} y={byc + 24} fontSize="8.5" fill={out ? "var(--plot-warn)" : "var(--muted)"} textAnchor="middle" fontFamily={PLOT_FONT} style={tnum}>{out ? `off by ${devUm >= 0 ? "+" : ""}${devUm} µm` : "on target"}</text>
           </g>
         );
       })()}
-      <text x={padL - 34} y={padT + plotH / 2} fontSize="9.5" fill="var(--muted)" textAnchor="middle" fontFamily={PLOT_FONT} transform={`rotate(-90 ${padL - 34} ${padT + plotH / 2})`}>deviation (µm)</text>
-      <text x={padL + plotW / 2} y={H - 3} fontSize="9.5" fill="var(--faint)" textAnchor="middle" fontFamily={PLOT_FONT}>layer number{nOut > 0 ? ` · ${nOut} of ${pts.length} outside ±${tolUm} µm` : ` · all ${pts.length} within ±${tolUm} µm`}</text>
+      <text x={padL - 34} y={padT + plotH / 2} fontSize="9.5" fill="var(--muted)" textAnchor="middle" fontFamily={PLOT_FONT} transform={`rotate(-90 ${padL - 34} ${padT + plotH / 2})`}>thickness (mm)</text>
+      <text x={padL + plotW / 2} y={H - 3} fontSize="9.5" fill="var(--faint)" textAnchor="middle" fontFamily={PLOT_FONT}>layer number · — target{nOut > 0 ? ` · ${nOut} of ${pts.length} off by >${tolUm} µm` : ` · all ${pts.length} on target`}</text>
     </svg>
   );
 }
@@ -225,6 +221,7 @@ export function RunsView({ status, gates, call, base }: { status: StatusPayload 
   const [caps, setCaps] = useState<Capture[]>([]);
   const [motionCsv, setMotionCsv] = useState("");
   const [accuracyRows, setAccuracyRows] = useState<LayerAccuracy[]>([]);
+  const [runEvents, setRunEvents] = useState<EventItem[]>([]);
   const [metric, setMetric] = useState<Metric>("vel");
   const [axes, setAxes] = useState<number[]>([1, 2, 3, 4]); // all axes stacked by default
   const [tolUm, setTolUm] = useState("50"); // build-piston tolerance band (µm), editable
@@ -282,11 +279,15 @@ export function RunsView({ status, gates, call, base }: { status: StatusPayload 
   }, [viewIdx, caps.length]);
 
   useEffect(() => {
-    if (!sel) { setCaps([]); setMotionCsv(""); setAccuracyRows([]); return; }
+    if (!sel) { setCaps([]); setMotionCsv(""); setAccuracyRows([]); setRunEvents([]); return; }
     let live = true;
     api.visionCaptures(sel).then((rc) => { if (live) setCaps(parseCaptures(rc)); }).catch(() => { if (live) setCaps([]); });
     api.recordingFileText(sel, "motion_profiles.csv").then((txt) => { if (live) setMotionCsv(txt); });
     api.recordingFileText(sel, "layer_accuracy.csv").then((txt) => { if (live) setAccuracyRows(txt ? parseLayerAccuracy(txt) : []); });
+    api.recordingFileText(sel, "events.json").then((txt) => {
+      if (!live) return;
+      try { setRunEvents(txt ? (JSON.parse(txt) as EventItem[]) : []); } catch { setRunEvents([]); }
+    }).catch(() => { if (live) setRunEvents([]); });
     return () => { live = false; };
   }, [sel, base]);
 
@@ -380,11 +381,11 @@ export function RunsView({ status, gates, call, base }: { status: StatusPayload 
                 <div className="hint" style={{ margin: "0 0 6px", textTransform: "none", letterSpacing: 0 }}>cumulative height — commanded vs actual (the real drift is the gap)</div>
                 <CumulativeHeightChart rows={accuracyRows} />
                 <div className="chart-controls" style={{ marginTop: 14, borderTop: "1px solid var(--line)", paddingTop: 12 }}>
-                  <span className="hint" style={{ marginTop: 0, textTransform: "none", letterSpacing: 0 }}>per-layer deviation · tolerance band ±</span>
+                  <span className="hint" style={{ marginTop: 0, textTransform: "none", letterSpacing: 0 }}>actual thickness vs target · tolerance ±</span>
                   <input type="number" inputMode="decimal" value={tolUm} onChange={(e) => setTolUm(e.target.value)} style={{ width: 64 }} aria-label="tolerance band (microns)" />
                   <span className="hint" style={{ marginTop: 0 }}>µm</span>
                 </div>
-                <BuildDeviationChart rows={accuracyRows} tolUm={Math.max(1, Number(tolUm) || 50)} />
+                <ActualThicknessChart rows={accuracyRows} tolUm={Math.max(1, Number(tolUm) || 50)} />
               </div>
 
               <div className="card">
@@ -418,10 +419,22 @@ export function RunsView({ status, gates, call, base }: { status: StatusPayload 
             </>
           ) : <div className="card"><div className="chart-empty">select a run to see its stills, motion profile, and download.</div></div>}
 
-          <div className="card">
-            <h3>event log</h3>
-            <div className="stills-wrap"><EventLog events={status?.events ?? []} title="" /></div>
-          </div>
+          {(() => {
+            // A finished run shows ITS OWN events.json; the currently-recording run (and the
+            // no-run-selected case) shows the live session feed, which is what's fresh for it.
+            const activeRun = rec?.active ? rec.run : null;
+            const showRun = !!sel && sel !== activeRun;
+            const events = showRun ? runEvents : (status?.events ?? []);
+            const sub = { textTransform: "none", letterSpacing: 0, fontWeight: 400 } as const;
+            return (
+              <div className="card">
+                <h3>{showRun
+                  ? <>event log <span className="hint" style={sub}>· {label(sel)} · this run</span></>
+                  : <>event log <span className="hint" style={sub}>· live session{activeRun ? ` · recording ${activeRun}` : ""}</span></>}</h3>
+                <div className="stills-wrap"><EventLog events={events} title="" /></div>
+              </div>
+            );
+          })()}
         </div>
       </div>
 
