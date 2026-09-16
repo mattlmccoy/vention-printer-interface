@@ -13,6 +13,8 @@ __pycache__/
 # experiment run data — keep out of git by default
 backend/experiments/
 backend/operator.log
+# dev-server logs from local branch runs (vpi-serve / vite)
+*-branch.log
 # probe captures may contain controller serials; commit only reviewed copies under plan/
 probe_output*/
 # frontend

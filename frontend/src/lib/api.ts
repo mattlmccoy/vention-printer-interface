@@ -61,6 +61,17 @@ export interface RunMeta { run: string; complete: boolean; size_bytes: number; n
 // honest 200 reports with features:{} and compensation:null — never fabricated metrics.
 export type AnalysisStatus = "ok" | "no_capture" | "no_calibration" | "roi_failed" | "not_run";
 export interface Compensation { scale_x: number; scale_y: number; yaw_deg: number | null; human: string; notes: string[]; deadband_pct?: number }
+// Lane B — CAD-vs-real deviation (see backend analysis/lane_b.py). Non-"ok" statuses
+// (no_capture/no_calibration/no_contour/decode_failed) are honest reports, not errors.
+export interface LaneBReport {
+  run?: string; layer?: number; folder?: string; status: string; message?: string;
+  capture_url?: string;
+  points_px?: [number, number][];       // printed contour, capture pixels (heatmap overlay coords)
+  deviations_mm?: number[];             // signed deviation per point (+ = outside CAD / over)
+  mean_abs_mm?: number; rms_mm?: number; max_abs_mm?: number; max_at_mm?: [number, number];
+  area_ratio?: number; n?: number; mm_per_px?: number;
+}
+
 export interface DimensionalReport {
   run: string; status: AnalysisStatus; generated_utc?: string; message?: string;
   captured_from?: { layer?: number; stage?: string } | null; px_per_mm?: number | null; mm_per_px?: number | null;
@@ -189,6 +200,7 @@ export const api = {
       return "";
     }
   },
+  laneB: (run: string, layer: number, folder: string, stage = "post_jet") => req<LaneBReport>("GET", `/api/analysis/${encodeURIComponent(run)}/lane-b?layer=${layer}&folder=${encodeURIComponent(folder)}&stage=${stage}`),
   analysisGet: (run: string) => req<DimensionalReport>("GET", `/api/analysis/${encodeURIComponent(run)}/dimensional`),
   analysisRun: (run: string, body: AnalysisRequest = {}) => req<DimensionalReport>("POST", `/api/analysis/${encodeURIComponent(run)}/dimensional`, body),
   recordingSetMeta: (run: string, body: { name?: string; notes?: string }) => req<{ name: string; notes: string }>("PUT", `/api/recordings/${encodeURIComponent(run)}/meta`, body),
