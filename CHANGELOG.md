@@ -3,6 +3,21 @@
 Notable changes to the Vention Printer Interface. Versions follow semantic versioning; each entry
 corresponds to a tagged merge to `main`.
 
+## v0.4.0 — 2026-09-16
+
+### Added
+- **Camera-enabled print routine** — the overhead science camera (on the recoater gantry) can
+  capture every layer: with `capture_stages` on and `capture_recoater_mm` set, each layer drives the
+  recoater to a capture pose over the bed, dwells `capture_settle_s` to settle, then shoots the fresh
+  layer at the constant recoat plane. `capture_recoater_mm = 0` keeps the fixed-camera behaviour.
+  Both settings editable in Print Parameters → advanced.
+
+### Fixed
+- **Settled-phase layer accuracy** — per-layer build-piston height is sampled at the next layer's
+  start (piston at rest), not at the completion instant mid pre-heater-swing. Proven on a real run:
+  the earlier "0 then double" (±200 µm on two layers) was a measurement-sampling artifact; the piston
+  hit its 0.2 mm target every layer.
+
 ## v0.3.1 — 2026-09-16
 
 ### Added
