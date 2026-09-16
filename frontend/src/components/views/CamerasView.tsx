@@ -218,6 +218,68 @@ function CameraSettingsStep({ call, reachable }: { call: Call; reachable: boolea
   );
 }
 
+/** Manual capture-pose calibration: the science cam rides the recoater, so jog the recoater until
+ *  the bed centre sits under the crosshair, then save the recoater position as capture_recoater_mm
+ *  (the every-layer overhead capture pose). Grabs an on-demand science frame to check alignment. */
+function CaptureCalibration({ status, gates, call, base }: { status: StatusPayload | null; gates: Gates; call: Call; base: string }) {
+  const [frameUrl, setFrameUrl] = useState("");
+  const [err, setErr] = useState(false);
+  const [step, setStep] = useState(5);
+  const [pose, setPose] = useState<number | null>(null);
+  useEffect(() => {
+    api.printSettings().then((p) => {
+      const v = (p.plan as Record<string, unknown>).capture_recoater_mm;
+      setPose(typeof v === "number" ? v : 0);
+    }).catch(() => undefined);
+  }, []);
+  const rc = status?.controller.telemetry?.positions?.["4"];
+  const ok = gates.controllable && !gates.printActive;
+  const grab = () => { setErr(false); setFrameUrl(`${base}/api/vision/science/frame.jpg?t=${Date.now()}`); };
+  const jog = (sign: 1 | -1) => call("jog recoater", () => api.move(4, "rel", sign * step));
+  const savePose = () => {
+    if (typeof rc !== "number") return;
+    call("set capture pose", () => api.setPrintSettings({ capture_recoater_mm: rc }).then((p) => {
+      const v = (p.plan as Record<string, unknown>).capture_recoater_mm;
+      setPose(typeof v === "number" ? v : rc);
+    }));
+  };
+  return (
+    <div className="body">
+      <div className="hint" style={{ marginTop: 0 }}>The science camera rides the recoater. Jog the recoater until the bed centre sits under the crosshair, grab a fresh frame to check, then save the pose — it becomes the capture_recoater_mm the print uses for every-layer overhead captures.</div>
+      <div style={{ position: "relative", maxWidth: 480, margin: "10px 0", background: "var(--image-bg)", borderRadius: "var(--radius)", overflow: "hidden", aspectRatio: "4 / 3" }}>
+        {frameUrl && !err
+          ? <img src={frameUrl} alt="science camera frame" onError={() => setErr(true)} style={{ width: "100%", display: "block" }} />
+          : <div className="chart-empty" style={{ height: "100%" }}>{err ? "no science frame — no camera, or grab failed" : "grab a frame to begin"}</div>}
+        {frameUrl && !err && (
+          <svg viewBox="0 0 100 100" preserveAspectRatio="none" style={{ position: "absolute", inset: 0, width: "100%", height: "100%", pointerEvents: "none" }}>
+            <circle cx="50" cy="50" r="24" fill="none" stroke="var(--accent)" strokeWidth="0.6" opacity="0.9" />
+            <circle cx="50" cy="50" r="1.2" fill="var(--accent)" />
+            <line x1="50" y1="0" x2="50" y2="42" stroke="var(--accent)" strokeWidth="0.5" opacity="0.9" />
+            <line x1="50" y1="58" x2="50" y2="100" stroke="var(--accent)" strokeWidth="0.5" opacity="0.9" />
+            <line x1="0" y1="50" x2="42" y2="50" stroke="var(--accent)" strokeWidth="0.5" opacity="0.9" />
+            <line x1="58" y1="50" x2="100" y2="50" stroke="var(--accent)" strokeWidth="0.5" opacity="0.9" />
+          </svg>
+        )}
+      </div>
+      <div className="actions" style={{ marginTop: 0 }}>
+        <button className="cta" onClick={grab}>grab frame</button>
+        <span className="hint" style={{ marginTop: 0 }}>recoater jog</span>
+        {[1, 5, 10].map((s) => <button key={s} type="button" className={`small${s === step ? " on" : ""}`} onClick={() => setStep(s)}>{s} mm</button>)}
+        <button className="small" disabled={!ok} onClick={() => jog(-1)}>◀</button>
+        <button className="small" disabled={!ok} onClick={() => jog(1)}>▶</button>
+      </div>
+      <div className="kv" style={{ marginTop: 8 }}>
+        <span>recoater now</span><span>{typeof rc === "number" ? `${rc.toFixed(1)} mm` : "—"}</span>
+        <span>saved capture pose</span><span>{pose != null && pose > 0 ? `${pose} mm` : "not set"}</span>
+      </div>
+      <div className="actions one tight" style={{ marginTop: 10 }}>
+        <button className="cta primary" disabled={!ok || typeof rc !== "number"} onClick={savePose}>Set capture pose = {typeof rc === "number" ? `${rc.toFixed(1)} mm` : "?"}</button>
+      </div>
+      {!ok && <div className="lock">{gates.printActive ? "print in progress — jog locked" : gates.connected ? "read-only · take control from the connection pill" : "connect + arm to jog the recoater"}</div>}
+    </div>
+  );
+}
+
 export function CamerasView({ status, gates, call, base, onOpenQuickStart }: {
   status: StatusPayload | null; gates: Gates; call: Call; base: string;
   /** A7: reopens the camera-role quick-start wizard any time (cameras swapped/replaced/re-cabled) */
@@ -336,6 +398,11 @@ export function CamerasView({ status, gates, call, base, onOpenQuickStart }: {
         </div>
         <div className="card"><h3>capture browser</h3><CaptureBrowser base={base} /></div>
       </div>
+
+      <details className="rp-drawer" open>
+        <summary>capture-pose calibration (overhead science cam)</summary>
+        <CaptureCalibration status={status} gates={gates} call={call} base={base} />
+      </details>
 
       <details className="rp-drawer">
         <summary>manual calibration (raw points)</summary>
