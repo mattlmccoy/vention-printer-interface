@@ -137,6 +137,11 @@ class PrintSettings:
     settle_s: float = 1.0  # V1.py's time.sleep(1) after the feed piston move
     feed_backlash_mm: float = 0.0  # opt-in: drop the feed this much BEFORE the spread; the
     # post-spread feed-up covers it too (net advance unchanged, approached from below to take slop)
+    # Opt-in anti-backlash on the BUILD-piston layer drop: overshoot DOWN past the layer target by
+    # this much, then return UP to it (net descent = layer_thickness). The piston sweep (2026-09-16)
+    # showed ~0.15 mm takes 0.1-0.3 mm layer steps from ~55-67% on-target to ~100% (backlash
+    # <0.1 mm, so the drop/double "interlayer scatter" is real, compensable lost-motion). 0 = off.
+    build_backlash_mm: float = 0.0
     feed_fast_speed: float = 5.0  # V1.py:95 used 1000 mm/s; bounded to the feed limit
     feed_fast_accel: float = 30.0  # V1.py:96 used 500
     # Heater-exposure model inputs (spec §8; consumed by heater_model.exposure).
@@ -299,6 +304,7 @@ class PrintSettings:
             heater_enabled=bool(d.get("heater_enabled", base.heater_enabled)),
             settle_s=_clamp(num("settle_s", base.settle_s), 0.0, 30.0),
             feed_backlash_mm=_clamp(num("feed_backlash_mm", base.feed_backlash_mm), 0.0, 50.0),
+            build_backlash_mm=_clamp(num("build_backlash_mm", base.build_backlash_mm), 0.0, 5.0),
             purge_dwell_s=_clamp(num("purge_dwell_s", base.purge_dwell_s), 0.0, 60.0),
             purge_mode=p_mode,
             purge_every_n_layers=int(_clamp(p_every, 1, MAX_LAYERS)),
@@ -431,9 +437,17 @@ def compile_print(plan: PrintSettings) -> tuple[Step, ...]:
             add(name, layer_no, "mark", label="layer_start")
             # 1) PART DROP — thin_precoat & printing only (postcoat holds the part fixed). V1.py
             # drops the build piston FIRST, before the recoater repositions or the feed advances.
+            # Opt-in anti-backlash: overshoot the drop DOWN by build_backlash_mm, then return UP to
+            # the layer target, so the drop is always approached from one side (takes up slop;
+            # the piston sweep proved this removes the drop/double interlayer scatter). Net descent
+            # stays layer_thickness. build_backlash_mm = 0 keeps the single V1.py move.
             if name in _PART_DROP_PHASES:
-                add(name, layer_no, "move_rel", PART, ph.layer_thickness_mm)  # build piston down
+                bl = plan.build_backlash_mm
+                add(name, layer_no, "move_rel", PART, ph.layer_thickness_mm + bl)  # build down
                 add(name, layer_no, "wait")
+                if bl > 0:
+                    add(name, layer_no, "move_rel", PART, -bl, "build backlash return")
+                    add(name, layer_no, "wait")
 
             # 2) REPOSITION — recoater past the feed piston out to the far end, so it can spread on
             # the way back. Optional anti-backlash: drop the feed a little BEFORE this move (keeps
