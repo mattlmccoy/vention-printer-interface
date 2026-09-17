@@ -4,10 +4,17 @@
 import json
 from pathlib import Path
 
+import numpy as np
 import pytest
 from PIL import Image
 
-from vention_printer_interface.jobs.store import JobInfo, JobStore, layer_png, load_job
+from vention_printer_interface.jobs.store import (
+    JobInfo,
+    JobStore,
+    _remap_ink_levels,
+    layer_png,
+    load_job,
+)
 
 SAMPLE_INFO = {  # captured 2026-09-09, field for field
     "generated_by": "Meteor RIP",
@@ -88,6 +95,43 @@ def test_layer_png_renders_ink_and_is_cached(tmp_path: Path) -> None:
     assert layer_png(job, 1, max_px=200) is png1  # cached object
     with pytest.raises(IndexError):
         layer_png(job, 3)
+
+
+def test_remap_ink_levels_renders_max_aquinox_level_black() -> None:
+    # REAL PIL output for an Xaar Aquinox 8-grey-level page in a 4-bit container (captured from the
+    # hot-folder FGM jobs): PIL scales on 2**bpp-1 = 15, so level k -> 255 - k*17, and max ink
+    # (level 7) shows as 136 (mid-grey) — the bug. The remap must render level 7 BLACK, 0 WHITE.
+    arr = np.array([[255, 238, 221, 204, 187, 170, 153, 136]], dtype=np.uint8)  # levels 0..7
+    out = _remap_ink_levels(arr, bpp=4, grey_levels=8)
+    assert out[0, 0] == 255   # level 0 -> white
+    assert out[0, -1] == 0    # level 7 -> full black (was 136)
+    assert list(out[0]) == [255, 219, 182, 146, 109, 73, 36, 0]  # even white->black ramp
+
+
+def test_remap_ink_levels_is_a_noop_when_levels_equal_the_container() -> None:
+    # Old 2bpp job (grey_levels == 2**bpp == 4): container_max == grey_levels-1, so the already-
+    # correct rendering (level 3 -> 0 black) must be preserved unchanged.
+    arr = np.array([[255, 170, 85, 0]], dtype=np.uint8)  # 2bpp levels 0..3 (255 - k*85)
+    out = _remap_ink_levels(arr, bpp=2, grey_levels=4)
+    assert list(out[0]) == [255, 170, 85, 0]
+
+
+def test_load_job_grey_levels_default_is_bpp_aware(tmp_path: Path) -> None:
+    # The Meteor RIP now writes grey_levels; older jobs lack it. Default so a 4-bit container is the
+    # Aquinox's 8 levels (fixes the mid-grey preview) WITHOUT breaking a 2bpp job (4 levels, where
+    # container==levels and the remap is a no-op). An explicit key always wins.
+    d = tmp_path / "j4"
+    d.mkdir()
+    (d / "job_info.json").write_text(json.dumps({**SAMPLE_INFO, "bpp": 4}))  # 4bpp, no grey_levels
+    assert load_job(d).grey_levels == 8
+    d2 = tmp_path / "j2"
+    d2.mkdir()
+    (d2 / "job_info.json").write_text(json.dumps({**SAMPLE_INFO, "bpp": 2}))  # 2bpp, no grey_levels
+    assert load_job(d2).grey_levels == 4
+    d3 = tmp_path / "j3"
+    d3.mkdir()
+    (d3 / "job_info.json").write_text(json.dumps({**SAMPLE_INFO, "bpp": 4, "grey_levels": 8}))
+    assert load_job(d3).grey_levels == 8
 
 
 def test_job_to_print_settings_patch(tmp_path: Path) -> None:
