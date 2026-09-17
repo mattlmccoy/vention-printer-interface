@@ -9,6 +9,7 @@ import {
   type VideoInput,
 } from "../lib/webcam.ts";
 import { clampZoom, cropStyle, loadCrop, NO_CROP, panOrigin, saveCrop, type Crop } from "../lib/crop.ts";
+import { applyPayload, numericControls, type NumericControl } from "../lib/track_settings.ts";
 
 const storage = typeof localStorage === "undefined" ? null : localStorage;
 
@@ -39,6 +40,10 @@ export function OverviewCameraPanel({ view }: { base?: string; view: View }) {
   const [crop, setCrop] = useState<Crop>(NO_CROP);
   const drag = useRef<{ x: number; y: number } | null>(null);
   const boxRef = useRef<HTMLDivElement | null>(null);
+  const trackRef = useRef<MediaStreamTrack | null>(null);
+  const [controls, setControls] = useState<NumericControl[]>([]);
+  const [showSettings, setShowSettings] = useState(false);
+  const [reloadNonce, setReloadNonce] = useState(0);
 
   const stop = () => {
     streamRef.current?.getTracks().forEach((t) => t.stop());
@@ -97,6 +102,15 @@ export function OverviewCameraPanel({ view }: { base?: string; view: View }) {
         if (videoRef.current) videoRef.current.srcObject = stream;
         saveOverviewCameraId(storage, selectedId);
         setCrop(loadCrop(storage, selectedId));
+        const track = stream.getVideoTracks()[0] ?? null;
+        trackRef.current = track;
+        try {
+          const caps = (track?.getCapabilities?.() ?? {}) as Record<string, unknown>;
+          const set = (track?.getSettings?.() ?? {}) as Record<string, unknown>;
+          setControls(numericControls(caps, set));
+        } catch {
+          setControls([]);
+        }
         setStatus("live");
       } catch {
         if (!cancelled) setStatus("pick");
@@ -105,7 +119,7 @@ export function OverviewCameraPanel({ view }: { base?: string; view: View }) {
     return () => {
       cancelled = true;
     };
-  }, [visible, selectedId]);
+  }, [visible, selectedId, reloadNonce]);
 
   // Release the camera when hidden or unmounted.
   useEffect(() => {
@@ -147,13 +161,25 @@ export function OverviewCameraPanel({ view }: { base?: string; view: View }) {
     drag.current = null;
   };
 
+  // Live camera control: apply to the running track immediately (near-real-time tuning).
+  const setControl = (key: string, value: number) => {
+    setControls((cs) => cs.map((c) => (c.key === key ? { ...c, value } : c)));
+    trackRef.current?.applyConstraints(applyPayload(key, value)).catch(() => {});
+  };
+  // Re-open the stream — for settings that need a fresh capture (e.g. resolution) or to recover.
+  const reload = () => setReloadNonce((n) => n + 1);
+
   return (
     <section className="cam-panel">
       <header className="cam-panel-head">
         <span className="cam-panel-title">overview camera</span>
         <span className="row" style={{ gap: 6 }}>
           {status === "live" && (
-            <button className="small" onClick={changeCamera} title="choose a different camera">camera</button>
+            <>
+              <button className="small" aria-pressed={showSettings} onClick={() => setShowSettings((s) => !s)} title="camera settings">settings</button>
+              <button className="small" onClick={reload} title="reload the camera (apply resolution / recover)">reload</button>
+              <button className="small" onClick={changeCamera} title="choose a different camera">camera</button>
+            </>
           )}
           <button className="small" aria-expanded={visible} onClick={toggle}>{visible ? "hide" : "show"}</button>
         </span>
@@ -195,6 +221,27 @@ export function OverviewCameraPanel({ view }: { base?: string; view: View }) {
               <span className="hint" style={{ minWidth: 34, textAlign: "right" }}>{crop.zoom.toFixed(1)}×</span>
               {(crop.zoom > 1 || crop.ox !== 50 || crop.oy !== 50) && (
                 <button className="small" onClick={() => applyCrop(NO_CROP)} title="reset zoom & pan">reset</button>
+              )}
+            </div>
+          )}
+          {status === "live" && showSettings && (
+            <div className="cam-settings" style={{ marginTop: 6, display: "flex", flexDirection: "column", gap: 6 }}>
+              {controls.length === 0 ? (
+                <span className="hint">this camera/browser exposes no adjustable controls</span>
+              ) : (
+                controls.map((c) => (
+                  <label key={c.key} className="row" style={{ gap: 8, alignItems: "center" }}>
+                    <span className="hint" style={{ minWidth: 96 }}>{c.label}</span>
+                    <input
+                      type="range" min={c.min} max={c.max} step={c.step} value={c.value}
+                      onChange={(e) => setControl(c.key, Number(e.target.value))}
+                      style={{ flex: 1 }}
+                    />
+                    <span className="hint" style={{ minWidth: 56, textAlign: "right" }}>
+                      {c.key === "frameRate" ? `${Math.round(c.value)} fps` : c.value.toFixed(c.step < 1 ? 2 : 0)}
+                    </span>
+                  </label>
+                ))
               )}
             </div>
           )}
