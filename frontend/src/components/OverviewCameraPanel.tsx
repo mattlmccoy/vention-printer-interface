@@ -11,18 +11,10 @@ import {
 } from "../lib/webcam.ts";
 import { clampZoom, cropStyle, loadCrop, NO_CROP, panOrigin, saveCrop, type Crop } from "../lib/crop.ts";
 import { applyPayload, numericControls, type NumericControl } from "../lib/track_settings.ts";
+import { loadOverviewSettings, videoConstraints } from "../lib/overview_settings.ts";
 import { CameraTiles } from "./CameraTiles.tsx";
 
 const storage = typeof localStorage === "undefined" ? null : localStorage;
-
-// Request the sharpest live view the camera can stream (browser negotiates down if unsupported).
-// Higher capture res keeps the digital crop crisp. 20MP@30 isn't streamable (USB3 bandwidth); 4K@30
-// usually is, else it falls back to 1080p.
-const HIRES: MediaTrackConstraints = {
-  width: { ideal: 3840 },
-  height: { ideal: 2160 },
-  frameRate: { ideal: 30 },
-};
 
 /** Compact, collapsible live view of the OVERVIEW camera.
  *
@@ -95,7 +87,8 @@ export function OverviewCameraPanel({ view }: { base?: string; view: View }) {
     (async () => {
       try {
         stop();
-        const stream = await md.getUserMedia({ video: { deviceId: { exact: selectedId }, ...HIRES } });
+        const s = loadOverviewSettings(storage);
+        const stream = await md.getUserMedia({ video: videoConstraints(selectedId, s) });
         if (cancelled) {
           stream.getTracks().forEach((t) => t.stop());
           return;
@@ -106,6 +99,10 @@ export function OverviewCameraPanel({ view }: { base?: string; view: View }) {
         setCrop(loadCrop(storage, selectedId));
         const track = stream.getVideoTracks()[0] ?? null;
         trackRef.current = track;
+        // Apply the persisted manual controls (exposure, etc.) tuned on the setup page.
+        for (const [key, value] of Object.entries(s.manual)) {
+          track?.applyConstraints(applyPayload(key, value)).catch(() => {});
+        }
         try {
           const caps = (track?.getCapabilities?.() ?? {}) as Record<string, unknown>;
           const set = (track?.getSettings?.() ?? {}) as Record<string, unknown>;
