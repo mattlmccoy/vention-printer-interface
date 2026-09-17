@@ -66,7 +66,10 @@ export function QuickStartVision({ base, call, onSkip, onSaved }: {
   const overviewKey = Object.entries(assign).find(([, r]) => r === "overview")?.[0];
   const scienceKey = Object.entries(assign).find(([, r]) => r === "science")?.[0];
   const sameDevice = overviewKey !== undefined && overviewKey === scienceKey;
-  const canSave = !!overviewKey && !!scienceKey && !sameDevice;
+  // Save with AT LEAST ONE role assigned — a single camera (overview now, science added when the
+  // second is plugged in) must not block the save. The server accepts a partial map and reports
+  // the still-unresolved role. The only hard rule is the two roles can't be the same device.
+  const canSave = (!!overviewKey || !!scienceKey) && !sameDevice;
 
   const save = () => {
     setErr(null);
