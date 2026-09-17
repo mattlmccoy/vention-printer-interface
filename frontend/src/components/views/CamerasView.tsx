@@ -5,7 +5,7 @@ import type { StatusPayload } from "../../lib/telemetry.ts";
 import { formatCaptureMetaValue, parseCaptures, type Capture } from "../../lib/vision.ts";
 import { CalibrationBoardPanel } from "../CalibrationBoardPanel.tsx";
 import { CameraRoleAssigner } from "../CameraRoleAssigner.tsx";
-import { OverviewSettingsPanel } from "../OverviewSettingsPanel.tsx";
+import { CameraSettingsPanel } from "../CameraSettingsPanel.tsx";
 import { CalibrationWizard } from "../CalibrationWizard.tsx";
 import { ValidationPanel } from "../ValidationPanel.tsx";
 import type { Call } from "./types.ts";
@@ -310,7 +310,15 @@ export function CamerasView({ status, gates, call, base, onOpenQuickStart }: {
               </div>
             </div>
           )}
-          {step === 2 && <OverviewSettingsPanel />}
+          {step === 2 && (
+            <div className="grid-gap">
+              <div className="hint" style={{ marginTop: 0 }}>Tune each camera live — resolution (up to 4K@30) and the controls it exposes (fps, exposure, …). Assign the cameras in step 2 first; settings are remembered per camera.</div>
+              <div className="cols-2">
+                <CameraSettingsPanel role="overview" />
+                <CameraSettingsPanel role="science" />
+              </div>
+            </div>
+          )}
           {step === 3 && <CalibrationBoardPanel base={base} />}
           {step === 4 && (
             <div className="grid-gap">
