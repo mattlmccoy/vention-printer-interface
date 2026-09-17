@@ -239,7 +239,6 @@ export function App() {
         </div>
         {!showHelp && showQuickStart && (
           <QuickStartVision
-            base={base}
             call={call}
             onSkip={() => { if (visionStatus) dismissQuickStart(visionStatus, storage); setQuickStartOpen(false); }}
             onSaved={() => { setQuickStartOpen(false); api.visionStatus().then(setVisionStatus).catch(() => undefined); }}
