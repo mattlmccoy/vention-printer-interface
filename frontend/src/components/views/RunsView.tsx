@@ -282,15 +282,19 @@ export function RunsView({ status, gates, call, base }: { status: StatusPayload 
   const selRun = runs.find((r) => r.run === sel) ?? null;
   useEffect(() => { setName(selRun?.name ?? ""); setNotes(selRun?.notes ?? ""); setDirty(false); setViewIdx(-1); setRevealMsg(""); }, [sel]); // eslint-disable-line react-hooks/exhaustive-deps
 
-  // Lightbox: fetch the open capture's sidecar to learn its job folder, so we can show the matching
-  // CAD slice beside the science-cam image (both are bed-plane-registered → a 1:1 comparison).
+  // Lightbox: show the matching CAD slice beside the science-cam image (both bed-plane-registered →
+  // a 1:1 comparison). Prefer the capture sidecar's own job.folder, but FALL BACK to the run's
+  // job_folder metadata — the capture mark event doesn't populate the sidecar's job today, so
+  // without the fallback the CAD slice always read "unavailable for this run" even when the run is
+  // clearly linked to a job.
   useEffect(() => {
     setViewCadErr(false);
-    if (!viewCap?.sidecarUrl) { setViewJobFolder(null); return; }
+    const runFolder = selRun?.job_folder ?? null;
+    if (!viewCap?.sidecarUrl) { setViewJobFolder(runFolder); return; }
     let live = true;
     fetch(`${base}${viewCap.sidecarUrl}`).then((r) => (r.ok ? r.json() : null))
-      .then((j) => { if (live) setViewJobFolder(j?.job?.folder ?? null); })
-      .catch(() => { if (live) setViewJobFolder(null); });
+      .then((j) => { if (live) setViewJobFolder(j?.job?.folder ?? runFolder); })
+      .catch(() => { if (live) setViewJobFolder(runFolder); });
     return () => { live = false; };
   }, [viewIdx, base]); // eslint-disable-line react-hooks/exhaustive-deps
   useEffect(() => { // ?still=N deep-link / capture aid: open a capture ONCE, then strip the param so it
