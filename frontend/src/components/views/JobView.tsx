@@ -7,6 +7,7 @@ import type { JobSnap, StatusPayload } from "../../lib/telemetry.ts";
 import { CrossSection } from "../CrossSection.tsx";
 import { NumberField } from "../NumberField.tsx";
 import { Toggle } from "../Toggle.tsx";
+import { LAYER_HEIGHTS_MM, snapLayerHeightMm } from "../../lib/layer_height.ts";
 import type { Call } from "./types.ts";
 
 type JobRow = Omit<JobSnap, "current_layer">;
@@ -56,7 +57,7 @@ export function JobView({ status, gates, call, onStarted }: { status: StatusPayl
   // The job dictates the layer COUNT only; the layer thickness is the operator's standard choice, so
   // a thickness difference is NOT a mismatch — only a layer-count difference is.
   const mismatch = job && plan && plan.printing.n_layers !== job.layer_count;
-  const LAYER_HEIGHTS = [0.1, 0.15, 0.2];
+  const LAYER_HEIGHTS = LAYER_HEIGHTS_MM;
   const start = async () => {
     if (!plan) return;
     if (dirty) await save();
@@ -113,11 +114,11 @@ export function JobView({ status, gates, call, onStarted }: { status: StatusPayl
                 <div className="legend" style={{ lineHeight: 1.7, fontSize: 14 }}><b>{total.toFixed(1)} mm</b> of {plan.feed_end_mm}<br /><b>{layers}</b> layers<br />heater <b>{plan.heater_enabled ? `${plan.n_heater_passes}×` : "off"}</b></div>
               </div>
               <div className="fields" style={{ marginTop: 16, maxWidth: "none" }}>
-                <span>precoat</span><span className="row"><NumberField value={plan.thin_precoat.n_layers} disabled={running} onChange={(v) => editPh("thin_precoat", { n_layers: v })} style={{ width: 56 }} /> × <NumberField step="0.05" value={plan.thin_precoat.layer_thickness_mm} disabled={running} onChange={(v) => editPh("thin_precoat", { layer_thickness_mm: v })} style={{ width: 72 }} /> mm <span className="hint">(thin precoat — thick precoats now live in Priming)</span></span>
-                <span>postcoat</span><label className="row"><Toggle checked={plan.postcoat_enabled} disabled={running} onChange={(v) => edit({ postcoat_enabled: v })} />{plan.postcoat_enabled && <> · <NumberField value={plan.postcoat.n_layers} disabled={running} onChange={(v) => editPh("postcoat", { n_layers: v })} style={{ width: 56 }} /> × <NumberField step="0.05" value={plan.postcoat.layer_thickness_mm} disabled={running} onChange={(v) => editPh("postcoat", { layer_thickness_mm: v })} style={{ width: 72 }} /> mm</>}</label>
+                <span>precoat</span><span className="row"><NumberField value={plan.thin_precoat.n_layers} disabled={running} onChange={(v) => editPh("thin_precoat", { n_layers: v })} style={{ width: 56 }} /> × <NumberField step="0.1" value={plan.thin_precoat.layer_thickness_mm} disabled={running} onChange={(v) => editPh("thin_precoat", { layer_thickness_mm: snapLayerHeightMm(v) })} style={{ width: 72 }} /> mm <span className="hint">(thin precoat — thick precoats now live in Priming)</span></span>
+                <span>postcoat</span><label className="row"><Toggle checked={plan.postcoat_enabled} disabled={running} onChange={(v) => edit({ postcoat_enabled: v })} />{plan.postcoat_enabled && <> · <NumberField value={plan.postcoat.n_layers} disabled={running} onChange={(v) => editPh("postcoat", { n_layers: v })} style={{ width: 56 }} /> × <NumberField step="0.1" value={plan.postcoat.layer_thickness_mm} disabled={running} onChange={(v) => editPh("postcoat", { layer_thickness_mm: snapLayerHeightMm(v) })} style={{ width: 72 }} /> mm</>}</label>
                 <span>layer height</span><label className="row">
                   <span className="seg">{LAYER_HEIGHTS.map((h) => <button key={h} type="button" className={`small${Math.abs(plan.printing.layer_thickness_mm - h) < 1e-6 ? " on" : ""}`} aria-pressed={Math.abs(plan.printing.layer_thickness_mm - h) < 1e-6} disabled={running} onClick={() => editPh("printing", { layer_thickness_mm: h })}>{h}</button>)}</span>
-                  <input type="number" step="0.05" value={plan.printing.layer_thickness_mm} disabled={running} onChange={(e) => editPh("printing", { layer_thickness_mm: num(e.target.value, plan.printing.layer_thickness_mm) })} style={{ width: 72 }} /> mm{job ? <span className="hint" style={{ marginLeft: 6 }}>slicer: {job.layer_height_mm} mm</span> : null}
+                  <input type="number" step="0.1" min="0.1" value={plan.printing.layer_thickness_mm} disabled={running} onChange={(e) => editPh("printing", { layer_thickness_mm: snapLayerHeightMm(num(e.target.value, plan.printing.layer_thickness_mm)) })} style={{ width: 72 }} /> mm{job ? <span className="hint" style={{ marginLeft: 6 }}>slicer: {job.layer_height_mm} mm</span> : null}
                 </label>
                 {!job && <><span>print layers</span><input type="number" value={plan.printing.n_layers} disabled={running} onChange={(e) => editPh("printing", { n_layers: num(e.target.value, plan.printing.n_layers) })} /></>}
                 <span>heater</span><label className="row"><Toggle checked={plan.heater_enabled} disabled={running} onChange={(v) => edit({ heater_enabled: v })} /> <span className="hint">fire the IR heater each printing layer,</span> <input type="number" value={plan.n_heater_passes} disabled={running || !plan.heater_enabled} onChange={(e) => edit({ n_heater_passes: num(e.target.value, plan.n_heater_passes) })} style={{ width: 56 }} /> pass(es)</label>
