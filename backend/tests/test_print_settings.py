@@ -258,6 +258,32 @@ def test_feed_backlash_preload_drops_feed_before_spread() -> None:
     assert i_down < i_spread < i_up
 
 
+def test_build_backlash_preload_overshoots_the_part_drop() -> None:
+    # Opt-in anti-backlash on the build-piston layer drop. Piston sweep (2026-09-16) showed a ~0.15
+    # mm overshoot-and-return takes 0.1-0.3 mm layer steps from ~55-67% on-target to ~100% (backlash
+    # < 0.1 mm). The drop overshoots DOWN past the layer target by build_backlash_mm, then returns
+    # UP to it: net descent = layer_thickness, approached one-sided so slop is taken up. Default 0.
+    assert PrintSettings().build_backlash_mm == 0.0
+    parts0 = [k for k in kinds_of(one_layer()) if k[0] == "move_rel" and k[1] == PART]
+    assert parts0 == [("move_rel", PART, 2.0)]  # off: single down move (layer_thickness 2.0)
+    p = dataclasses.replace(one_layer(), build_backlash_mm=0.15)
+    parts = [k for k in kinds_of(p) if k[0] == "move_rel" and k[1] == PART]
+    assert parts == [("move_rel", PART, 2.15), ("move_rel", PART, -0.15)]  # down layer+bl, up bl
+    # the overshoot is emitted at the layer start, BEFORE the recoater spread
+    kinds = [(s.kind, s.axis, s.value) for s in compile_print(p)]
+    assert kinds.index(("move_rel", PART, 2.15)) < kinds.index(
+        ("move_abs", RECOATER, p.recoater_end_mm)
+    )
+
+
+def test_build_backlash_mm_is_clamped_to_0_5() -> None:
+    # The preload is a small overshoot to take up lash, never a large plunge: bounded() (the
+    # clamping constructor; from_dict is a raw round-trip) bounds it to [0, 5] mm, so an over-large
+    # value can't drive the part well past its layer target.
+    assert PrintSettings.bounded({"build_backlash_mm": 99}, SafetyLimits()).build_backlash_mm == 5.0
+    assert PrintSettings.bounded({"build_backlash_mm": -3}, SafetyLimits()).build_backlash_mm == 0.0
+
+
 def test_bounded_clamps_new_position_fields() -> None:
     lim = SafetyLimits()
     p = PrintSettings.bounded(
