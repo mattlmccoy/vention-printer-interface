@@ -3,6 +3,7 @@ import type { View } from "../lib/console.ts";
 import { panelVisible, setPanelVisible } from "../lib/vision.ts";
 import {
   loadOverviewCameraId,
+  overviewCandidates,
   pickOverviewDeviceId,
   saveOverviewCameraId,
   videoInputs,
@@ -10,6 +11,7 @@ import {
 } from "../lib/webcam.ts";
 import { clampZoom, cropStyle, loadCrop, NO_CROP, panOrigin, saveCrop, type Crop } from "../lib/crop.ts";
 import { applyPayload, numericControls, type NumericControl } from "../lib/track_settings.ts";
+import { CameraTiles } from "./CameraTiles.tsx";
 
 const storage = typeof localStorage === "undefined" ? null : localStorage;
 
@@ -139,6 +141,13 @@ export function OverviewCameraPanel({ view }: { base?: string; view: View }) {
     setStatus("pick");
   };
 
+  // Pick a camera from the live tiles: drop out of the picker immediately (so the tiles' preview
+  // streams stop and free the hub) and let the open-effect bring up the full-res view.
+  const pickTile = (id: string) => {
+    setStatus("idle");
+    setSelectedId(id);
+  };
+
   const applyCrop = (next: Crop) => {
     setCrop(next);
     if (selectedId) saveCrop(storage, selectedId, next);
@@ -245,31 +254,31 @@ export function OverviewCameraPanel({ view }: { base?: string; view: View }) {
               )}
             </div>
           )}
-          {status !== "live" && (
+          {status === "pick" && (() => {
+            const cands = overviewCandidates(inputs);
+            const tiles = cands.length ? cands : inputs.filter((d) => d.label);
+            return tiles.length ? (
+              <div className="cam-pick" style={{ display: "flex", flexDirection: "column", gap: 6 }}>
+                <span className="hint">click the camera showing the print bed</span>
+                <CameraTiles candidates={tiles} selectedId={selectedId} onPick={pickTile} />
+              </div>
+            ) : (
+              <div className="cam-panel-empty">
+                <span className="cam-panel-ph" aria-hidden="true" />
+                <span>no external camera found — only phone/built-in cameras detected</span>
+              </div>
+            );
+          })()}
+          {status !== "live" && status !== "pick" && (
             <div className="cam-panel-empty">
               <span className="cam-panel-ph" aria-hidden="true" />
-              {status === "pick" ? (
-                <label className="row" style={{ gap: 6, flexWrap: "wrap" }}>
-                  <span>select the overview camera</span>
-                  <select
-                    value=""
-                    onChange={(e) => e.target.value && setSelectedId(e.target.value)}
-                  >
-                    <option value="" disabled>choose…</option>
-                    {inputs.map((d) => (
-                      <option key={d.deviceId} value={d.deviceId}>{d.label || d.deviceId}</option>
-                    ))}
-                  </select>
-                </label>
-              ) : (
-                <span>
-                  {status === "denied"
-                    ? "camera access blocked — allow it in the browser"
-                    : status === "unsupported"
-                      ? "camera not available in this browser"
-                      : "starting camera…"}
-                </span>
-              )}
+              <span>
+                {status === "denied"
+                  ? "camera access blocked — allow it in the browser"
+                  : status === "unsupported"
+                    ? "camera not available in this browser"
+                    : "starting camera…"}
+              </span>
             </div>
           )}
         </div>
