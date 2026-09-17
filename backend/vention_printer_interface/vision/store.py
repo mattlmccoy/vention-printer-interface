@@ -1,8 +1,8 @@
-"""Capture storage layout: per-layer directories, PNG + JSON sidecar, run manifest.
+"""Capture storage layout: per-layer directories, lossless WebP + JSON sidecar, run manifest.
 
 Layout under a run's base directory:
-    vision/layer_0003/post_jet.png        # registered (bed-plane) image
-    vision/layer_0003/post_jet.raw.png    # original unwarped decoded frame
+    vision/layer_0003/post_jet.webp       # registered (bed-plane) image, lossless WebP
+    vision/layer_0003/post_jet.raw.webp   # original unwarped decoded frame, lossless WebP
     vision/layer_0003/post_jet.json       # sidecar metadata (data-model shape below)
     vision/manifest.json                  # append-only list of capture records
 """
@@ -94,12 +94,18 @@ def write_capture(
     d = capture_dir(base, layer)
     d.mkdir(parents=True, exist_ok=True)
 
-    raw_path = d / f"{stage}.raw.png"
-    registered_path = d / f"{stage}.png"
+    # LOSSLESS WebP: pixel-exact (safe for metrology) but far smaller than PNG. In OpenCV a
+    # WEBP_QUALITY above 100 selects lossless mode. Per-layer x 3 stages x (raw+registered) x hi-res
+    # fills disk fast, so this matters a lot.
+    raw_path = d / f"{stage}.raw.webp"
+    registered_path = d / f"{stage}.webp"
     sidecar_path = d / f"{stage}.json"
 
-    cv2.imwrite(str(raw_path), raw)
-    cv2.imwrite(str(registered_path), registered)
+    webp_lossless = [cv2.IMWRITE_WEBP_QUALITY, 101]
+    if not cv2.imwrite(str(raw_path), raw, webp_lossless):
+        raise RuntimeError(f"failed to write {raw_path} (is OpenCV built with WebP?)")
+    if not cv2.imwrite(str(registered_path), registered, webp_lossless):
+        raise RuntimeError(f"failed to write {registered_path} (is OpenCV built with WebP?)")
 
     checksum = hashlib.sha256(registered_path.read_bytes()).hexdigest()
 

@@ -132,7 +132,7 @@ RUN_FILES = frozenset(
         "layer_accuracy.csv",
     }
 )
-VISION_FILE_MEDIA_TYPES = {".png": "image/png", ".json": "application/json"}
+VISION_FILE_MEDIA_TYPES = {".webp": "image/webp", ".png": "image/png", ".json": "application/json"}
 _DEFAULT_FRONTEND_DIST = Path(__file__).resolve().parents[3] / "frontend" / "dist"
 DEFAULT_HEATER_IO: tuple[int, int] = (1, 0)  # UNVERIFIED: identify during commissioning
 OPERATOR_RESTART_DELAY_S = 0.4  # let the HTTP response flush before the process replaces itself

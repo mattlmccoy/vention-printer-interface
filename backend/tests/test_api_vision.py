@@ -375,7 +375,7 @@ def test_vision_capture_event_writes_file_under_active_run_dir(
     )
     app.state.vision.drain(timeout=2.0)
 
-    captured = tmp_path / run_name / "vision" / "layer_0001" / "post_jet.png"
+    captured = tmp_path / run_name / "vision" / "layer_0001" / "post_jet.webp"
     assert captured.exists()
 
     client.post("/api/recording/stop")
@@ -436,7 +436,7 @@ def test_vision_captures_enriches_records_with_url_and_sidecar_url(
     app, client = app_and_client
     _run_name, record = _capture_one_run(app, client, "vision-url-e2e")
 
-    assert record["registered"] == "vision/layer_0001/post_jet.png"
+    assert record["registered"] == "vision/layer_0001/post_jet.webp"
     assert isinstance(record.get("url"), str) and record["url"]
     assert isinstance(record.get("sidecar_url"), str) and record["sidecar_url"]
     assert "/api/vision/runs/" in record["url"]
@@ -451,8 +451,8 @@ def test_vision_run_file_serves_registered_image(
 
     r = client.get(record["url"])
     assert r.status_code == 200
-    assert r.content[:8] == b"\x89PNG\r\n\x1a\n"  # PNG magic bytes
-    assert r.headers["content-type"] == "image/png"
+    assert r.content[:4] == b"RIFF" and r.content[8:12] == b"WEBP"  # WebP magic bytes
+    assert r.headers["content-type"] == "image/webp"
 
 
 def test_vision_run_file_serves_sidecar_json(
