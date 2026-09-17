@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useRef, useState, type PointerEvent as ReactPointerEvent } from "react";
 import type { View } from "../lib/console.ts";
 import { panelVisible, setPanelVisible } from "../lib/vision.ts";
 import {
@@ -8,8 +8,18 @@ import {
   videoInputs,
   type VideoInput,
 } from "../lib/webcam.ts";
+import { clampZoom, cropStyle, loadCrop, NO_CROP, panOrigin, saveCrop, type Crop } from "../lib/crop.ts";
 
 const storage = typeof localStorage === "undefined" ? null : localStorage;
+
+// Request the sharpest live view the camera can stream (browser negotiates down if unsupported).
+// Higher capture res keeps the digital crop crisp. 20MP@30 isn't streamable (USB3 bandwidth); 4K@30
+// usually is, else it falls back to 1080p.
+const HIRES: MediaTrackConstraints = {
+  width: { ideal: 3840 },
+  height: { ideal: 2160 },
+  frameRate: { ideal: 30 },
+};
 
 /** Compact, collapsible live view of the OVERVIEW camera.
  *
@@ -26,6 +36,9 @@ export function OverviewCameraPanel({ view }: { base?: string; view: View }) {
   const [inputs, setInputs] = useState<VideoInput[]>([]);
   const [selectedId, setSelectedId] = useState<string | null>(() => loadOverviewCameraId(storage));
   const [status, setStatus] = useState<"idle" | "live" | "pick" | "denied" | "unsupported">("idle");
+  const [crop, setCrop] = useState<Crop>(NO_CROP);
+  const drag = useRef<{ x: number; y: number } | null>(null);
+  const boxRef = useRef<HTMLDivElement | null>(null);
 
   const stop = () => {
     streamRef.current?.getTracks().forEach((t) => t.stop());
@@ -75,7 +88,7 @@ export function OverviewCameraPanel({ view }: { base?: string; view: View }) {
     (async () => {
       try {
         stop();
-        const stream = await md.getUserMedia({ video: { deviceId: { exact: selectedId } } });
+        const stream = await md.getUserMedia({ video: { deviceId: { exact: selectedId }, ...HIRES } });
         if (cancelled) {
           stream.getTracks().forEach((t) => t.stop());
           return;
@@ -83,6 +96,7 @@ export function OverviewCameraPanel({ view }: { base?: string; view: View }) {
         streamRef.current = stream;
         if (videoRef.current) videoRef.current.srcObject = stream;
         saveOverviewCameraId(storage, selectedId);
+        setCrop(loadCrop(storage, selectedId));
         setStatus("live");
       } catch {
         if (!cancelled) setStatus("pick");
@@ -111,6 +125,28 @@ export function OverviewCameraPanel({ view }: { base?: string; view: View }) {
     setStatus("pick");
   };
 
+  const applyCrop = (next: Crop) => {
+    setCrop(next);
+    if (selectedId) saveCrop(storage, selectedId, next);
+  };
+  const onDown = (e: ReactPointerEvent) => {
+    if (crop.zoom <= 1) return;
+    drag.current = { x: e.clientX, y: e.clientY };
+    (e.target as Element).setPointerCapture?.(e.pointerId);
+  };
+  const onMove = (e: ReactPointerEvent) => {
+    if (!drag.current) return;
+    const box = boxRef.current;
+    if (!box) return;
+    const dx = e.clientX - drag.current.x;
+    const dy = e.clientY - drag.current.y;
+    drag.current = { x: e.clientX, y: e.clientY };
+    applyCrop(panOrigin(crop, dx, dy, box.clientWidth, box.clientHeight));
+  };
+  const onUp = () => {
+    drag.current = null;
+  };
+
   return (
     <section className="cam-panel">
       <header className="cam-panel-head">
@@ -124,14 +160,44 @@ export function OverviewCameraPanel({ view }: { base?: string; view: View }) {
       </header>
       {visible && (
         <div className="cam-panel-body">
-          <video
-            ref={videoRef}
-            className="cam-panel-img"
-            autoPlay
-            playsInline
-            muted
-            style={{ display: status === "live" ? "block" : "none", width: "100%" }}
-          />
+          <div
+            ref={boxRef}
+            className="cam-crop-box"
+            onPointerDown={onDown}
+            onPointerMove={onMove}
+            onPointerUp={onUp}
+            onPointerLeave={onUp}
+            style={{
+              display: status === "live" ? "block" : "none",
+              overflow: "hidden",
+              width: "100%",
+              cursor: crop.zoom > 1 ? (drag.current ? "grabbing" : "grab") : "default",
+              touchAction: "none",
+            }}
+          >
+            <video
+              ref={videoRef}
+              className="cam-panel-img"
+              autoPlay
+              playsInline
+              muted
+              style={{ display: "block", width: "100%", ...cropStyle(crop) }}
+            />
+          </div>
+          {status === "live" && (
+            <div className="row cam-crop-ctl" style={{ gap: 8, alignItems: "center", marginTop: 4 }}>
+              <span className="hint">zoom</span>
+              <input
+                type="range" min={1} max={4} step={0.1} value={crop.zoom}
+                onChange={(e) => applyCrop({ ...crop, zoom: clampZoom(Number(e.target.value)) })}
+                style={{ flex: 1 }}
+              />
+              <span className="hint" style={{ minWidth: 34, textAlign: "right" }}>{crop.zoom.toFixed(1)}×</span>
+              {(crop.zoom > 1 || crop.ox !== 50 || crop.oy !== 50) && (
+                <button className="small" onClick={() => applyCrop(NO_CROP)} title="reset zoom & pan">reset</button>
+              )}
+            </div>
+          )}
           {status !== "live" && (
             <div className="cam-panel-empty">
               <span className="cam-panel-ph" aria-hidden="true" />
