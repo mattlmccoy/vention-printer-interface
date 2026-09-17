@@ -1,4 +1,4 @@
-import { useEffect, useRef } from "react";
+import { useEffect, useRef, type ReactNode } from "react";
 import { labelCandidates, type VideoInput } from "../lib/webcam.ts";
 
 // Low-res, low-fps preview so two identical 20MP cameras can stream side-by-side on one USB hub
@@ -11,19 +11,24 @@ const PREVIEW: MediaTrackConstraints = {
 };
 
 /** One live preview tile for a single camera. Opens its own low-res stream and stops it on unmount
- * (or when the deviceId changes), so leaving the picker frees the camera + hub bandwidth. */
-function Tile({
+ * (or when the deviceId changes), so leaving the picker frees the camera + hub bandwidth. Rendered
+ * as a <div> (not a <button>) so ancestor button rules — e.g. the wizard banner's
+ * `.banner button { height:30px }` — can't crush the preview box. Clickable only when `onClick` is
+ * given; otherwise it is a static tile with an interactive `footer` (e.g. a role dropdown). */
+export function CameraTile({
   cam,
   display,
-  selected,
+  active,
   badge,
-  onPick,
+  footer,
+  onClick,
 }: {
   cam: VideoInput;
   display: string;
-  selected: boolean;
+  active?: boolean;
   badge?: string;
-  onPick: (deviceId: string) => void;
+  footer?: ReactNode;
+  onClick?: () => void;
 }) {
   const videoRef = useRef<HTMLVideoElement | null>(null);
   const streamRef = useRef<MediaStream | null>(null);
@@ -45,7 +50,7 @@ function Tile({
         if (errRef.current) errRef.current.style.display = "none";
       } catch {
         // Camera busy (already open elsewhere) or hub can't supply another stream: show the name
-        // only. The operator can still pick it; the full-res open will retry on selection.
+        // only. The operator can still assign it; the full-res open will retry when it's used.
         if (errRef.current) errRef.current.style.display = "flex";
       }
     })();
@@ -57,24 +62,26 @@ function Tile({
     };
   }, [cam.deviceId]);
 
+  const clickable = !!onClick;
   return (
-    <button
-      type="button"
+    <div
       className="cam-tile"
-      onClick={() => onPick(cam.deviceId)}
-      aria-pressed={selected}
-      title={`use ${display} as the overview`}
+      role={clickable ? "button" : undefined}
+      tabIndex={clickable ? 0 : undefined}
+      aria-pressed={clickable ? !!active : undefined}
+      onClick={onClick}
+      onKeyDown={clickable ? (e) => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); onClick?.(); } } : undefined}
+      title={clickable ? `use ${display}` : undefined}
       style={{
         display: "flex",
         flexDirection: "column",
         gap: 4,
         width: 176,
-        height: "auto", // override any ancestor button height (e.g. .banner button { height:30px })
-        flexShrink: 0, // keep the tile full width in a wrapping flex row, never squished
+        flexShrink: 0,
         padding: 4,
-        cursor: "pointer",
+        cursor: clickable ? "pointer" : "default",
         borderRadius: 8,
-        border: selected ? "2px solid var(--accent, #f5a742)" : "1px solid var(--line, #2a2f3a)",
+        border: active ? "2px solid var(--accent, #f5a742)" : "1px solid var(--line, #2a2f3a)",
         background: "transparent",
         color: "inherit",
         textAlign: "left",
@@ -88,7 +95,7 @@ function Tile({
           muted
           style={{ display: "block", width: "100%", height: "100%", objectFit: "cover" }}
         />
-        {selected && badge && (
+        {active && badge && (
           <span
             style={{
               position: "absolute",
@@ -116,16 +123,17 @@ function Tile({
         </span>
       </div>
       <span style={{ fontSize: 12, lineHeight: 1.2 }}>
-        {selected ? "✓ " : ""}
+        {active && !footer ? "✓ " : ""}
         {display}
       </span>
-    </button>
+      {footer}
+    </div>
   );
 }
 
-/** A grid of live camera tiles for identifying which physical camera is which. Duplicate labels
- * (two identical ELPs) are numbered #1/#2 via labelCandidates, and the live feed itself tells them
- * apart — the operator clicks the one showing the print bed. */
+/** A grid of live camera tiles for a single-select pick (e.g. the dock overview re-picker). Click a
+ * tile to select it. Duplicate labels (two identical ELPs) are numbered #1/#2 via labelCandidates,
+ * and the live feed tells them apart. */
 export function CameraTiles({
   candidates,
   selectedId,
@@ -142,7 +150,14 @@ export function CameraTiles({
   return (
     <div className="cam-tiles" style={{ display: "flex", flexWrap: "wrap", gap: 8 }}>
       {labeled.map((c) => (
-        <Tile key={c.deviceId} cam={c} display={c.display} selected={c.deviceId === selectedId} badge={badge} onPick={onPick} />
+        <CameraTile
+          key={c.deviceId}
+          cam={c}
+          display={c.display}
+          active={c.deviceId === selectedId}
+          badge={badge}
+          onClick={() => onPick(c.deviceId)}
+        />
       ))}
     </div>
   );
