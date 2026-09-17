@@ -276,7 +276,7 @@ export function App() {
           <div className="bodywrap">
             <div className="viewhost">
               {ui.view === "print" && <PrintView status={status} gates={g} call={call} base={base} onJob={() => setView("job")} onRuns={() => setView("runs")} />}
-              {ui.view === "job" && <JobView status={status} gates={g} call={call} onStarted={() => setView("print")} />}
+              {ui.view === "job" && <JobView status={status} gates={g} call={call} onGoPrint={() => setView("print")} />}
               {ui.view === "control" && <ControlView status={status} gates={g} call={call} gantryStep={ui.gantryStep} pistonStep={ui.pistonStep} setGantryStep={(s) => setUi((u) => ({ ...u, gantryStep: s }))} setPistonStep={(s) => setUi((u) => ({ ...u, pistonStep: s }))} />}
               {ui.view === "priming" && <PrimingView status={status} gates={g} call={call} onJob={() => setView("job")} onPrint={() => setView("print")} />}
               {ui.view === "runs" && <RunsView status={status} gates={g} call={call} base={base} />}

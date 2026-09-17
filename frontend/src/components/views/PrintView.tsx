@@ -2,21 +2,18 @@ import { useEffect, useState, type ReactNode } from "react";
 import { api } from "../../lib/api.ts";
 import { fmtMm, fmtSecs, heightMismatch, type Gates } from "../../lib/format.ts";
 import type { StatusPayload } from "../../lib/telemetry.ts";
-import { compilePrint, describeStep, totalLayers, totalThickness, validate, type PrintSettings } from "../../lib/print_settings.ts";
+import { compilePrint, describeStep, type PrintSettings } from "../../lib/print_settings.ts";
 import { estimateDurationS } from "../../lib/estimate.ts";
 import { CrossSection } from "../CrossSection.tsx";
 import { RoutinePanel } from "../RoutinePanel.tsx";
-import { NumberField } from "../NumberField.tsx";
-import { Toggle } from "../Toggle.tsx";
+import { PrintConfigurator } from "./PrintConfigurator.tsx";
 import { parseCaptures, type Capture } from "../../lib/vision.ts";
 import { layerAccuracySummary, parseLayerAccuracy, type LayerAccuracy } from "../../lib/motion.ts";
-import { LAYER_HEIGHTS_MM, snapLayerHeightMm } from "../../lib/layer_height.ts";
 import type { Call } from "./types.ts";
 
 const CMP_STAGES = ["pre_jet", "post_jet", "post_heat"] as const;
 const CMP_STAGE_LABEL: Record<string, string> = { pre_jet: "pre-jet", post_jet: "post-jet", post_heat: "post-heat" };
 
-const LAYER_HEIGHTS = LAYER_HEIGHTS_MM;
 const PHASE_LABEL: Record<string, string> = { thin_precoat: "precoat", printing: "printing", postcoat: "postcoat", setup: "setup", finish: "finishing" };
 const TIMELINE_NOISE = new Set(["set_speed", "set_accel", "wait"]);
 
@@ -61,38 +58,6 @@ export function PrintView({ status, gates, call, base, onJob, onRuns }: { status
     const id = window.setInterval(load, 4000);
     return () => { live = false; window.clearInterval(id); };
   }, [recRun]);
-
-  // ---- manual print (idle, no sliced job): reuses print-settings edit/save + api.printStart.
-  const showManual = !active && !job;
-  const [mplan, setMplan] = useState<PrintSettings | null>(null);
-  const [mdirty, setMdirty] = useState(false);
-  const [mdry, setMdry] = useState(true);
-  const [msingle, setMsingle] = useState(false);
-  useEffect(() => {
-    if (!showManual) return;
-    let live = true;
-    api.printSettings().then((x) => { if (live) { setMplan(x.plan as unknown as PrintSettings); setMdirty(false); } }).catch(() => undefined);
-    return () => { live = false; };
-  }, [showManual, gates.reachable]);
-  const medit = (patch: Partial<PrintSettings>) => mplan && (setMplan({ ...mplan, ...patch }), setMdirty(true));
-  const meditPrinting = (patch: Partial<PrintSettings["printing"]>) => mplan && medit({ printing: { ...mplan.printing, ...patch } });
-  // Send ONLY the fields this form owns (backend deep-merges one level) so routine fields set
-  // elsewhere (n_jet_passes, pre_heater_drop_mm) are never clobbered.
-  const mpatch = (p: PrintSettings) => ({ printing: { n_layers: p.printing.n_layers, layer_thickness_mm: p.printing.layer_thickness_mm }, postcoat_enabled: p.postcoat_enabled, heater_enabled: p.heater_enabled });
-  const msave = async () => { if (!mplan) return; await call("save print_settings", () => api.setPrintSettings(mpatch(mplan)).then((x) => { setMplan(x.plan as unknown as PrintSettings); setMdirty(false); })); };
-  const mReasons = mplan ? validate(mplan) : [];
-  const mLayers = mplan ? totalLayers(mplan) : 0;
-  const mTotal = mplan ? totalThickness(mplan) : 0;
-  const mHeaterOn = !!mplan?.heater_enabled && !mdry;
-  const mstart = async () => {
-    if (!mplan) return;
-    if (mdirty) await msave();
-    if (!mdry) {
-      const heat = mplan.heater_enabled ? "HEATER ON — fires each printing layer" : "⚠ HEATER OFF — no in-situ heating";
-      if (!window.confirm(`Start the manual print on the machine?\n\n${heat}\n${mLayers} layers · ${mTotal.toFixed(1)} mm · ~${fmtSecs(estimateDurationS(mplan))}`)) return;
-    }
-    await call("start", () => api.printStart({ dry_run: mdry, single_step: msingle, name: "manual print" }));
-  };
 
   const total = plan ? estimateDurationS(plan) : 0;
   const remaining = r && total ? Math.max(0, total * (1 - r.step_index / Math.max(r.n_steps, 1))) : null;
@@ -209,7 +174,7 @@ export function PrintView({ status, gates, call, base, onJob, onRuns }: { status
           {r?.state === "paused" && <button className="cta sm primary" disabled={!gates.controllable} onClick={() => call(r.single_step ? "step" : "resume", r.single_step ? api.printStep : api.printResume)}>{r.single_step ? "NEXT STEP" : "RESUME"}</button>}
           {active
             ? <button className="cta sm danger" disabled={!gates.connected} onClick={() => call("abort", api.printAbort)}>ABORT</button>
-            : <button className="cta sm primary" onClick={onJob}>{job ? "START THIS JOB" : "CHOOSE A JOB"}</button>}
+            : (!job && <button className="cta sm primary" onClick={onJob}>CHOOSE A JOB</button>)}
         </div>
       </div>
 
@@ -259,54 +224,17 @@ export function PrintView({ status, gates, call, base, onJob, onRuns }: { status
         </label>
       )}
 
-      {/* body — one focused layout per state */}
-      {active || job ? (
+      {/* body — active shows the live print; otherwise configure + start (job or manual) right here */}
+      {active ? (
         <div className="print-grid">
           {imaging}
-          {active ? (timeline ?? <div className="card"><h3>ready</h3><div className="hint">the timeline appears when a print is compiled.</div></div>) : (
-            <div className="card">
-              <h3>ready to print</h3>
-              <div className="job-map" style={{ marginTop: 0 }}>
-                <span>layers</span><span>{job!.layer_count}</span>
-                <span>part height</span><span>{job!.height_mm} mm</span>
-                <span>footprint</span><span>{job!.bbox_mm.x} × {job!.bbox_mm.y} mm</span>
-                <span>estimate</span><span>~{fmtSecs(total)}</span>
-              </div>
-              <div className="actions one tight" style={{ marginTop: 18 }}>
-                <button className="cta primary" onClick={onJob}>START THIS JOB</button>
-              </div>
-              <div className="hint" style={{ marginTop: 10 }}>Opens the Job tab to confirm settings and launch.</div>
-            </div>
-          )}
+          {timeline ?? <div className="card"><h3>ready</h3><div className="hint">the timeline appears when a print is compiled.</div></div>}
         </div>
       ) : (
-        <div className="card manual-card">
-          <h3>manual print<span className="hint" style={{ textTransform: "none", letterSpacing: 0, fontWeight: 400 }}>no sliced job</span></h3>
-          {mplan ? (
-            <>
-              <div className="hint" style={{ marginTop: 0 }}>Run the print routine straight from these parameters — no sliced job needed.</div>
-              <div className="fields" style={{ marginTop: 16 }}>
-                <span>print layers</span><span className="row"><NumberField value={mplan.printing.n_layers} disabled={!gates.controllable} style={{ width: 80 }} onChange={(v) => meditPrinting({ n_layers: v })} /></span>
-                <span>layer height</span><label className="row">
-                  <span className="seg">{LAYER_HEIGHTS.map((h) => <button key={h} type="button" className={`small${Math.abs(mplan.printing.layer_thickness_mm - h) < 1e-6 ? " on" : ""}`} aria-pressed={Math.abs(mplan.printing.layer_thickness_mm - h) < 1e-6} disabled={!gates.controllable} onClick={() => meditPrinting({ layer_thickness_mm: h })}>{h}</button>)}</span>
-                  <NumberField step="0.1" value={mplan.printing.layer_thickness_mm} disabled={!gates.controllable} style={{ width: 72 }} onChange={(v) => meditPrinting({ layer_thickness_mm: snapLayerHeightMm(v) })} /> mm
-                </label>
-                <span>postcoat</span><label className="row"><Toggle checked={mplan.postcoat_enabled} disabled={!gates.controllable} onChange={(v) => medit({ postcoat_enabled: v })} /></label>
-                <span>heater</span><label className="row" title="Fires the IR heater during the printing layers. Forced off in a dry run."><Toggle label="heater" danger checked={mHeaterOn} disabled={mdry || !gates.controllable} onChange={(v) => medit({ heater_enabled: v })} />{mdry ? <span className="hint">&nbsp;(off in dry run)</span> : null}</label>
-              </div>
-              <div className="chk" style={{ margin: "16px 0" }}>
-                <label><input type="checkbox" checked={mdry} onChange={(e) => setMdry(e.target.checked)} /> dry run (motion only — no heat / no jet)</label>
-                <label><input type="checkbox" checked={msingle} onChange={(e) => setMsingle(e.target.checked)} /> single-step</label>
-              </div>
-              {mReasons.length > 0 ? <div className="errline">{mReasons.join(" · ")}</div> : <div className="okline">{mLayers} layers · {mTotal.toFixed(1)} mm · ~{fmtSecs(estimateDurationS(mplan))}</div>}
-              <div className="actions one tight">
-                <button className={`cta ${mdry ? "" : "primary"}`} disabled={!gates.controllable || mReasons.length > 0} onClick={mstart}>{mdry ? "START DRY RUN" : "START PRINT"}</button>
-                {mdirty && <button className="cta" disabled={!gates.controllable} onClick={msave}>SAVE CHANGES</button>}
-              </div>
-              {!gates.controllable && <div className="lock">{gates.connected ? "read-only · take control from the connection pill" : "connect a controller to start"}</div>}
-            </>
-          ) : <div className="hint">loading print_settings…</div>}
-        </div>
+        <>
+          <div className="sec-h">{job ? `configure & start · ${job.name}` : "configure & start · manual print"}</div>
+          <PrintConfigurator status={status} gates={gates} call={call} onStarted={() => { /* status poll flips to the live layout */ }} />
+        </>
       )}
 
       {/* Print Parameters — collapsible drawer, open by default (operators tune these each run) */}
