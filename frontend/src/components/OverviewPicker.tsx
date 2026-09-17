@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 import { CameraTiles } from "./CameraTiles.tsx";
 import {
+  labelCandidates,
   loadOverviewCameraId,
   overviewCandidates,
   saveOverviewCameraId,
@@ -58,5 +59,15 @@ export function OverviewPicker({ onPicked }: { onPicked?: (deviceId: string) => 
       </span>
     );
   }
-  return <CameraTiles candidates={tiles} selectedId={pick} onPick={onPick} />;
+  const selectedDisplay = labelCandidates(tiles).find((c) => c.deviceId === pick)?.display ?? null;
+  return (
+    <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
+      <CameraTiles candidates={tiles} selectedId={pick} badge="overview" onPick={onPick} />
+      <span className="hint" style={{ marginTop: 0 }}>
+        {selectedDisplay
+          ? `✓ Overview set to ${selectedDisplay} — click the other feed to switch.`
+          : "Click the tile whose live feed shows the print bed to set it as the overview."}
+      </span>
+    </div>
+  );
 }
