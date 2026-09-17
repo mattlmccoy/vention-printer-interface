@@ -1619,6 +1619,10 @@ def create_app(
         overview_active = overview_streamer() is not None
         devices: list[dict[str, Any]] = []
         for device in enumerated:
+            # Only real external USB cameras are assignable — never show the built-in FaceTime or an
+            # iPhone Continuity camera in the device list (they can't hold a role either).
+            if not device.get("assignable", True):
+                continue
             role = role_by_index.get(int(device["index"]))
             preview_url = (
                 "/api/vision/overview/stream" if role == "overview" and overview_active else None

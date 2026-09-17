@@ -165,6 +165,40 @@ def test_resolve_roles_does_not_assign_two_roles_to_the_same_device():
     assert unresolved_roles(enumerated, mapping) == ["overview"]
 
 
+def test_resolve_roles_skips_index_fallback_when_two_cameras_share_vid_pid():
+    """Two IDENTICAL-model cameras (same vid_pid) with NO confirmed stable_id mapping: an index
+    guess is a coin flip that can silently open the WRONG physical camera (the 2026-09-16 bug —
+    identical ELP U3 cameras / an iPhone stealing index 0). So resolve_roles must NOT fall back to
+    the configured index when a role's device model is ambiguous — it leaves the role unresolved
+    (→ wizard) rather than auto-binding a guess."""
+    config = CameraConfig.from_dict({"overview": {"index": 0}, "science": {"index": 1}})
+    enumerated = [
+        {"index": 0, "stable_id": "macos-uid:0xAAAA32e42020", "name": "20MP U3 Camera",
+         "vid_pid": "13028:8224"},
+        {"index": 1, "stable_id": "macos-uid:0xBBBB32e42020", "name": "20MP U3 Camera",
+         "vid_pid": "13028:8224"},
+    ]
+    resolved = resolve_roles(enumerated, {}, config)  # no confirmed mapping
+    assert "overview" not in resolved  # no coin-flip auto-open
+    assert "science" not in resolved
+
+
+def test_resolve_roles_matches_two_identical_cameras_by_port_stable_id():
+    """The counterpart: once each identical camera is confirmed to a role by its per-port stable_id,
+    both resolve despite sharing a vid_pid — the guard only blocks the UNCONFIRMED index guess."""
+    config = CameraConfig.from_dict({"overview": {"index": 0}, "science": {"index": 1}})
+    enumerated = [
+        {"index": 0, "stable_id": "macos-uid:0xAAAA32e42020", "name": "20MP U3 Camera",
+         "vid_pid": "13028:8224"},
+        {"index": 1, "stable_id": "macos-uid:0xBBBB32e42020", "name": "20MP U3 Camera",
+         "vid_pid": "13028:8224"},
+    ]
+    mapping = {"macos-uid:0xAAAA32e42020": "overview", "macos-uid:0xBBBB32e42020": "science"}
+    resolved = resolve_roles(enumerated, mapping, config)
+    assert resolved["overview"].stable_id == "macos-uid:0xAAAA32e42020"
+    assert resolved["science"].stable_id == "macos-uid:0xBBBB32e42020"
+
+
 def test_save_and_load_role_map_round_trips(tmp_path: Path):
     path = tmp_path / "role_map.json"
     mapping = {"usb-A-overview": "overview", "usb-B-science": "science"}
@@ -352,6 +386,66 @@ def test_parse_macos_cameras_from_real_system_profiler():
     assert devs[1]["stable_id"] == "macos-uid:0x110000046d08e5"
     # identification does NOT open the camera -> frame state is unknown, not a false "denied"
     assert all(d["has_frame"] is None and d["probed"] is False for d in devs)
+
+
+def test_parse_macos_marks_builtin_and_continuity_cameras_not_assignable():
+    # We must NOT show or auto-assign the built-in FaceTime or an iPhone Continuity camera — only
+    # real external USB cameras (the ELPs). macOS reports a real USB camera's model-id as a USB id
+    # (`UVC Camera VendorID_… ProductID_…` or a hex `0x…`); built-ins have a descriptive name and
+    # Continuity cameras have no model-id at all. Real captured strings.
+    from vention_printer_interface.vision.cameras import _parse_macos_cameras
+    data = {"SPCameraDataType": [
+        {"_name": "20MP U3 Camera",
+         "spcamera_model-id": "UVC Camera VendorID_13028 ProductID_8224",
+         "spcamera_unique-id": "0x23000032e42020"},
+        {"_name": "HD Pro Webcam C920", "spcamera_model-id": "0x110000046d08e5"},
+        {"_name": "FaceTime HD Camera", "spcamera_model-id": "FaceTime HD Camera",
+         "spcamera_unique-id": "3F45E80A-0176-46F7-B185-BB9E2C0E82E3"},
+        {"_name": "mattmccoy-iphone Camera",
+         "spcamera_unique-id": "0075DA72-2CAB-4BE3-9FCA-8C9100000001"},
+    ]}
+    devs = _parse_macos_cameras(data)
+    assert [d["assignable"] for d in devs] == [True, True, False, False]  # ELP,C920 show; rest hide
+    # indexes are preserved (never renumbered) so cv2.VideoCapture still opens the right device
+    assert [d["index"] for d in devs] == [0, 1, 2, 3]
+
+
+def test_resolve_roles_never_assigns_a_nonassignable_camera():
+    # An iPhone Continuity camera at index 0 + the ELP at index 1, no confirmed mapping: overview's
+    # configured index is 0, but the iPhone is non-assignable, so it must NEVER become overview. The
+    # role is left unresolved (→ wizard) rather than silently bound to the phone (the single-ELP +
+    # iPhone case the vid_pid guard alone didn't cover).
+    config = CameraConfig.from_dict({"overview": {"index": 0}, "science": {"index": 1}})
+    enumerated = [
+        {"index": 0, "stable_id": "macos-uid:iphone-uuid", "name": "mattmccoy-iphone Camera",
+         "vid_pid": None, "assignable": False},
+        {"index": 1, "stable_id": "macos-uid:0x23000032e42020", "name": "20MP U3 Camera",
+         "vid_pid": "13028:8224", "assignable": True},
+    ]
+    resolved = resolve_roles(enumerated, {}, config)
+    # the iPhone (index 0) is never bound to any role
+    assert all(spec.index != 0 for spec in resolved.values())
+    assert "overview" not in resolved  # configured-index-0 device is the hidden iPhone → unresolved
+
+
+def test_parse_macos_cameras_extracts_vid_pid_for_identical_model_detection():
+    # vid_pid (VendorID:ProductID) is what lets resolve_roles detect two identical-model cameras and
+    # refuse an ambiguous index guess. Parsed from the UVC model-id; None when the camera reports no
+    # UVC VendorID (built-in FaceTime, iPhone Continuity). Real captured macOS model-id strings.
+    from vention_printer_interface.vision.cameras import _parse_macos_cameras
+    data = {"SPCameraDataType": [
+        {"_name": "20MP U3 Camera",
+         "spcamera_model-id": "UVC Camera VendorID_13028 ProductID_8224",
+         "spcamera_unique-id": "0x23000032e42020"},
+        {"_name": "FaceTime HD Camera", "spcamera_model-id": "FaceTime HD Camera",
+         "spcamera_unique-id": "3F45E80A-0176-46F7-B185-BB9E2C0E82E3"},
+        {"_name": "mattmccoy-iphone Camera",
+         "spcamera_unique-id": "0075DA72-2CAB-4BE3-9FCA-8C9100000001"},
+    ]}
+    devs = _parse_macos_cameras(data)
+    assert devs[0]["vid_pid"] == "13028:8224"  # ELP UVC camera — the discriminator for two of them
+    assert devs[1]["vid_pid"] is None  # FaceTime built-in — no UVC VendorID
+    assert devs[2]["vid_pid"] is None  # iPhone Continuity — no model-id at all
 
 
 def test_camera_access_state_unknown_when_unprobed():

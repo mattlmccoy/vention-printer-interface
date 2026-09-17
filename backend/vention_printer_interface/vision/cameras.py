@@ -14,6 +14,7 @@ import json
 import logging
 import os
 import platform
+import re
 import subprocess
 from dataclasses import dataclass, replace
 from pathlib import Path
@@ -130,18 +131,29 @@ def resolve_roles(
     stricter, operator-confirmation-only notion of "resolved" that drives the quick-start UI.
     """
     specs = {"overview": config.overview, "science": config.science}
+    # A built-in (FaceTime) or Continuity (iPhone) camera is never a role candidate — it must not be
+    # shown OR auto-assigned. Devices with no `assignable` key (older callers / test fixtures)
+    # default to assignable so existing behavior is unchanged.
+    candidates = [d for d in enumerated_devices if d.get("assignable", True)]
     by_stable_id = {
         device["stable_id"]: device
-        for device in enumerated_devices
+        for device in candidates
         if device.get("stable_id") is not None
     }
-    by_index = {device["index"]: device for device in enumerated_devices}
+    by_index = {device["index"]: device for device in candidates}
+    # How many enumerated devices share each vid_pid. When ≥2 cameras are the SAME model, an index
+    # guess cannot tell them apart, so the unconfirmed index fallback below must refuse to bind one.
+    vid_pid_counts: dict[str, int] = {}
+    for dev in candidates:
+        vp = dev.get("vid_pid")
+        if vp:
+            vid_pid_counts[vp] = vid_pid_counts.get(vp, 0) + 1
 
     resolved: dict[str, CameraSpec] = {}
     resolved_explicitly: dict[str, bool] = {}
     device_index_by_role: dict[str, int] = {}
     for role, spec in specs.items():
-        device = None
+        device: dict[str, Any] | None = None
         matched_explicitly = False
         for stable_id, mapped_role in mapping.items():
             if mapped_role == role and stable_id in by_stable_id:
@@ -149,7 +161,15 @@ def resolve_roles(
                 matched_explicitly = True
                 break
         if device is None:
-            device = by_index.get(spec.index)
+            # Unconfirmed index fallback (best-effort for a fresh single-camera machine). Refuse it
+            # when the device at that index is one of ≥2 identical-model cameras: an index guess
+            # among identical cameras can silently open the WRONG physical one (2026-09-16 —
+            # identical ELP U3 cameras / an iPhone stealing index 0). Leave the role unresolved so
+            # the operator confirms it in the wizard instead.
+            candidate: dict[str, Any] | None = by_index.get(spec.index)
+            if candidate is not None and vid_pid_counts.get(candidate.get("vid_pid") or "", 0) >= 2:
+                candidate = None
+            device = candidate
         if device is None:
             continue
         resolved[role] = replace(
@@ -192,7 +212,9 @@ def unresolved_roles(
     swapped, or a mapped stable_id that isn't currently enumerated).
     """
     known_stable_ids = {
-        device["stable_id"] for device in enumerated_devices if device.get("stable_id") is not None
+        device["stable_id"]
+        for device in enumerated_devices
+        if device.get("stable_id") is not None and device.get("assignable", True)
     }
     resolved: set[str] = {
         role for stable_id, role in mapping.items() if stable_id in known_stable_ids
@@ -243,9 +265,34 @@ def _parse_macos_cameras(data: dict[str, Any]) -> list[dict[str, Any]]:
         name = cam.get("_name")
         uid = cam.get("spcamera_unique-id") or cam.get("spcamera_model-id")
         stable_id = f"macos-uid:{uid}" if uid else f"idx:{index}"
+        model_id = cam.get("spcamera_model-id")
         out.append({"index": index, "stable_id": stable_id, "name": name,
+                    "vid_pid": _macos_vid_pid(model_id),
+                    "assignable": _is_assignable_camera(model_id),
                     "has_frame": None, "probed": False})
     return out
+
+
+def _macos_vid_pid(model_id: str | None) -> str | None:
+    """`VendorID:ProductID` from a macOS UVC model-id, else None. A generic UVC camera reports
+    `"UVC Camera VendorID_13028 ProductID_8224"`; built-in (FaceTime) and Continuity (iPhone)
+    cameras have no VendorID, so they return None and never trip the identical-model guard. This is
+    the signal `resolve_roles` uses to detect two SAME-model cameras and refuse an index guess."""
+    if not model_id:
+        return None
+    m = re.search(r"VendorID_(\d+)\s+ProductID_(\d+)", model_id)
+    return f"{m.group(1)}:{m.group(2)}" if m else None
+
+
+def _is_assignable_camera(model_id: str | None) -> bool:
+    """True only for a real external USB camera we can assign to a role. The built-in FaceTime and
+    an iPhone Continuity camera must NOT be shown or auto-assigned (operator directive). macOS gives
+    a real USB camera a USB `spcamera_model-id` — `"UVC Camera VendorID_… ProductID_…"` or a hex
+    `"0x…"`; the built-in has a descriptive name (`"FaceTime HD Camera"`) and a Continuity camera
+    has no model-id at all, so both are filtered out here."""
+    if not model_id:
+        return False
+    return model_id.startswith("0x") or "VendorID_" in model_id
 
 
 def _metadata_devices() -> list[dict[str, Any]]:
