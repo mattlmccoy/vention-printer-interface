@@ -24,7 +24,12 @@ export const DEFAULT_OVERVIEW_SETTINGS: OverviewSettings = {
   manual: {},
 };
 
-const KEY = "vpi.overviewSettings";
+/** The two client-side camera roles that carry their own live-tuned settings. */
+export type SettingsRole = "overview" | "science";
+const KEYS: Record<SettingsRole, string> = {
+  overview: "vpi.overviewSettings",
+  science: "vpi.scienceSettings",
+};
 
 /** Width/height for a resolution key; unknown keys fall back to 4K (the default we always request). */
 export function resolutionWH(key: string): { width: number; height: number } {
@@ -44,9 +49,10 @@ export function videoConstraints(deviceId: string, s: OverviewSettings): MediaTr
   };
 }
 
-export function loadOverviewSettings(storage: Storage | null): OverviewSettings {
+/** Load a role's settings, merged over the defaults (a partial saved blob keeps default fields). */
+export function loadCameraSettings(storage: Storage | null, role: SettingsRole): OverviewSettings {
   try {
-    const raw = storage?.getItem(KEY);
+    const raw = storage?.getItem(KEYS[role]);
     if (!raw) return { ...DEFAULT_OVERVIEW_SETTINGS, manual: {} };
     const p = JSON.parse(raw) as Partial<OverviewSettings>;
     return {
@@ -59,10 +65,18 @@ export function loadOverviewSettings(storage: Storage | null): OverviewSettings 
   }
 }
 
-export function saveOverviewSettings(storage: Storage | null, s: OverviewSettings): void {
+export function saveCameraSettings(storage: Storage | null, role: SettingsRole, s: OverviewSettings): void {
   try {
-    storage?.setItem(KEY, JSON.stringify(s));
+    storage?.setItem(KEYS[role], JSON.stringify(s));
   } catch {
     /* storage disabled: settings just aren't remembered */
   }
+}
+
+// Overview aliases — the dock live view reads/writes the overview role.
+export function loadOverviewSettings(storage: Storage | null): OverviewSettings {
+  return loadCameraSettings(storage, "overview");
+}
+export function saveOverviewSettings(storage: Storage | null, s: OverviewSettings): void {
+  saveCameraSettings(storage, "overview", s);
 }

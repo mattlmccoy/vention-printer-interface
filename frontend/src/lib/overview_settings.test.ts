@@ -2,9 +2,11 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import {
   DEFAULT_OVERVIEW_SETTINGS,
+  loadCameraSettings,
   loadOverviewSettings,
   resolutionWH,
   RESOLUTIONS,
+  saveCameraSettings,
   saveOverviewSettings,
   videoConstraints,
 } from "./overview_settings.ts";
@@ -54,6 +56,22 @@ test("load returns defaults with no storage / empty storage, and merges a partia
   assert.equal(loaded.resolution, "1280x720");
   assert.equal(loaded.frameRate, 30);
   assert.deepEqual(loaded.manual, {});
+});
+
+test("overview and science settings persist under separate keys, both default 4K@30", () => {
+  const s = memStorage();
+  // both default before anything is saved
+  assert.equal(loadCameraSettings(s, "overview").resolution, "3840x2160");
+  assert.equal(loadCameraSettings(s, "science").resolution, "3840x2160");
+  saveCameraSettings(s, "science", { resolution: "1920x1080", frameRate: 15, manual: { exposureTime: 800 } });
+  saveCameraSettings(s, "overview", { resolution: "3840x2160", frameRate: 30, manual: {} });
+  // independent
+  assert.equal(loadCameraSettings(s, "science").resolution, "1920x1080");
+  assert.equal(loadCameraSettings(s, "science").frameRate, 15);
+  assert.deepEqual(loadCameraSettings(s, "science").manual, { exposureTime: 800 });
+  assert.equal(loadCameraSettings(s, "overview").resolution, "3840x2160");
+  // loadOverviewSettings is the overview alias
+  assert.deepEqual(loadOverviewSettings(s), loadCameraSettings(s, "overview"));
 });
 
 test("save then load round-trips", () => {
