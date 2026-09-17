@@ -160,6 +160,26 @@ def test_no_camera_opened_at_startup(tmp_path: Path) -> None:
         assert not overview.is_open
 
 
+def test_unresolved_roles_open_no_camera_not_the_default_index(tmp_path: Path) -> None:
+    """Regression (2026-09-16): with only a NON-assignable camera present (built-in FaceTime /
+    iPhone), overview + science are unresolved — and the app must NOT fall back to opening the
+    default index-0/1 spec (which streamed the FaceTime into the overview panel despite "no cameras
+    detected"). No source injected here, so if the fallback survived, open_overview would build a
+    real UvcFrameSource and the streamer would be constructed; the fix opens nothing."""
+    def only_facetime() -> list[dict[str, Any]]:
+        return [{"index": 0, "stable_id": "macos-uid:facetime-uuid", "name": "FaceTime HD Camera",
+                 "vid_pid": None, "assignable": False, "has_frame": None, "probed": False}]
+
+    app = create_app(
+        backend="none", experiments_root=tmp_path, poll_interval_s=0.05,
+        device_enumerator=only_facetime,
+    )
+    with TestClient(app) as c:
+        assert c.get("/api/vision/devices").json()["devices"] == []  # nothing shown
+        assert app.state.overview_streamer is None  # overview unresolved -> opened nothing
+        assert app.state.vision is None  # science unresolved -> no capture service on a default cam
+
+
 def test_startup_does_not_crash_with_a_failing_source_and_degrades_gracefully(
     tmp_path: Path,
 ) -> None:

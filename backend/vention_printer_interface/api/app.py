@@ -656,10 +656,22 @@ def create_app(
 
         # Vision: a science-camera capture worker fed by capture:* marks off the same EventLog.
         # Guard hardware: an absent/broken camera must never block or crash app startup.
-        def open_science(spec: CameraSpec) -> None:
-            source = vision_source or UvcFrameSource(
-                spec.index, spec.width, spec.height, spec.effective_backend()
-            )
+        def open_science(spec: CameraSpec | None) -> None:
+            # spec is None when the science role is unresolved (no assignable camera). Open NOTHING
+            # then — never fall back to a default index, which would open the built-in/first camera
+            # (the 2026-09-16 "FaceTime streamed despite no cameras detected" bug). An injected test
+            # source still opens.
+            if spec is None and vision_source is None:
+                app.state.vision = None
+                app.state.vision_source = None
+                return
+            if vision_source is not None:
+                source: FrameSource = vision_source
+            else:
+                assert spec is not None  # guaranteed by the early return above
+                source = UvcFrameSource(
+                    spec.index, spec.width, spec.height, spec.effective_backend()
+                )
             vision_svc = VisionService(
                 source=source,
                 run_dir_provider=lambda: recorder.current_run_dir,
@@ -682,9 +694,15 @@ def create_app(
         # The overview camera is opened lazily on the first stream viewer and released when the
         # last viewer disconnects (see OverviewStreamer), so it is never held open at idle. A
         # broken/absent camera therefore surfaces at stream time (503), never blocking startup.
-        def open_overview(spec: CameraSpec) -> None:
+        def open_overview(spec: CameraSpec | None) -> None:
             app.state.overview_source = None
             app.state.overview_streamer = None
+            # spec is None when the overview role is unresolved (no assignable camera). Build
+            # NOTHING then — never fall back to a default index, which would stream the built-in /
+            # first camera (the 2026-09-16 "FaceTime in the overview panel despite no cameras
+            # detected" bug). An injected test source still opens.
+            if spec is None and overview_source is None:
+                return
             # Hot-plug reconnect: on sustained grab failure the streamer rebuilds its source via
             # this factory, which RE-RESOLVES the overview camera's device index (the OS can hand
             # out a different index on replug) — so unplug/replug recovers the live feed by itself.
@@ -697,9 +715,13 @@ def create_app(
 
             try:
                 factory = None if overview_source is not None else make_overview_source
-                ov_source = overview_source or UvcFrameSource(
-                    spec.index, spec.width, spec.height, spec.effective_backend()
-                )
+                if overview_source is not None:
+                    ov_source: FrameSource = overview_source
+                else:
+                    assert spec is not None  # guaranteed by the early return above
+                    ov_source = UvcFrameSource(
+                        spec.index, spec.width, spec.height, spec.effective_backend()
+                    )
                 app.state.overview_source = ov_source
                 app.state.overview_streamer = OverviewStreamer(ov_source, source_factory=factory)
             except Exception as exc:  # noqa: BLE001 - constructing must never block startup
@@ -710,8 +732,8 @@ def create_app(
         app.state.vision_open_overview = open_overview
 
         resolved = refresh_role_resolution()
-        open_science(resolved.get("science", camera_config.science))
-        open_overview(resolved.get("overview", camera_config.overview))
+        open_science(resolved.get("science"))
+        open_overview(resolved.get("overview"))
 
         def on_print_event(label: str, data: dict[str, Any]) -> None:
             events.append(label, data)
@@ -1663,7 +1685,7 @@ def create_app(
                 vision.stop()
             except Exception as exc:  # noqa: BLE001 - a stuck worker must not block the reopen
                 log.warning("vision service stop before reopen failed (%s)", exc)
-        app.state.vision_open_science(resolved.get("science", camera_config.science))
+        app.state.vision_open_science(resolved.get("science"))
 
         streamer = overview_streamer()
         if streamer is not None:
@@ -1677,7 +1699,7 @@ def create_app(
                 src.close()
             except Exception as exc:  # noqa: BLE001 - guarded reopen
                 log.warning("overview source close before reopen failed (%s)", exc)
-        app.state.vision_open_overview(resolved.get("overview", camera_config.overview))
+        app.state.vision_open_overview(resolved.get("overview"))
 
         unresolved: list[str] = list(app.state.vision_unresolved_roles)
         return {"mapping": body.mapping, "roles_resolved": not unresolved, "unresolved": unresolved}
