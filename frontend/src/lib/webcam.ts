@@ -56,6 +56,35 @@ export function pickOverviewDeviceId(
   return null;
 }
 
+/** The real cameras to show as live preview tiles when the operator must identify one by sight:
+ *  every labelled, non-built-in/phone camera, in enumeration order. With two identical ELPs this
+ *  returns both (their labels match, so only a live feed tells them apart); with one real camera it
+ *  still returns it so the tile confirms which physical device it is. Blank-label devices are
+ *  dropped — with no label they can't be named or reliably previewed. */
+export function overviewCandidates(inputs: VideoInput[]): VideoInput[] {
+  return inputs.filter((d) => d.label && !isBuiltinOrPhoneLabel(d.label));
+}
+
+/** A camera plus a display name that stays unique when two devices share a label. */
+export interface LabeledCamera extends VideoInput {
+  display: string;
+}
+
+/** Give each camera a display name, appending " #n" ONLY to labels that collide (two identical
+ *  ELPs -> "…Camera #1" / "…Camera #2"); unique labels are left untouched. Ordinals count within
+ *  the same label, in list order, so a tile's number is stable for a given enumeration. */
+export function labelCandidates(cams: VideoInput[]): LabeledCamera[] {
+  const counts = new Map<string, number>();
+  for (const c of cams) counts.set(c.label, (counts.get(c.label) ?? 0) + 1);
+  const seen = new Map<string, number>();
+  return cams.map((c) => {
+    if ((counts.get(c.label) ?? 0) <= 1) return { ...c, display: c.label };
+    const n = (seen.get(c.label) ?? 0) + 1;
+    seen.set(c.label, n);
+    return { ...c, display: `${c.label} #${n}` };
+  });
+}
+
 export function loadOverviewCameraId(storage: Storage | null): string | null {
   try {
     return storage?.getItem(OVERVIEW_CAM_KEY) || null;
