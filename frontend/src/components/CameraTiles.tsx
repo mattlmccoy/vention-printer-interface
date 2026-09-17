@@ -44,7 +44,7 @@ function Tile({
       } catch {
         // Camera busy (already open elsewhere) or hub can't supply another stream: show the name
         // only. The operator can still pick it; the full-res open will retry on selection.
-        if (errRef.current) errRef.current.style.display = "block";
+        if (errRef.current) errRef.current.style.display = "flex";
       }
     })();
     return () => {
@@ -58,6 +58,7 @@ function Tile({
   return (
     <button
       type="button"
+      className="cam-tile"
       onClick={() => onPick(cam.deviceId)}
       aria-pressed={selected}
       title={`use ${display} as the overview`}
@@ -66,6 +67,8 @@ function Tile({
         flexDirection: "column",
         gap: 4,
         width: 176,
+        height: "auto", // override any ancestor button height (e.g. .banner button { height:30px })
+        flexShrink: 0, // keep the tile full width in a wrapping flex row, never squished
         padding: 4,
         cursor: "pointer",
         borderRadius: 8,
@@ -113,7 +116,7 @@ export function CameraTiles({
 }) {
   const labeled = labelCandidates(candidates);
   return (
-    <div style={{ display: "flex", flexWrap: "wrap", gap: 8 }}>
+    <div className="cam-tiles" style={{ display: "flex", flexWrap: "wrap", gap: 8 }}>
       {labeled.map((c) => (
         <Tile key={c.deviceId} cam={c} display={c.display} selected={c.deviceId === selectedId} onPick={onPick} />
       ))}
