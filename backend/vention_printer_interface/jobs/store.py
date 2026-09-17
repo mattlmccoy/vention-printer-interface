@@ -19,9 +19,26 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
+import numpy as np
 from PIL import Image
 
 _PAGE_RE = re.compile(r"_Page(\d+)_Clr(\d+)\.tif{1,2}$", re.IGNORECASE)
+
+
+def _remap_ink_levels(arr: np.ndarray, bpp: int, grey_levels: int) -> np.ndarray:
+    """Re-map PIL's container-scaled greyscale to the printhead's usable grey-level range, for
+    DISPLAY only. PIL loads a WhiteIsZero page scaled on the 4-bit container (``2**bpp - 1``): ink
+    level ``k`` becomes ``255 - k*255/(2**bpp-1)``. An 8-grey-level head (Xaar Aquinox) in a 4-bit
+    container therefore renders max ink (level 7) as ``7/15 ≈ 47%`` grey instead of black. This
+    recovers the true ink level from the container scale, then rescales on ``grey_levels - 1`` so
+    the top level renders full black (level 0 stays white). It is a no-op when
+    ``grey_levels - 1 == 2**bpp - 1`` (an older job where the container equals the level count).
+    Display-only: it never touches the TIFF or what MetPrint fires."""
+    container_max = (1 << max(1, bpp)) - 1
+    ceil = max(1, grey_levels - 1)
+    level = np.rint((255.0 - arr.astype(np.float64)) * container_max / 255.0)
+    disp = 255.0 - level * (255.0 / ceil)
+    return np.clip(disp, 0.0, 255.0).round().astype(np.uint8)
 
 
 @dataclass(frozen=True)
@@ -34,6 +51,7 @@ class JobInfo:
     bbox_mm: tuple[float, float, float]
     dpi: int
     bpp: int
+    grey_levels: int  # usable ink levels of the head (Aquinox = 8); the preview scales on this - 1
     timestamp: str
     pages: tuple[Path, ...]
     workflow: str = ""
@@ -77,6 +95,7 @@ class JobInfo:
             "bbox_mm": {"x": self.bbox_mm[0], "y": self.bbox_mm[1], "z": self.bbox_mm[2]},
             "dpi": self.dpi,
             "bpp": self.bpp,
+            "grey_levels": self.grey_levels,
             "timestamp": self.timestamp,
             "complete": self.complete,
             "missing_pages": list(self.missing_pages),
@@ -106,6 +125,11 @@ def load_job(job_dir: Path) -> JobInfo:
         job_dir, str(info.get("job_name") or job_dir.name), info.get("preview_file")
     )
     bbox = info.get("bbox_mm") or {}
+    bpp = int(info.get("bpp", 2))
+    # The Meteor RIP now writes the head's usable grey-level count. Older jobs lack it: a 4-bit
+    # container on this printer is the Aquinox's 8 levels; a 2-bit container is its own 4 levels
+    # (where grey_levels == 2**bpp, so the preview remap is a no-op). Explicit key always wins.
+    grey_levels = int(info.get("grey_levels") or (8 if bpp >= 4 else (1 << bpp)))
     return JobInfo(
         dir=job_dir,
         name=str(info.get("job_name") or job_dir.name),
@@ -114,7 +138,8 @@ def load_job(job_dir: Path) -> JobInfo:
         height_mm=height,
         bbox_mm=(float(bbox.get("x_mm", 0.0)), float(bbox.get("y_mm", 0.0)), height),
         dpi=int(info.get("dpi", 720)),
-        bpp=int(info.get("bpp", 2)),
+        bpp=bpp,
+        grey_levels=grey_levels,
         timestamp=str(info.get("timestamp", "")),
         pages=tuple(ordered),
         workflow=str(info.get("workflow") or ""),
@@ -154,10 +179,12 @@ def layer_png(job: JobInfo, layer: int, *, max_px: int = 700) -> bytes:
     if key in job._cache:
         return job._cache[key]
     with Image.open(job.pages[layer - 1]) as im:
-        gray = im.convert("L")
-        # Pillow presents WhiteIsZero pages as a normal L image: 255 = paper, 0 = full ink
-        # (verified on ir_heater_socket_mount_v1 from the lab hot folder, 2026-09-09).
-        # The PNG keeps that greyscale as-is.
+        # Pillow loads a WhiteIsZero page scaled on the 4-bit CONTAINER (2**bpp-1=15), so an 8-grey-
+        # level Aquinox head's max ink (level 7) comes back as 136 (mid-grey), not black. Rescale on
+        # the head's usable level ceiling (grey_levels-1=7) so full ink renders black. Display-only.
+        gray = Image.fromarray(
+            _remap_ink_levels(np.asarray(im.convert("L")), job.bpp, job.grey_levels), mode="L"
+        )
         w, h = gray.size
         scale = min(1.0, max_px / max(w, h))
         if scale < 1.0:
