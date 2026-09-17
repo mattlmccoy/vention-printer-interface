@@ -284,6 +284,30 @@ def test_build_backlash_mm_is_clamped_to_0_5() -> None:
     assert PrintSettings.bounded({"build_backlash_mm": -3}, SafetyLimits()).build_backlash_mm == 0.0
 
 
+def test_bounded_snaps_layer_height_to_the_0_1mm_readout_grid() -> None:
+    # The build-piston position readout is quantized to 0.1 mm, so a layer height between quanta
+    # (0.05, 0.15) can't be placed or verified. bounded() snaps every phase's layer_thickness to the
+    # nearest 0.1 mm (>= one quantum) — the API guard behind the UI gate. from_dict stays a raw
+    # round-trip (unsnapped). A disabled phase's 0 is preserved.
+    lim = SafetyLimits()
+    p = PrintSettings.bounded({
+        "printing": {"layer_thickness_mm": 0.15},       # between quanta -> up
+        "thin_precoat": {"layer_thickness_mm": 0.05},   # below the floor -> the floor
+        "postcoat": {"layer_thickness_mm": 0.0, "n_layers": 0},  # disabled -> preserved
+    }, lim)
+    assert p.printing.layer_thickness_mm == 0.2
+    assert p.thin_precoat.layer_thickness_mm == 0.1
+    assert p.postcoat.layer_thickness_mm == 0.0
+    # an already-on-grid value is unchanged
+    assert PrintSettings.bounded(
+        {"printing": {"layer_thickness_mm": 0.3}}, lim
+    ).printing.layer_thickness_mm == 0.3
+    # from_dict does NOT snap (faithful round-trip)
+    assert PrintSettings.from_dict(
+        {"printing": {"layer_thickness_mm": 0.15}}
+    ).printing.layer_thickness_mm == 0.15
+
+
 def test_bounded_clamps_new_position_fields() -> None:
     lim = SafetyLimits()
     p = PrintSettings.bounded(
