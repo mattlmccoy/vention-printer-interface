@@ -239,9 +239,10 @@ export function App() {
         </div>
         {!showHelp && showQuickStart && (
           <QuickStartVision
-            call={call}
+            // "done" dismisses like skip: the overview is saved client-side on click, and the wizard
+            // no longer writes server roles, so without a dismissal it would reopen every load.
             onSkip={() => { if (visionStatus) dismissQuickStart(visionStatus, storage); setQuickStartOpen(false); }}
-            onSaved={() => { setQuickStartOpen(false); api.visionStatus().then(setVisionStatus).catch(() => undefined); }}
+            onSaved={() => { if (visionStatus) dismissQuickStart(visionStatus, storage); setQuickStartOpen(false); api.visionStatus().then(setVisionStatus).catch(() => undefined); }}
           />
         )}
         {showHelp && (

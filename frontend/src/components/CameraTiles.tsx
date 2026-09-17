@@ -16,11 +16,13 @@ function Tile({
   cam,
   display,
   selected,
+  badge,
   onPick,
 }: {
   cam: VideoInput;
   display: string;
   selected: boolean;
+  badge?: string;
   onPick: (deviceId: string) => void;
 }) {
   const videoRef = useRef<HTMLVideoElement | null>(null);
@@ -86,6 +88,25 @@ function Tile({
           muted
           style={{ display: "block", width: "100%", height: "100%", objectFit: "cover" }}
         />
+        {selected && badge && (
+          <span
+            style={{
+              position: "absolute",
+              top: 4,
+              left: 4,
+              padding: "1px 6px",
+              borderRadius: 4,
+              background: "var(--accent, #f5a742)",
+              color: "#111",
+              fontSize: 10,
+              fontWeight: 700,
+              letterSpacing: "0.08em",
+              textTransform: "uppercase",
+            }}
+          >
+            {badge}
+          </span>
+        )}
         <span
           ref={errRef}
           style={{ display: "none", position: "absolute", inset: 0, alignItems: "center", justifyContent: "center" }}
@@ -108,17 +129,20 @@ function Tile({
 export function CameraTiles({
   candidates,
   selectedId,
+  badge,
   onPick,
 }: {
   candidates: VideoInput[];
   selectedId: string | null;
+  /** Label shown as a pill on the selected tile, e.g. "overview" — makes the assignment explicit. */
+  badge?: string;
   onPick: (deviceId: string) => void;
 }) {
   const labeled = labelCandidates(candidates);
   return (
     <div className="cam-tiles" style={{ display: "flex", flexWrap: "wrap", gap: 8 }}>
       {labeled.map((c) => (
-        <Tile key={c.deviceId} cam={c} display={c.display} selected={c.deviceId === selectedId} onPick={onPick} />
+        <Tile key={c.deviceId} cam={c} display={c.display} selected={c.deviceId === selectedId} badge={badge} onPick={onPick} />
       ))}
     </div>
   );
