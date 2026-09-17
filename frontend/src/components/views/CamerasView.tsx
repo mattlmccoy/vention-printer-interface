@@ -2,8 +2,9 @@ import { useEffect, useMemo, useState } from "react";
 import { api, type CameraSettings, type VisionCalibrateResult, type VisionCaptureSidecar } from "../../lib/api.ts";
 import type { Gates } from "../../lib/format.ts";
 import type { StatusPayload } from "../../lib/telemetry.ts";
-import { formatCaptureMetaValue, overviewStreamUrl, parseCaptures, type Capture } from "../../lib/vision.ts";
+import { formatCaptureMetaValue, parseCaptures, type Capture } from "../../lib/vision.ts";
 import { CalibrationBoardPanel } from "../CalibrationBoardPanel.tsx";
+import { OverviewPicker } from "../OverviewPicker.tsx";
 import { CalibrationWizard } from "../CalibrationWizard.tsx";
 import { ValidationPanel } from "../ValidationPanel.tsx";
 import type { Call } from "./types.ts";
@@ -349,8 +350,8 @@ export function CamerasView({ status, gates, call, base, onOpenQuickStart }: {
           )}
           {step === 1 && (
             <div className="grid-gap">
-              <div className="note">📷 Nothing opens a camera until a page asks for it. Identify which detected camera is the overview (wide live view) and which is the science camera (bed stills) — it's remembered and reconnects automatically. If a camera doesn't appear, use Rescan.</div>
-              <div className="cam-panel-body" style={{ borderRadius: 10, border: "1px solid var(--line)" }}><CamImg className="cam-panel-img" src={overviewStreamUrl(base)} alt="overview camera live view" /></div>
+              <div className="note">📷 Nothing opens a camera until a page asks for it. Click the live feed that shows the print bed to set it as the overview — the two cameras share a name, so the live picture is how you tell them apart. Then assign the science camera. It's remembered and reconnects automatically; if a camera doesn't appear, use Rescan.</div>
+              <OverviewPicker />
               <div className="btnrow">
                 <button className="cta primary" onClick={onOpenQuickStart}>Identify &amp; assign cameras…</button>
                 <button className="small" disabled={!gates.reachable} onClick={() => call("rescan cameras", () => api.visionDevices())}>Rescan devices</button>

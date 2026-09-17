@@ -1,20 +1,11 @@
 import { useEffect, useState } from "react";
 import { api, type VisionDevice, type VisionRoleMap } from "../lib/api.ts";
 import { cameraAccessMessage, type CameraAccessStatus } from "../lib/vision.ts";
-import {
-  loadOverviewCameraId,
-  overviewCandidates,
-  saveOverviewCameraId,
-  videoInputs,
-  type VideoInput,
-} from "../lib/webcam.ts";
-import { CameraTiles } from "./CameraTiles.tsx";
+import { OverviewPicker } from "./OverviewPicker.tsx";
 import type { Call } from "./views/types.ts";
 
 const ROLES = ["overview", "science"] as const;
 type Role = (typeof ROLES)[number];
-
-const storage = typeof localStorage === "undefined" ? null : localStorage;
 
 /** First-run / re-assign camera-role wizard (A7 "Camera connection & role persistence").
  *
@@ -38,10 +29,6 @@ export function QuickStartVision({ call, onSkip, onSaved }: {
   const [cameraAccess, setCameraAccess] = useState<CameraAccessStatus | null>(null);
   const [assign, setAssign] = useState<Record<string, Role | "">>({});
   const [err, setErr] = useState<string | null>(null);
-  // Client-side (browser) cameras for the live overview tiles — a different id space than the
-  // server devices above, so it is tracked separately.
-  const [browserInputs, setBrowserInputs] = useState<VideoInput[]>([]);
-  const [overviewPick, setOverviewPick] = useState<string | null>(() => loadOverviewCameraId(storage));
 
   const loadDevices = (live: () => boolean) => {
     api.visionDevices()
@@ -71,34 +58,7 @@ export function QuickStartVision({ call, onSkip, onSaved }: {
     return () => { live = false; };
   }, []);
 
-  // Enumerate the browser's cameras (for the live overview tiles). Labels need camera permission —
-  // if they're blank, prompt once with a throwaway stream, then re-enumerate.
-  useEffect(() => {
-    const md = typeof navigator !== "undefined" ? navigator.mediaDevices : undefined;
-    if (!md?.getUserMedia) return;
-    let cancelled = false;
-    (async () => {
-      try {
-        let devs = await md.enumerateDevices();
-        if (!videoInputs(devs).some((d) => d.label)) {
-          const probe = await md.getUserMedia({ video: true });
-          probe.getTracks().forEach((t) => t.stop());
-          devs = await md.enumerateDevices();
-        }
-        if (!cancelled) setBrowserInputs(videoInputs(devs));
-      } catch {
-        // Camera blocked in the browser: the server device list + role dropdowns still work.
-      }
-    })();
-    return () => { cancelled = true; };
-  }, []);
-
   const setRole = (key: string, role: Role | "") => setAssign((a) => ({ ...a, [key]: role }));
-
-  const pickOverview = (deviceId: string) => {
-    saveOverviewCameraId(storage, deviceId);
-    setOverviewPick(deviceId);
-  };
 
   const scienceKey = Object.entries(assign).find(([, r]) => r === "science")?.[0];
   const overviewKey = Object.entries(assign).find(([, r]) => r === "overview")?.[0];
@@ -126,11 +86,6 @@ export function QuickStartVision({ call, onSkip, onSaved }: {
     call("save camera roles", () => api.visionSetRoles(mapping).then(onSaved));
   };
 
-  const overviewTiles = (() => {
-    const cands = overviewCandidates(browserInputs);
-    return cands.length ? cands : browserInputs.filter((d) => d.label);
-  })();
-
   return (
     <div className="banner quickstart-vision">
       <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
@@ -144,20 +99,11 @@ export function QuickStartVision({ call, onSkip, onSaved }: {
       {/* OVERVIEW — client-side live tiles. Click the feed that shows the print bed. */}
       <div style={{ display: "flex", flexDirection: "column", gap: 6, marginTop: 8 }}>
         <b style={{ fontSize: 13 }}>Overview — live wide view</b>
-        {overviewTiles.length > 0 ? (
-          <>
-            <span className="hint" style={{ marginTop: 0 }}>
-              Click the camera showing the print bed. This is the dock’s live view, remembered on
-              this computer.
-            </span>
-            <CameraTiles candidates={overviewTiles} selectedId={overviewPick} onPick={pickOverview} />
-          </>
-        ) : (
-          <span className="hint" style={{ marginTop: 0 }}>
-            No external camera live-view available yet — allow camera access in the browser, or plug
-            in the overview camera.
-          </span>
-        )}
+        <span className="hint" style={{ marginTop: 0 }}>
+          Click the camera showing the print bed. This is the dock’s live view, remembered on this
+          computer.
+        </span>
+        <OverviewPicker />
       </div>
 
       {/* SCIENCE / persistence — server-side device list. */}

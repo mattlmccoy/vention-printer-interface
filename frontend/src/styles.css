@@ -76,6 +76,13 @@ details > .body { margin-top: 12px; }
 /* compact e-stop / fault recovery banner — short labels, no overflow */
 .banner.recovery { overflow: hidden; gap: 14px; }
 .banner .reason { font-family: var(--font-mono); font-size: 12px; color: var(--fg); max-width: 28ch; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+/* Camera setup wizard: stack its sections in a column instead of the banner's centered row, so the
+   live overview tiles and the science list read top-to-bottom (not scattered across a flex row). */
+.quickstart-vision { flex-direction: column; align-items: stretch; gap: 10px; }
+/* Live camera identification tiles (client-side previews). The tile is a <button>; neutralise the
+   banner's height:30px crush via a higher-specificity rule so the 4:3 preview box can render. */
+.cam-tiles { display: flex; flex-wrap: wrap; gap: 8px; }
+.quickstart-vision .cam-tiles button, .setup-grid .cam-tiles button { height: auto; }
 .rstep { display: inline-flex; align-items: center; gap: 7px; white-space: nowrap; }
 .rstep .n { width: 19px; height: 19px; border-radius: 50%; border: 1px solid currentColor; display: grid; place-items: center; font: 11px var(--font-mono); flex: none; }
 .rstep.done { color: var(--live); }
