@@ -10,12 +10,13 @@ import { NumberField } from "../NumberField.tsx";
 import { Toggle } from "../Toggle.tsx";
 import { parseCaptures, type Capture } from "../../lib/vision.ts";
 import { layerAccuracySummary, parseLayerAccuracy, type LayerAccuracy } from "../../lib/motion.ts";
+import { LAYER_HEIGHTS_MM, snapLayerHeightMm } from "../../lib/layer_height.ts";
 import type { Call } from "./types.ts";
 
 const CMP_STAGES = ["pre_jet", "post_jet", "post_heat"] as const;
 const CMP_STAGE_LABEL: Record<string, string> = { pre_jet: "pre-jet", post_jet: "post-jet", post_heat: "post-heat" };
 
-const LAYER_HEIGHTS = [0.1, 0.15, 0.2];
+const LAYER_HEIGHTS = LAYER_HEIGHTS_MM;
 const PHASE_LABEL: Record<string, string> = { thin_precoat: "precoat", printing: "printing", postcoat: "postcoat", setup: "setup", finish: "finishing" };
 const TIMELINE_NOISE = new Set(["set_speed", "set_accel", "wait"]);
 
@@ -288,7 +289,7 @@ export function PrintView({ status, gates, call, base, onJob, onRuns }: { status
                 <span>print layers</span><span className="row"><NumberField value={mplan.printing.n_layers} disabled={!gates.controllable} style={{ width: 80 }} onChange={(v) => meditPrinting({ n_layers: v })} /></span>
                 <span>layer height</span><label className="row">
                   <span className="seg">{LAYER_HEIGHTS.map((h) => <button key={h} type="button" className={`small${Math.abs(mplan.printing.layer_thickness_mm - h) < 1e-6 ? " on" : ""}`} aria-pressed={Math.abs(mplan.printing.layer_thickness_mm - h) < 1e-6} disabled={!gates.controllable} onClick={() => meditPrinting({ layer_thickness_mm: h })}>{h}</button>)}</span>
-                  <NumberField step="0.05" value={mplan.printing.layer_thickness_mm} disabled={!gates.controllable} style={{ width: 72 }} onChange={(v) => meditPrinting({ layer_thickness_mm: v })} /> mm
+                  <NumberField step="0.1" value={mplan.printing.layer_thickness_mm} disabled={!gates.controllable} style={{ width: 72 }} onChange={(v) => meditPrinting({ layer_thickness_mm: snapLayerHeightMm(v) })} /> mm
                 </label>
                 <span>postcoat</span><label className="row"><Toggle checked={mplan.postcoat_enabled} disabled={!gates.controllable} onChange={(v) => medit({ postcoat_enabled: v })} /></label>
                 <span>heater</span><label className="row" title="Fires the IR heater during the printing layers. Forced off in a dry run."><Toggle label="heater" danger checked={mHeaterOn} disabled={mdry || !gates.controllable} onChange={(v) => medit({ heater_enabled: v })} />{mdry ? <span className="hint">&nbsp;(off in dry run)</span> : null}</label>

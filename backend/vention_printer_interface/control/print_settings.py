@@ -29,6 +29,20 @@ def _clamp(v: float, lo: float, hi: float) -> float:
     return min(max(float(v), lo), hi)
 
 
+LAYER_HEIGHT_QUANTUM_MM = 0.1  # the MachineMotion build-piston position-readout floor
+
+
+def _snap_layer_height(mm: float) -> float:
+    """Snap a build-piston layer thickness to the achievable 0.1 mm readout grid. A value between
+    quanta (0.05, 0.15, ...) can't be placed OR verified — the readout resolves nothing finer than
+    0.1 mm — so it's rounded to the nearest 0.1 mm level, floored at one quantum. A non-positive
+    thickness (a disabled phase) is preserved as 0. Mirrors the UI gate (lib/layer_height.ts)."""
+    if mm <= 0:
+        return 0.0
+    tenths = max(1, round(mm / LAYER_HEIGHT_QUANTUM_MM + 1e-9))
+    return round(tenths * LAYER_HEIGHT_QUANTUM_MM, 4)
+
+
 @dataclass(frozen=True)
 class PhasePlan:
     """Per-phase settings (V1.py lines 12-45)."""
@@ -62,8 +76,8 @@ class PhasePlan:
         n_layers = d.get("n_layers", base.n_layers)
         n_layers = int(n_layers) if isinstance(n_layers, int | float) else base.n_layers
         return cls(
-            layer_thickness_mm=_clamp(
-                num("layer_thickness_mm", base.layer_thickness_mm), 0.0, 50.0
+            layer_thickness_mm=_snap_layer_height(
+                _clamp(num("layer_thickness_mm", base.layer_thickness_mm), 0.0, 50.0)
             ),
             feed_thickness_mm=_clamp(
                 num("feed_thickness_mm", base.feed_thickness_mm), 0.0, 50.0
