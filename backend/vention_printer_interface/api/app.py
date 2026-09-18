@@ -893,6 +893,9 @@ def create_app(
             "validation": plan.validate(ctrl().limits),
             "n_steps": len(compile_print(plan)),
             "estimated_duration_s": estimate_duration_s(plan, print_min_wait_s),
+            # The exact wait floor this operator runs with, so the UI's live estimate uses the SAME
+            # constant as this payload (and as the real print) — deterministic, not a guessed 0.5.
+            "min_wait_s": print_min_wait_s,
             "total_layers": plan.total_layers,
             "total_thickness_mm": plan.total_thickness_mm,
             "exposure": {

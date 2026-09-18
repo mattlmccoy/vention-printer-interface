@@ -1,10 +1,13 @@
-/** Mirror of backend estimate_duration_s(): constant-velocity moves, dwells, homing. */
+/** Mirror of backend estimate_duration_s(): constant-velocity moves, dwells, homing.
+ *  DETERMINISM (#6): the caller MUST pass the operator's real wait floor (PrintSettingsPayload
+ *  .min_wait_s) so this matches the backend estimate + the actual print exactly. The default here
+ *  is the operator's own default (0.25) — NOT 0.5, which silently diverged from the backend. */
 import { compilePrint, type PrintSettings } from "./print_settings.ts";
 
 const HOMING: Record<number, number> = { 1: 68.8, 2: 68.8, 3: 66.3, 4: 66.3 };
 const TRAVEL: Record<number, number> = { 1: 145, 2: 145, 3: 970, 4: 972 };
 
-export function estimateDurationS(plan: PrintSettings, minWaitS = 0.5): number {
+export function estimateDurationS(plan: PrintSettings, minWaitS = 0.25): number {
   const speed: Record<number, number> = { 1: 5, 2: 5, 3: 100, 4: 100 };
   const pos: Record<number, number> = { 1: 0, 2: 0, 3: 0, 4: 0 };
   let total = 0, pending = 0;
