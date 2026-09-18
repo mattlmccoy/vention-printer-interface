@@ -64,6 +64,13 @@ test("parseCaptures maps manifest records and sorts by layer then stage order", 
   ]);
 });
 
+test("parseCaptures reads the printing/CAD layer (cad_layer) when present, else undefined", () => {
+  const [c] = parseCaptures([{ layer: 8, cad_layer: 3, stage: "post_jet", url: "/u" }]);
+  assert.equal(c.cadLayer, 3);
+  const [d] = parseCaptures([{ layer: 2, stage: "pre_jet", url: "/u" }]);
+  assert.equal(d.cadLayer, undefined);
+});
+
 test("parseCaptures falls back to the bare `registered` path when the backend url is absent", () => {
   // Prior-behavior fallback: an older, un-enriched record (or a test fixture) without url/
   // sidecar_url must still parse instead of being dropped.

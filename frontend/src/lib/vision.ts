@@ -8,7 +8,13 @@ export function overviewStreamUrl(base: string): string {
   return `${base}/api/vision/overview/stream`;
 }
 
-export interface Capture { layer: number; stage: string; url: string; sidecarUrl?: string }
+export interface Capture {
+  layer: number; // absolute layer_no (includes precoats)
+  cadLayer?: number; // 1-based PRINTING layer index (excludes precoats) — use for the CAD-slice lookup
+  stage: string;
+  url: string;
+  sidecarUrl?: string;
+}
 
 // pre_jet < post_jet < post_heat — the order captures happen within a printing layer.
 const STAGE_ORDER: Record<string, number> = { pre_jet: 0, post_jet: 1, post_heat: 2 };
@@ -31,6 +37,7 @@ export function parseCaptures(manifest: unknown[]): Capture[] {
     const url = r.url ?? r.registered;
     if (typeof layer !== "number" || typeof stage !== "string" || typeof url !== "string") continue;
     const capture: Capture = { layer, stage, url };
+    if (typeof r.cad_layer === "number") capture.cadLayer = r.cad_layer;
     if (typeof r.sidecar_url === "string") capture.sidecarUrl = r.sidecar_url;
     out.push(capture);
   }

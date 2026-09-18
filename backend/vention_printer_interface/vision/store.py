@@ -19,6 +19,7 @@ from typing import Any
 _SIDECAR_TEMPLATE: dict[str, Any] = {
     "run_id": None,
     "layer": None,
+    "cad_layer": None,
     "stage": None,
     "host_timestamp_ns": None,
     "frame_timestamp_ns": None,

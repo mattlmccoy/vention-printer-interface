@@ -58,12 +58,14 @@ class VisionService:
         stage = label_to_stage(label)
         if stage is None:
             return
+        pl = data.get("print_layer")
         req = CaptureRequest(
             layer=int(data.get("layer", 0)),
             stage=stage,
             host_timestamp_ns=int(data.get("host_timestamp_ns", 0)),
             axis_positions_mm=dict(data.get("axis_positions_mm", {})),
             job=dict(data.get("job", {})),
+            print_layer=int(pl) if isinstance(pl, int | float) else None,
         )
         try:
             self._q.put_nowait(req)
@@ -190,6 +192,7 @@ class VisionService:
             "stale": stale,
             "job": req.job,
             "axis_positions_mm": req.axis_positions_mm,
+            "cad_layer": req.print_layer,  # printing/CAD layer index (excludes precoats)
             "camera": {
                 "role": self._camera_role,
                 "model": None,
@@ -228,6 +231,7 @@ class VisionService:
             {
                 "run_id": meta["run_id"],
                 "layer": req.layer,
+                "cad_layer": req.print_layer,
                 "stage": req.stage,
                 "registered": registered_rel,
                 "host_timestamp_ns": meta["host_timestamp_ns"],

@@ -358,6 +358,9 @@ class Step:
     value: float | None = None
     label: str = ""
     part_height_mm: float = 0.0
+    # For printing-phase capture marks: the 1-based PRINTING layer index (excludes precoats). The
+    # `layer` above is the absolute layer_no; the CAD slice + layer labels key off this. Else None.
+    print_layer: int | None = None
 
 
 # The feed piston's hard floor (script FEED_HOME_POS): a feed advance that would carry the running
@@ -389,8 +392,9 @@ def compile_print(plan: PrintSettings) -> tuple[Step, ...]:
         axis: int | None = None,
         value: float | None = None,
         label: str = "",
+        print_layer: int | None = None,
     ) -> None:
-        out.append(Step(len(out), phase, layer, kind, axis, value, label, height))
+        out.append(Step(len(out), phase, layer, kind, axis, value, label, height, print_layer))
 
     # --- SETUP (primed start): home GANTRIES ONLY, then an initial safe profile. No piston home,
     # no home_all, no feed pre-position move (the pistons are already at the primed bed). Each phase
@@ -493,7 +497,7 @@ def compile_print(plan: PrintSettings) -> tuple[Step, ...]:
             if plan.capture_stages:
                 # Capture mark only — NO printhead motion. The camera rides the recoater gantry, so
                 # the printhead stays home; the freshly-coated layer is imaged where it lies.
-                add(name, layer_no, "mark", label="capture:pre_jet")
+                add(name, layer_no, "mark", label="capture:pre_jet", print_layer=print_layer)
             # Nozzle-purge schedule (firing is external; we only DWELL at the start position so the
             # printhead can fire): every pass, once per layer, or every N printing layers.
             purge_on = plan.purge_dwell_s > 0
@@ -540,7 +544,7 @@ def compile_print(plan: PrintSettings) -> tuple[Step, ...]:
                     add(name, layer_no, "wait")
                     add(name, layer_no, "dwell", value=plan.capture_settle_s, label="camera settle")
                 # else fixed camera: gantries are already parked (recoater home, printhead home).
-                add(name, layer_no, "mark", label="capture:post_jet")
+                add(name, layer_no, "mark", label="capture:post_jet", print_layer=print_layer)
             if plan.pre_heater_drop_mm > 0:  # drop before heating (net descent stays one layer)
                 add(name, layer_no, "move_rel", PART, plan.pre_heater_drop_mm, "pre-heater drop")
                 add(name, layer_no, "wait")
@@ -567,7 +571,7 @@ def compile_print(plan: PrintSettings) -> tuple[Step, ...]:
             # made the next layer's preload land too late (recoater already at 950); the feed must
             # drop BEFORE the recoater moves out. (Precoat layers return to 350 above.)
             if plan.capture_stages:
-                add(name, layer_no, "mark", label="capture:post_heat")
+                add(name, layer_no, "mark", label="capture:post_heat", print_layer=print_layer)
             add(name, layer_no, "mark", label="layer_end")
         if exhausted:
             break
