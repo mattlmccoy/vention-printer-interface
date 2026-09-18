@@ -13,7 +13,7 @@ export interface CameraRoleMap {
   science: string | null; // deviceId
 }
 
-const OVERVIEW_KEY = "vpi.overviewCameraId"; // shared with the dock OverviewCameraPanel
+const OVERVIEW_KEY = "vpi.overviewCameraId";
 const SCIENCE_KEY = "vpi.scienceCameraId";
 
 /** The role a device currently holds, or "" if none. */
@@ -41,7 +41,11 @@ export function loadRoleMap(storage: Storage | null): CameraRoleMap {
   const get = (k: string): string | null => {
     try { return storage?.getItem(k) || null; } catch { return null; }
   };
-  return { overview: get(OVERVIEW_KEY), science: get(SCIENCE_KEY) };
+  const overview = get(OVERVIEW_KEY);
+  const science = get(SCIENCE_KEY);
+  // Releases before the live-feed key was separated could overwrite overview with science. The
+  // lost physical identity cannot be guessed between identical cameras, so require reassignment.
+  return { overview: overview === science ? null : overview, science };
 }
 
 /** Persist the map, writing each role's key (or removing it when the role is unassigned) so a

@@ -430,6 +430,31 @@ def test_capture_signal_in_status_and_client_guard_skips_server_grab(
     client.post("/api/recording/stop")
 
 
+def test_science_client_fallback_requeues_the_current_capture(
+    app_and_client: tuple[FastAPI, TestClient], tmp_path: Path
+) -> None:
+    """A browser that heartbeated but then produced no frame can release ownership and preserve
+    that exact layer/stage through the server worker. A stale sequence cannot capture the wrong
+    event."""
+    app, client = app_and_client
+    run = client.post("/api/recording/start", json={"name": "client-fallback"}).json()["run"]
+    client.post("/api/vision/science/client-heartbeat")
+    app.state.events.append("capture:post_jet", {"layer": 5, "print_layer": 2})
+    app.state.vision.drain(timeout=2.0)
+    target = tmp_path / run / "vision" / "layer_0005" / "post_jet.webp"
+    assert not target.exists()
+
+    seq = client.get("/api/status").json()["capture_request"]["seq"]
+    response = client.post("/api/vision/science/client-fallback", params={"seq": seq})
+    assert response.status_code == 200 and response.json()["queued"] is True
+    app.state.vision.drain(timeout=2.0)
+    assert target.exists()
+    assert client.post(
+        "/api/vision/science/client-fallback", params={"seq": seq - 1}
+    ).status_code == 409
+    client.post("/api/recording/stop")
+
+
 def test_science_capture_endpoint_rejects_bad_stage_and_empty_body(
     app_and_client: tuple[FastAPI, TestClient],
 ) -> None:

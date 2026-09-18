@@ -1,5 +1,6 @@
-import { useEffect, useRef } from "react";
+import { useEffect, useRef, useState } from "react";
 import { api } from "../lib/api.ts";
+import { waitForCameraFrame } from "../lib/camera_ready.ts";
 import type { StatusPayload } from "../lib/telemetry.ts";
 import { loadRoleMap } from "../lib/camera_roles.ts";
 import { loadCameraSettings, videoConstraints } from "../lib/overview_settings.ts";
@@ -52,6 +53,9 @@ export function ScienceCaptureClient({ status, onError }: {
   const videoRef = useRef<HTMLVideoElement | null>(null);
   const streamRef = useRef<MediaStream | null>(null);
   const lastSeq = useRef(0);
+  const captureOwnerRef = useRef(false);
+  const [streamReady, setStreamReady] = useState(false);
+  const [captureOwner, setCaptureOwner] = useState(false);
 
   const deviceId = loadRoleMap(storage).science;
   const recording = !!status?.recording.active;
@@ -61,6 +65,9 @@ export function ScienceCaptureClient({ status, onError }: {
     streamRef.current?.getTracks().forEach((t) => t.stop());
     streamRef.current = null;
     if (videoRef.current) videoRef.current.srcObject = null;
+    setStreamReady(false);
+    captureOwnerRef.current = false;
+    setCaptureOwner(false);
   };
 
   // Hold the science camera open (hidden) only while a recorded print is running.
@@ -68,29 +75,58 @@ export function ScienceCaptureClient({ status, onError }: {
     if (!active || !deviceId) { stop(); return; }
     const md = typeof navigator !== "undefined" ? navigator.mediaDevices : undefined;
     if (!md?.getUserMedia) return;
-    let cancelled = false;
+    const controller = new AbortController();
+    const video = videoRef.current;
+    if (!video) return;
     (async () => {
+      const configured = videoConstraints(deviceId, loadCameraSettings(storage, "science"));
+      let stream: MediaStream | null = null;
       try {
-        const settings = loadCameraSettings(storage, "science");
-        const stream = await md.getUserMedia({ video: videoConstraints(deviceId, settings) });
-        if (cancelled) { stream.getTracks().forEach((t) => t.stop()); return; }
+        stream = await md.getUserMedia({ video: configured });
+        if (controller.signal.aborted) {
+          stream.getTracks().forEach((t) => t.stop());
+          return;
+        }
+        video.srcObject = stream;
+        await waitForCameraFrame(video, controller.signal);
+        if (controller.signal.aborted) {
+          stream.getTracks().forEach((t) => t.stop());
+          return;
+        }
         streamRef.current = stream;
-        if (videoRef.current) videoRef.current.srcObject = stream;
+        setStreamReady(true);
       } catch {
-        // Science camera couldn't open (busy/hi-res not streamable): the operator's fallback grab
-        // still runs (the heartbeat below only suppresses it while we're actually holding the cam).
+        stream?.getTracks().forEach((t) => t.stop());
+        video.srcObject = null;
+        // The configured science mode did not deliver pixels. Do not silently lower the capture
+        // resolution because that invalidates calibration; send no heartbeat and let the server
+        // capture on demand using its configured camera mode.
       }
     })();
-    return () => { cancelled = true; stop(); };
+    return () => { controller.abort(); stop(); };
   }, [active, deviceId]);
 
-  // Heartbeat so the operator knows a client is capturing and skips its own (wrong-camera) grab.
+  // Claim capture ownership only after a real decoded frame exists. A MediaStream object with no
+  // pixels must never suppress the server fallback (the former black-panel / lost-layer bug).
   useEffect(() => {
-    if (!active || !streamRef.current) return;
-    api.scienceClientHeartbeat().catch(() => {});
-    const id = window.setInterval(() => api.scienceClientHeartbeat().catch(() => {}), 3000);
-    return () => window.clearInterval(id);
-  }, [active, status?.capture_request?.seq]);
+    if (!active || !streamReady) { setCaptureOwner(false); return; }
+    let live = true;
+    const beat = () => api.scienceClientHeartbeat()
+      .then(() => {
+        if (live) { captureOwnerRef.current = true; setCaptureOwner(true); }
+      })
+      .catch(() => {
+        if (live) { captureOwnerRef.current = false; setCaptureOwner(false); }
+      });
+    beat();
+    const id = window.setInterval(beat, 3000);
+    return () => {
+      live = false;
+      captureOwnerRef.current = false;
+      window.clearInterval(id);
+      setCaptureOwner(false);
+    };
+  }, [active, streamReady]);
 
   // On each new "capture now" signal, grab a LOSSLESS still and upload it (server re-encodes to
   // lossless WebP → pixel-exact end to end, for CAD comparison). Resolution = the science camera's
@@ -99,6 +135,8 @@ export function ScienceCaptureClient({ status, onError }: {
     const cr = status?.capture_request;
     if (!active || !cr || cr.seq <= lastSeq.current) return;
     lastSeq.current = cr.seq;
+    // No verified heartbeat means the server already owns this event and has queued its capture.
+    if (!captureOwnerRef.current) return;
     if (cr.layer == null) return;
     const layer = cr.layer;
     const cadLayer = cr.cad_layer ?? undefined;
@@ -108,17 +146,27 @@ export function ScienceCaptureClient({ status, onError }: {
       const blob = await grabScienceStill(streamRef.current, videoRef.current);
       if (cancelled) return;
       if (!blob) {
-        onError(`Science capture failed for layer ${cadLayer ?? layer}: no camera frame available.`);
+        stop();
+        try {
+          await api.scienceClientFallback(cr.seq);
+        } catch (error) {
+          onError(`Science capture failed for layer ${cadLayer ?? layer}: ${error instanceof Error ? error.message : String(error)}`);
+        }
         return;
       }
       try {
         await api.scienceCaptureUpload(blob, { layer, stage, cadLayer });
       } catch (error) {
-        onError(`Science capture failed for layer ${cadLayer ?? layer}: ${error instanceof Error ? error.message : String(error)}`);
+        stop();
+        try {
+          await api.scienceClientFallback(cr.seq);
+        } catch {
+          onError(`Science capture failed for layer ${cadLayer ?? layer}: ${error instanceof Error ? error.message : String(error)}`);
+        }
       }
     })();
     return () => { cancelled = true; };
-  }, [status?.capture_request?.seq, active, onError]);
+  }, [status?.capture_request?.seq, active, captureOwner, onError]);
 
   return <video ref={videoRef} autoPlay playsInline muted style={{ display: "none" }} aria-hidden="true" />;
 }

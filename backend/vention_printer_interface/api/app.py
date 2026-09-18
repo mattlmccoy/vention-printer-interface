@@ -2317,6 +2317,33 @@ def create_app(
         app.state.science_client_until = time.monotonic() + 8.0
         return {"ok": True, "until_s": 8.0}
 
+    @app.post("/api/vision/science/client-fallback")
+    def science_client_fallback(seq: int = Query(...)) -> dict[str, Any]:
+        """Hand a capture back to the server when a browser that had claimed ownership can no
+        longer produce a frame. The sequence guard prevents a delayed browser failure from
+        recapturing a newer layer or stage."""
+        capture = getattr(app.state, "capture_request", None)
+        if not isinstance(capture, dict) or int(capture.get("seq", -1)) != seq:
+            raise HTTPException(409, "capture request is no longer current")
+        if rec().current_run_dir is None:
+            raise HTTPException(409, "no active recording run")
+        vision = vision_service()
+        if vision is None:
+            raise HTTPException(503, "science capture service is not running")
+        stage = str(capture.get("stage", ""))
+        if label_to_stage(f"capture:{stage}") is None:
+            raise HTTPException(400, "invalid capture stage")
+        app.state.science_client_until = 0.0
+        vision.on_event(
+            f"capture:{stage}",
+            {
+                "layer": capture.get("layer"),
+                "print_layer": capture.get("cad_layer"),
+                "host_timestamp_ns": time.time_ns(),
+            },
+        )
+        return {"queued": True}
+
     @app.post("/api/vision/science/capture")
     async def science_capture(
         request: Request,

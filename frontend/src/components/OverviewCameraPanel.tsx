@@ -1,14 +1,8 @@
 import { useEffect, useRef, useState, type PointerEvent as ReactPointerEvent } from "react";
 import type { View } from "../lib/console.ts";
 import { panelVisible, setPanelVisible } from "../lib/vision.ts";
-import {
-  loadOverviewCameraId,
-  overviewCandidates,
-  pickOverviewDeviceId,
-  saveOverviewCameraId,
-  videoInputs,
-  type VideoInput,
-} from "../lib/webcam.ts";
+import { overviewCandidates, pickOverviewDeviceId, videoInputs, type VideoInput } from "../lib/webcam.ts";
+import { loadLiveFeedCameraId, saveLiveFeedCameraId } from "../lib/live_feed.ts";
 import { clampZoom, cropStyle, loadCrop, NO_CROP, panOrigin, saveCrop, type Crop } from "../lib/crop.ts";
 import { applyPayload, numericControls, type NumericControl } from "../lib/track_settings.ts";
 import { loadOverviewSettings, videoConstraints } from "../lib/overview_settings.ts";
@@ -29,7 +23,7 @@ export function OverviewCameraPanel({ view }: { base?: string; view: View }) {
   const videoRef = useRef<HTMLVideoElement | null>(null);
   const streamRef = useRef<MediaStream | null>(null);
   const [inputs, setInputs] = useState<VideoInput[]>([]);
-  const [selectedId, setSelectedId] = useState<string | null>(() => loadOverviewCameraId(storage));
+  const [selectedId, setSelectedId] = useState<string | null>(() => loadLiveFeedCameraId(storage));
   const [status, setStatus] = useState<"idle" | "live" | "pick" | "denied" | "unsupported">("idle");
   const [crop, setCrop] = useState<Crop>(NO_CROP);
   const drag = useRef<{ x: number; y: number } | null>(null);
@@ -66,7 +60,7 @@ export function OverviewCameraPanel({ view }: { base?: string; view: View }) {
         if (cancelled) return;
         const ins = videoInputs(devs);
         setInputs(ins);
-        const saved = loadOverviewCameraId(storage);
+        const saved = loadLiveFeedCameraId(storage);
         const id = pickOverviewDeviceId(ins, saved, null);
         if (id) setSelectedId(id);
         else setStatus("pick");
@@ -95,7 +89,7 @@ export function OverviewCameraPanel({ view }: { base?: string; view: View }) {
         }
         streamRef.current = stream;
         if (videoRef.current) videoRef.current.srcObject = stream;
-        saveOverviewCameraId(storage, selectedId);
+        saveLiveFeedCameraId(storage, selectedId);
         setCrop(loadCrop(storage, selectedId));
         const track = stream.getVideoTracks()[0] ?? null;
         trackRef.current = track;

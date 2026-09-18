@@ -260,6 +260,9 @@ export const api = {
   // Client-side science capture: heartbeat (keeps the server from doing its own cv2 grab), and the
   // still upload (raw encoded image as the body; layer/stage/cad_layer in the query).
   scienceClientHeartbeat: () => req<{ ok: boolean }>("POST", "/api/vision/science/client-heartbeat"),
+  scienceClientFallback: (seq: number) => req<{ queued: boolean }>(
+    "POST", `/api/vision/science/client-fallback?seq=${encodeURIComponent(seq)}`,
+  ),
   scienceCaptureUpload: async (blob: Blob, p: { layer: number; stage: string; cadLayer?: number }): Promise<boolean> => {
     const q = new URLSearchParams({ layer: String(p.layer), stage: p.stage });
     if (p.cadLayer != null) q.set("cad_layer", String(p.cadLayer));

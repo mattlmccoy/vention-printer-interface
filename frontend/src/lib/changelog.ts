@@ -11,6 +11,15 @@ export interface Release {
 
 export const CHANGELOG: Release[] = [
   {
+    version: "0.10.1",
+    date: "2026-09-18",
+    changes: [
+      "Science layer captures now fall back to the operator when the browser camera opens without delivering a usable frame.",
+      "Camera Studio verifies playable video, reports failed feeds, and retries a reduced-bandwidth preview without changing saved science-capture settings.",
+      "The dock live-feed selection no longer overwrites overview/science camera assignments or duplicates the science feed in Camera Studio.",
+    ],
+  },
+  {
     version: "0.10.0",
     date: "2026-09-18",
     changes: [

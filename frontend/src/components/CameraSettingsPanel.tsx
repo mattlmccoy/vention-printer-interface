@@ -1,5 +1,4 @@
 import { useEffect, useRef, useState } from "react";
-import { loadOverviewCameraId } from "../lib/webcam.ts";
 import { loadRoleMap } from "../lib/camera_roles.ts";
 import {
   loadCameraSettings,
@@ -30,8 +29,7 @@ const ROLE_NOTE: Record<SettingsRole, string> = {
  *  bed stills use them; the sliders also apply live to the preview. Reads the camera assigned to this
  *  role in the tiles above. */
 export function CameraSettingsPanel({ role }: { role: SettingsRole }) {
-  const deviceIdFor = (): string | null =>
-    role === "overview" ? loadOverviewCameraId(storage) : loadRoleMap(storage).science;
+  const deviceIdFor = (): string | null => loadRoleMap(storage)[role];
 
   const [deviceId, setDeviceId] = useState<string | null>(() => deviceIdFor());
   const [settings, setSettings] = useState<OverviewSettings>(() => loadCameraSettings(storage, role));

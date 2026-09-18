@@ -3,6 +3,7 @@ import type { CameraRole } from "../lib/camera_roles.ts";
 import { loadRoleMap } from "../lib/camera_roles.ts";
 import { loadCameraSettings, videoConstraints } from "../lib/overview_settings.ts";
 import { recordingFilename, snapshotFilename, snapshotOverlay } from "../lib/camera_export.ts";
+import { SCIENCE_FALLBACK_CONSTRAINTS, waitForCameraFrame } from "../lib/camera_ready.ts";
 import type { StatusPayload } from "../lib/telemetry.ts";
 
 const ROLE_LABEL: Record<CameraRole, string> = { overview: "overview", science: "science" };
@@ -25,29 +26,60 @@ function CameraPane({ role, deviceId, run }: { role: CameraRole; deviceId: strin
   const recorderRef = useRef<MediaRecorder | null>(null);
   const chunksRef = useRef<Blob[]>([]);
   const [error, setError] = useState<string | null>(null);
+  const [ready, setReady] = useState(false);
+  const [previewNote, setPreviewNote] = useState("");
+  const [retry, setRetry] = useState(0);
   const [recording, setRecording] = useState(false);
 
   useEffect(() => {
-    let alive = true;
+    const controller = new AbortController();
     const md = typeof navigator !== "undefined" ? navigator.mediaDevices : null;
     setError(null);
+    setReady(false);
+    setPreviewNote("");
     if (!deviceId) { setError("not assigned — pick this camera in Setup"); return; }
     if (!md?.getUserMedia) { setError("camera access unavailable in this browser"); return; }
+    const video = videoRef.current;
+    if (!video) return;
     const settings = loadCameraSettings(typeof localStorage === "undefined" ? null : localStorage, role);
-    md.getUserMedia({ video: videoConstraints(deviceId, settings) })
-      .then((stream) => {
-        if (!alive) { stream.getTracks().forEach((t) => t.stop()); return; }
-        streamRef.current = stream;
-        if (videoRef.current) { videoRef.current.srcObject = stream; videoRef.current.play().catch(() => {}); }
-      })
-      .catch(() => { if (alive) setError("could not open this camera (in use, or permission denied)"); });
+    const configured = videoConstraints(deviceId, settings);
+    const fallback: MediaTrackConstraints = {
+      deviceId: { exact: deviceId },
+      ...SCIENCE_FALLBACK_CONSTRAINTS,
+    };
+    (async () => {
+      let lastError = "could not open this camera (in use, or permission denied)";
+      for (const [index, constraints] of [configured, fallback].entries()) {
+        let stream: MediaStream | null = null;
+        try {
+          stream = await md.getUserMedia({ video: constraints });
+          if (controller.signal.aborted) {
+            stream.getTracks().forEach((t) => t.stop());
+            return;
+          }
+          video.srcObject = stream;
+          await waitForCameraFrame(video, controller.signal);
+          streamRef.current = stream;
+          setReady(true);
+          setPreviewNote(index > 0 ? "reduced-bandwidth preview · saved capture settings unchanged" : "");
+          return;
+        } catch (cause) {
+          stream?.getTracks().forEach((t) => t.stop());
+          video.srcObject = null;
+          if (cause instanceof Error && cause.name === "AbortError") return;
+          if (cause instanceof Error) lastError = cause.message;
+        }
+      }
+      setError(lastError);
+    })();
     return () => {
-      alive = false;
+      controller.abort();
       recorderRef.current?.state === "recording" && recorderRef.current.stop();
       streamRef.current?.getTracks().forEach((t) => t.stop());
       streamRef.current = null;
+      video.srcObject = null;
     };
-  }, [deviceId, role]);
+  }, [deviceId, role, retry]);
 
   // LOSSLESS still at the streamed resolution (set the camera to its max — up to 20 MP — in Setup).
   // Uses ImageCapture.grabFrame (full-res current frame, lossless) when available, else the live
@@ -110,13 +142,14 @@ function CameraPane({ role, deviceId, run }: { role: CameraRole; deviceId: strin
         {recording && <span className="bad" style={{ fontSize: 12 }}>● REC</span>}
       </div>
       <div style={{ background: "#000", borderRadius: 8, aspectRatio: "16 / 9", overflow: "hidden", display: "flex", alignItems: "center", justifyContent: "center" }}>
-        {error
-          ? <span className="hint" style={{ padding: 12, textAlign: "center" }}>{error}</span>
-          : <video ref={videoRef} autoPlay playsInline muted style={{ width: "100%", height: "100%", objectFit: "contain" }} />}
+        <video ref={videoRef} autoPlay playsInline muted style={{ display: ready ? "block" : "none", width: "100%", height: "100%", objectFit: "contain" }} />
+        {!ready && <span role={error ? "alert" : "status"} className="hint" style={{ padding: 12, textAlign: "center" }}>{error ?? "starting camera…"}</span>}
       </div>
+      {previewNote && <span className="hint">{previewNote}</span>}
       <div className="row" style={{ gap: 8 }}>
-        <button className="cta sm" disabled={!!error} title="Lossless PNG still at the streamed resolution (set the camera to its max, up to 20 MP, in Setup) with date/time + metadata burned in." onClick={snapshot}>snapshot</button>
-        <button className={`cta sm${recording ? " danger" : ""}`} disabled={!!error} onClick={toggleRecord}>{recording ? "stop recording" : "record"}</button>
+        {error && deviceId && <button className="small" onClick={() => setRetry((n) => n + 1)}>retry preview</button>}
+        <button className="cta sm" disabled={!ready} title="PNG still at the displayed stream resolution with date/time and metadata. Saved print capture settings are unchanged." onClick={snapshot}>snapshot</button>
+        <button className={`cta sm${recording ? " danger" : ""}`} disabled={!ready} onClick={toggleRecord}>{recording ? "stop recording" : "record"}</button>
       </div>
     </div>
   );

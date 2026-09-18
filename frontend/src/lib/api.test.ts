@@ -58,6 +58,7 @@ test("every route: method + path + body locked", async () => {
     [() => api.primingRun(), "POST", "/api/priming/run", undefined],
     [() => api.primed(), "GET", "/api/primed", undefined],
     [() => api.primedCapture(), "POST", "/api/primed/capture", undefined],
+    [() => api.scienceClientFallback(17), "POST", "/api/vision/science/client-fallback?seq=17", undefined],
     [() => api.events(), "GET", "/api/events", undefined],
     [() => api.autoLog(), "GET", "/api/auto-log", undefined],
     [() => api.setAutoLog(false), "PUT", "/api/auto-log", { enabled: false }],

@@ -1,8 +1,26 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { assignRole, roleOf, type CameraRoleMap } from "./camera_roles.ts";
+import {
+  assignRole,
+  loadRoleMap,
+  roleOf,
+  saveRoleMap,
+  type CameraRoleMap,
+} from "./camera_roles.ts";
 
 const EMPTY: CameraRoleMap = { overview: null, science: null };
+
+function memoryStorage(): Storage {
+  const data = new Map<string, string>();
+  return {
+    get length() { return data.size; },
+    clear: () => data.clear(),
+    getItem: (key) => data.get(key) ?? null,
+    key: (index) => [...data.keys()][index] ?? null,
+    removeItem: (key) => { data.delete(key); },
+    setItem: (key, value) => { data.set(key, value); },
+  };
+}
 
 test("assignRole sets a role on a free device", () => {
   assert.deepEqual(assignRole(EMPTY, "A", "overview"), { overview: "A", science: null });
@@ -30,4 +48,10 @@ test("roleOf reports a device's current role, or empty string", () => {
   assert.equal(roleOf(m, "A"), "overview");
   assert.equal(roleOf(m, "B"), "science");
   assert.equal(roleOf(m, "C"), "");
+});
+
+test("legacy duplicate ids preserve science and require overview reassignment", () => {
+  const storage = memoryStorage();
+  saveRoleMap(storage, { overview: "bed", science: "bed" });
+  assert.deepEqual(loadRoleMap(storage), { overview: null, science: "bed" });
 });
