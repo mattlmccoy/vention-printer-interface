@@ -406,6 +406,28 @@ def test_science_capture_endpoint_stores_a_client_upload(
     client.post("/api/recording/stop")
 
 
+def test_capture_signal_in_status_and_client_guard_skips_server_grab(
+    app_and_client: tuple[FastAPI, TestClient], tmp_path: Path
+) -> None:
+    """A capture mark exposes a 'capture now' signal on the status (for the browser client), and
+    while a client heartbeat is fresh the server's own cv2 grab is SKIPPED (the client captures)."""
+    app, client = app_and_client
+    run = client.post("/api/recording/start", json={"name": "sig-guard"}).json()["run"]
+
+    client.post("/api/vision/science/client-heartbeat")  # client is live
+    app.state.events.append("capture:post_jet", {"layer": 5, "print_layer": 2})
+    app.state.vision.drain(timeout=2.0)
+
+    # server grab skipped -> no server-written file for this mark
+    assert not (tmp_path / run / "vision" / "layer_0005" / "post_jet.webp").exists()
+    # but the signal is on the status for the browser to act on
+    st = client.get("/api/status").json()
+    assert st["capture_request"]["stage"] == "post_jet"
+    assert st["capture_request"]["layer"] == 5 and st["capture_request"]["cad_layer"] == 2
+    assert st["capture_request"]["seq"] >= 1
+    client.post("/api/recording/stop")
+
+
 def test_science_capture_endpoint_rejects_bad_stage_and_empty_body(
     app_and_client: tuple[FastAPI, TestClient],
 ) -> None:

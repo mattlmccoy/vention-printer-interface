@@ -95,6 +95,7 @@ from vention_printer_interface.vision.cameras import (
     unresolved_roles,
 )
 from vention_printer_interface.vision.capture import VisionService
+from vention_printer_interface.vision.events import label_to_stage
 from vention_printer_interface.vision.frame_source import FrameSource, UvcFrameSource
 from vention_printer_interface.vision.overview import OverviewStreamer, encode_jpeg
 from vention_printer_interface.vision.registration import (
@@ -621,12 +622,33 @@ def create_app(
         )
         app.state.auto_log = True
         app.state.auto_run_open = False
+        # Browser science-capture client: capture_request is the "capture now" signal (seq ticks per
+        # mark); science_client_until is the heartbeat deadline while a client is capturing (the
+        # server cv2 grab is skipped until then).
+        app.state.capture_request = None
+        app.state.capture_seq = 0
+        app.state.science_client_until = 0.0
         events = EventLog()
         events.add_sink(recorder.event)  # every event also lands in the durable run record
 
         def _vision_sink(label: str, data: dict[str, Any]) -> None:
             # Indirection so PUT /api/vision/roles can swap app.state.vision to a freshly
             # (re)opened VisionService without ever registering a second EventLog sink.
+            stage = label_to_stage(label)
+            if stage is not None:
+                # Surface a "capture now" signal for the BROWSER (see it on the WS status): the
+                # client grabs the still from the assigned science camera (right camera on macOS).
+                app.state.capture_seq = getattr(app.state, "capture_seq", 0) + 1
+                app.state.capture_request = {
+                    "seq": app.state.capture_seq,
+                    "layer": data.get("layer"),
+                    "cad_layer": data.get("print_layer"),
+                    "stage": stage,
+                }
+                # If a browser capture-client is live (recent heartbeat), IT captures — skip the
+                # server cv2 grab (which mis-resolves between two identical cameras on macOS).
+                if time.monotonic() < getattr(app.state, "science_client_until", 0.0):
+                    return
             vision = app.state.vision
             if vision is not None:
                 vision.on_event(label, data)
@@ -909,6 +931,9 @@ def create_app(
                 "active": rc.active is not None,
                 "run": rc.active.name if rc.active else None,
             },
+            # "capture now" signal for the browser science-capture client: seq ticks on each capture
+            # mark so the client grabs the assigned science camera + POSTs. None until first mark.
+            "capture_request": getattr(app.state, "capture_request", None),
         }
 
     def guarded(fn: Callable[..., Any], *args: Any) -> Any:
@@ -2068,6 +2093,14 @@ def create_app(
                 record["url"] = _vision_file_url(run, registered)
                 record["sidecar_url"] = _vision_file_url(run, _sidecar_rel_path(registered))
         return records
+
+    @app.post("/api/vision/science/client-heartbeat")
+    def science_client_heartbeat() -> dict[str, Any]:
+        """The browser science-capture client pings this while it's mounted and ready to capture.
+        While the heartbeat is fresh, the server SKIPS its own cv2 grab on each capture mark (the
+        client captures from the right camera instead). Lapses after ~8s so the server resumes."""
+        app.state.science_client_until = time.monotonic() + 8.0
+        return {"ok": True, "until_s": 8.0}
 
     @app.post("/api/vision/science/capture")
     async def science_capture(

@@ -236,6 +236,20 @@ export const api = {
   visionGetSettings: () => req<Record<string, CameraSettings>>("GET", "/api/vision/settings"),
   visionSetSettings: (body: Record<string, CameraSettings>) => req<Record<string, CameraSettings>>("PUT", "/api/vision/settings", body),
   visionCaptures: (run: string) => req<VisionCaptureRecord[]>("GET", `/api/vision/captures?run=${encodeURIComponent(run)}`),
+  // Client-side science capture: heartbeat (keeps the server from doing its own cv2 grab), and the
+  // still upload (raw encoded image as the body; layer/stage/cad_layer in the query).
+  scienceClientHeartbeat: () => req<{ ok: boolean }>("POST", "/api/vision/science/client-heartbeat"),
+  scienceCaptureUpload: async (blob: Blob, p: { layer: number; stage: string; cadLayer?: number }): Promise<boolean> => {
+    const q = new URLSearchParams({ layer: String(p.layer), stage: p.stage });
+    if (p.cadLayer != null) q.set("cad_layer", String(p.cadLayer));
+    const res = await fetch(apiUrl(base, `/api/vision/science/capture?${q.toString()}`), {
+      method: "POST",
+      headers: { [CLIENT_HEADER]: "1", "Content-Type": blob.type || "image/webp" },
+      body: blob,
+    });
+    if (!res.ok) throw new ApiError(res.status, `${res.status} science capture`);
+    return true;
+  },
   visionCalibrate: (body: VisionCalibrateBody) => req<VisionCalibrateResult>("POST", "/api/vision/calibrate", body),
   visionCalibrateSessionStart: (spec?: VisionBoardSpecBody) => req<VisionCalibSession>("POST", "/api/vision/calibrate/session", { spec: spec ?? null }),
   visionCalibrateSessionGet: () => req<VisionCalibSession>("GET", "/api/vision/calibrate/session"),

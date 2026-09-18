@@ -86,6 +86,8 @@ export interface StatusPayload {
   print: PrintSnap;
   auto_log: boolean;
   recording: { active: boolean; run: string | null };
+  /** "Capture now" signal for the browser science-capture client: seq ticks on each capture mark. */
+  capture_request?: { seq: number; layer: number | null; cad_layer: number | null; stage: string } | null;
 }
 
 /** Fixed-capacity ring of (t, value) samples per axis for the plot dock. */
