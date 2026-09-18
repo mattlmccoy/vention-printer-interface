@@ -252,6 +252,24 @@ def test_capture_event_appends_manifest_record(tmp_path):
     assert record["host_timestamp_ns"] == 555
 
 
+def test_capture_records_the_printing_cad_layer(tmp_path):
+    # A printing capture carries print_layer (the CAD/printing index, excludes precoats). It must
+    # land in BOTH the manifest record and the sidecar as cad_layer, so the Runs CAD slice + layer
+    # labels key off it instead of the absolute layer (which includes precoats).
+    import json
+
+    svc = _svc(tmp_path)
+    svc.start()
+    svc.on_event("capture:post_jet", {"layer": 8, "print_layer": 3})
+    svc.drain(timeout=2.0)
+    svc.stop()
+
+    record = read_manifest(tmp_path)[0]
+    assert record["layer"] == 8 and record["cad_layer"] == 3
+    sidecar = json.loads((tmp_path / "vision" / "layer_0008" / "post_jet.json").read_text())
+    assert sidecar["layer"] == 8 and sidecar["cad_layer"] == 3
+
+
 def test_capture_meta_includes_expanded_fields(tmp_path):
     calib = Calibration(
         H=np.eye(3),

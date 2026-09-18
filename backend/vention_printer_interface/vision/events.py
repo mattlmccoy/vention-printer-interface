@@ -24,3 +24,6 @@ class CaptureRequest:
     host_timestamp_ns: int
     axis_positions_mm: dict[str, float] = field(default_factory=dict)
     job: dict[str, Any] = field(default_factory=dict)
+    # The 1-based PRINTING layer index (excludes precoats), for the CAD-slice lookup + layer labels;
+    # None for a non-printing capture. The `layer` above is the absolute layer_no.
+    print_layer: int | None = None

@@ -496,7 +496,7 @@ export function RunsView({ status, gates, call, base }: { status: StatusPayload 
                 <img className="cmp-img" src={`${base}${viewCap.url}`} alt={`science cam layer ${viewCap.layer} ${viewCap.stage}`} /></div>
               <div className="cmp"><div className="cmp-h">CAD slice</div>
                 {viewJobFolder && !viewCadErr
-                  ? <img className="cmp-img" src={api.jobLayerByFolderUrl(viewCap.layer, viewJobFolder)} alt={`CAD layer ${viewCap.layer}`} onError={() => setViewCadErr(true)} />
+                  ? <img className="cmp-img" src={api.jobLayerByFolderUrl(viewCap.cadLayer ?? viewCap.layer, viewJobFolder)} alt={`CAD layer ${viewCap.cadLayer ?? viewCap.layer}`} onError={() => setViewCadErr(true)} />
                   : <div className="cmp-img chart-empty" style={{ display: "grid", placeItems: "center", textAlign: "center", padding: 16 }}>{viewJobFolder ? "CAD slice unavailable — its sliced job isn't loaded" : "CAD slice unavailable for this run"}</div>}
               </div>
             </div>

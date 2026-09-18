@@ -689,6 +689,26 @@ def test_overhead_capture_moves_recoater_to_pose_then_settles() -> None:
     assert over[j - 1].label == "camera settle"
 
 
+def test_capture_marks_carry_the_printing_layer_index() -> None:
+    # A capture mark must record the PRINTING layer (1..N), not the absolute layer_no (which includes
+    # precoats). The Runs CAD slice + layer labels key off it: with 2 precoats + 3 printing layers,
+    # the printing captures land at absolute layers 3,4,5 but printing layers 1,2,3.
+    base = PrintSettings()
+    p = dataclasses.replace(
+        base,
+        thin_precoat=dataclasses.replace(base.thin_precoat, n_layers=2),
+        printing=dataclasses.replace(base.printing, n_layers=3),
+        postcoat=dataclasses.replace(base.postcoat, n_layers=0),
+        capture_stages=True,
+    )
+    post_jets = [s for s in compile_print(p) if s.label == "capture:post_jet"]
+    assert [s.layer for s in post_jets] == [3, 4, 5]  # absolute layer_no (precoats + printing)
+    assert [s.print_layer for s in post_jets] == [1, 2, 3]  # printing / CAD index
+    # precoat/non-capture steps have no printing-layer index
+    precoat_marks = [s for s in compile_print(p) if s.kind == "mark" and s.phase == "thin_precoat"]
+    assert all(s.print_layer is None for s in precoat_marks)
+
+
 def test_capture_marks_emitted_without_added_motion() -> None:
     # one_layer() disables captures for the pinned-sequence tests above; re-enable it here.
     plan = dataclasses.replace(one_layer(), capture_stages=True)

@@ -307,6 +307,10 @@ class PrintController:
                     "part_height_mm": step.part_height_mm,
                     "elapsed_s": round(now - self._started_at, 3),
                 }
+                if step.print_layer is not None:
+                    # Printing (CAD) layer index for capture marks — excludes precoats; the Runs CAD
+                    # slice + layer labels key off this, not the absolute `layer`.
+                    data["print_layer"] = step.print_layer
                 if step.label and step.label.startswith("capture:"):
                     label = step.label  # vision capture marks pass through unchanged
                 elif step.label == "layer_start":
