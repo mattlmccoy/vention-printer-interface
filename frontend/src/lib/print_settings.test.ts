@@ -1,6 +1,14 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { CAPTURE_STAGES, DEFAULT_PLAN, compilePrint, describeStep, toggleCaptureStage, totalLayers, totalThickness, validate } from "./print_settings.ts";
+import { CAPTURE_STAGES, DEFAULT_PLAN, compilePrint, describeStep, multipassMismatch, toggleCaptureStage, totalLayers, totalThickness, validate } from "./print_settings.ts";
+
+test("multipassMismatch warns only when the slicer declared a factor the print doesn't match", () => {
+  assert.equal(multipassMismatch(3, 1), true);
+  assert.equal(multipassMismatch(3, 3), false);
+  assert.equal(multipassMismatch(null, 1), false);
+  assert.equal(multipassMismatch(undefined, 2), false);
+  assert.equal(multipassMismatch(0, 1), false); // 0 isn't a real multipass factor
+});
 
 test("toggleCaptureStage removes a present stage, keeping canonical order", () => {
   assert.deepEqual(toggleCaptureStage(["pre_jet", "post_jet", "post_heat"], "post_jet"), ["pre_jet", "post_heat"]);

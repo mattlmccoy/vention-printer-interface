@@ -218,3 +218,45 @@ def test_job_kind_2d_vs_3d(tmp_path: Path) -> None:
 
     one_layer = load_job(make_job(tmp_path / "c", layers=1))
     assert one_layer.kind == "2D"       # a single-layer, workflow-less job reads as 2D
+
+
+_mk_counter = [0]
+
+
+def _mk_single_layer(root: Path, extra: dict) -> Path:
+    """A one-layer job with `extra` merged into a real-shaped job_info (for multipass import)."""
+    _mk_counter[0] += 1
+    d = root / f"mp{_mk_counter[0]}"
+    d.mkdir(parents=True)
+    (d / "job_info.json").write_text(
+        json.dumps({**SAMPLE_INFO, "layer_count": 1, "tiff_count": 1, "height_mm": 0.1, **extra})
+    )
+    Image.new("L", (10, 10), 255).save(
+        d / f"{SAMPLE_INFO['job_name']}_Page1_Clr1.tif", compression="tiff_lzw"
+    )
+    return d
+
+
+def test_load_job_multipass_absent_is_none(tmp_path: Path) -> None:
+    # The REAL captured slicer output (SAMPLE_INFO) carries no multipass field, so import must be
+    # None — never an invented default (data-contract: absence is not a value).
+    assert load_job(make_job(tmp_path)).slicer_multipass is None
+
+
+def test_load_job_reads_slicer_multipass_when_present(tmp_path: Path) -> None:
+    # Forward-compatible: IF the Meteor RIP begins writing a multipass factor, import it verbatim.
+    assert load_job(_mk_single_layer(tmp_path, {"multipass": 3})).slicer_multipass == 3
+
+
+def test_load_job_multipass_accepts_known_aliases(tmp_path: Path) -> None:
+    assert load_job(_mk_single_layer(tmp_path, {"jet_passes": 2})).slicer_multipass == 2
+
+
+def test_load_job_multipass_ignores_junk(tmp_path: Path) -> None:
+    # Non-positive / non-int values are not a real multipass factor -> None, not a bogus number.
+    assert load_job(_mk_single_layer(tmp_path, {"multipass": 0})).slicer_multipass is None
+    assert load_job(_mk_single_layer(tmp_path, {"multipass": "lots"})).slicer_multipass is None
+
+
+def test_load_job_multipass_in_to_dict(tmp_path: Path) -> None:
+    assert load_job(_mk_single_layer(tmp_path, {"multipass": 4})).to_dict()["slicer_multipass"] == 4
