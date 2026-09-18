@@ -1,7 +1,9 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { api, type VisionCalibrateResult } from "../../lib/api.ts";
 import type { Gates } from "../../lib/format.ts";
 import type { StatusPayload } from "../../lib/telemetry.ts";
+import { loadRoleMap } from "../../lib/camera_roles.ts";
+import { loadCameraSettings, videoConstraints } from "../../lib/overview_settings.ts";
 import { CalibrationBoardPanel } from "../CalibrationBoardPanel.tsx";
 import { CameraRoleAssigner } from "../CameraRoleAssigner.tsx";
 import { CameraSettingsPanel } from "../CameraSettingsPanel.tsx";
@@ -76,12 +78,13 @@ function CalibrationForm({ call, disabled }: { call: Call; disabled: boolean }) 
 /** Manual capture-pose calibration: the science cam rides the recoater, so jog the recoater until
  *  the bed centre sits under the crosshair, then save the recoater position as capture_recoater_mm
  *  (the every-layer overhead capture pose). Grabs an on-demand science frame to check alignment. */
-function CaptureCalibration({ status, gates, call, base }: { status: StatusPayload | null; gates: Gates; call: Call; base: string }) {
+function CaptureCalibration({ status, gates, call }: { status: StatusPayload | null; gates: Gates; call: Call; base: string }) {
   const [streaming, setStreaming] = useState(false);
-  const [streamKey, setStreamKey] = useState(0);
-  const [err, setErr] = useState(false);
+  const [err, setErr] = useState<string | null>(null);
   const [step, setStep] = useState(5);
   const [pose, setPose] = useState<number | null>(null);
+  const videoRef = useRef<HTMLVideoElement | null>(null);
+  const streamRef = useRef<MediaStream | null>(null);
   useEffect(() => {
     api.printSettings().then((p) => {
       const v = (p.plan as Record<string, unknown>).capture_recoater_mm;
@@ -90,8 +93,27 @@ function CaptureCalibration({ status, gates, call, base }: { status: StatusPaylo
   }, []);
   const rc = status?.controller.telemetry?.positions?.["4"];
   const ok = gates.controllable && !gates.printActive;
-  const streamUrl = `${base}/api/vision/science/stream?t=${streamKey}`;
-  const toggleStream = () => { if (streaming) { setStreaming(false); } else { setErr(false); setStreamKey(Date.now()); setStreaming(true); } };
+  // Client-side stream of the ASSIGNED science camera (by browser deviceId) — the setup alignment
+  // must show the SAME camera the print records with. The old server MJPEG stream opened the wrong
+  // camera on macOS with two identical ELPs (the exact bug this fixes).
+  const stopStream = () => { streamRef.current?.getTracks().forEach((t) => t.stop()); streamRef.current = null; };
+  useEffect(() => () => stopStream(), []);
+  const toggleStream = () => {
+    if (streaming) { stopStream(); setStreaming(false); return; }
+    setErr(null);
+    const storage = typeof localStorage === "undefined" ? null : localStorage;
+    const deviceId = loadRoleMap(storage).science;
+    const md = typeof navigator !== "undefined" ? navigator.mediaDevices : null;
+    if (!deviceId) { setErr("assign the science camera in Setup first"); return; }
+    if (!md?.getUserMedia) { setErr("camera access unavailable in this browser"); return; }
+    setStreaming(true);
+    md.getUserMedia({ video: videoConstraints(deviceId, loadCameraSettings(storage, "science")) })
+      .then((stream) => {
+        streamRef.current = stream;
+        if (videoRef.current) { videoRef.current.srcObject = stream; videoRef.current.play().catch(() => {}); }
+      })
+      .catch(() => { setErr("could not open the science camera (in use, or permission denied)"); setStreaming(false); });
+  };
   const jog = (sign: 1 | -1) => call("jog recoater", () => api.move(4, "rel", sign * step));
   const savePose = () => {
     if (typeof rc !== "number") return;
@@ -102,11 +124,10 @@ function CaptureCalibration({ status, gates, call, base }: { status: StatusPaylo
   };
   return (
     <div className="body">
-      <div className="hint" style={{ marginTop: 0 }}>The science camera rides the recoater. Start the live stream, jog the recoater until the bed centre sits under the crosshair, then save the pose — it becomes the capture_recoater_mm the print uses for every-layer overhead captures. (Setup only — the stream is unavailable during a print.)</div>
+      <div className="hint" style={{ marginTop: 0 }}>The science camera rides the recoater. Start the live stream, jog the recoater until the bed centre sits under the crosshair, then save the pose — it becomes the capture_recoater_mm the print uses for every-layer overhead captures. This streams the camera you assigned to the science role.</div>
       <div style={{ position: "relative", maxWidth: 480, margin: "10px 0", background: "var(--image-bg)", borderRadius: "var(--radius)", overflow: "hidden", aspectRatio: "4 / 3" }}>
-        {streaming && !err
-          ? <img src={streamUrl} alt="science camera live view" onError={() => setErr(true)} style={{ width: "100%", display: "block" }} />
-          : <div className="chart-empty" style={{ height: "100%" }}>{err ? "no science stream — no camera, or busy during a print" : "start the stream to align"}</div>}
+        <video ref={videoRef} autoPlay playsInline muted style={{ width: "100%", display: streaming && !err ? "block" : "none" }} />
+        {(!streaming || err) && <div className="chart-empty" style={{ height: "100%" }}>{err ?? "start the stream to align"}</div>}
         {streaming && !err && (
           <svg viewBox="0 0 100 100" preserveAspectRatio="none" style={{ position: "absolute", inset: 0, width: "100%", height: "100%", pointerEvents: "none" }}>
             <circle cx="50" cy="50" r="24" fill="none" stroke="var(--accent)" strokeWidth="0.6" opacity="0.9" />
