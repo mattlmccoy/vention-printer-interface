@@ -402,7 +402,9 @@ def test_science_capture_endpoint_stores_a_client_upload(
     assert (tmp_path / run_name / "vision" / "layer_0007" / "post_jet.webp").exists()
 
     records = client.get("/api/vision/captures", params={"run": run_name}).json()
-    assert any(r["layer"] == 7 and r["cad_layer"] == 2 and r["stage"] == "post_jet" for r in records)
+    assert any(
+        r["layer"] == 7 and r["cad_layer"] == 2 and r["stage"] == "post_jet" for r in records
+    )
     client.post("/api/recording/stop")
 
 
@@ -433,7 +435,8 @@ def test_science_capture_endpoint_rejects_bad_stage_and_empty_body(
 ) -> None:
     app, client = app_and_client
     client.post("/api/recording/start", json={"name": "client-cap-reject"})
-    assert client.post("/api/vision/science/capture?layer=1&stage=bogus", content=b"x").status_code == 400
+    bogus = client.post("/api/vision/science/capture?layer=1&stage=bogus", content=b"x")
+    assert bogus.status_code == 400
     assert client.post(
         "/api/vision/science/capture?layer=1&stage=pre_jet", content=b""
     ).status_code == 400
