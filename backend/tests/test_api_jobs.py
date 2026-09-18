@@ -177,3 +177,18 @@ def test_meteor_status_reflects_selected_job(client: TestClient) -> None:
     # Clearing the job returns to not-ready.
     assert client.post("/api/jobs/clear").status_code == 200
     assert client.get("/api/meteor/status").json()["ready"] is False
+
+
+def test_archive_job_endpoint(client: TestClient) -> None:
+    job = "20260414_171155_8MM-ROD-CLAMPS-03MM-TOL"
+    jobs = client.get("/api/jobs").json()["jobs"]
+    assert any(j["folder"] == job and j["archived"] is False for j in jobs)
+    r = client.post("/api/jobs/archive", json={"folder": job})
+    assert r.status_code == 200 and "_archive" in r.json()["archived_to"]
+    # still listed, now flagged archived
+    jobs2 = client.get("/api/jobs").json()["jobs"]
+    assert any(j["folder"] == job and j["archived"] is True for j in jobs2)
+    # missing -> 404, empty -> 400, already archived -> 400
+    assert client.post("/api/jobs/archive", json={"folder": "nope"}).status_code == 404
+    assert client.post("/api/jobs/archive", json={}).status_code == 400
+    assert client.post("/api/jobs/archive", json={"folder": job}).status_code in (400, 404)

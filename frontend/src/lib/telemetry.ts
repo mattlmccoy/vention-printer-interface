@@ -75,6 +75,7 @@ export interface JobSnap {
   bbox_mm: { x: number; y: number; z: number }; dpi: number; bpp: number; timestamp: string; complete: boolean;
   missing_pages: number[]; current_layer: number; kind?: "2D" | "3D"; workflow?: string; has_preview?: boolean;
   slicer_multipass?: number | null; // multipass factor the slicer declared, if any (#7); null when absent
+  archived?: boolean; // lives under the hot folder's _archive/ (RIP- or operator-archived)
 }
 
 export interface StatusPayload {

@@ -31,7 +31,7 @@ export function JobView({ status, gates, call, onGoPrint }: {
           <div className="job-list">
             {jobs.map((j) => (
               <button key={j.path} className={job?.path === j.path ? "on" : ""} disabled={running} onClick={() => call("select job", () => api.selectJob(j.path))}>
-                <span className="n"><span className={`kind ${(j.kind ?? (j.layer_count <= 1 ? "2D" : "3D")) === "2D" ? "k2d" : "k3d"}`} title={(j.kind ?? (j.layer_count <= 1 ? "2D" : "3D")) === "2D" ? "2D RIP print (single layer, multi-pass)" : "3D sliced part"}>{j.kind ?? (j.layer_count <= 1 ? "2D" : "3D")}</span>{j.name}</span><span className="m">{j.layer_count} × {j.layer_height_mm} mm</span>
+                <span className="n"><span className={`kind ${(j.kind ?? (j.layer_count <= 1 ? "2D" : "3D")) === "2D" ? "k2d" : "k3d"}`} title={(j.kind ?? (j.layer_count <= 1 ? "2D" : "3D")) === "2D" ? "2D RIP print (single layer, multi-pass)" : "3D sliced part"}>{j.kind ?? (j.layer_count <= 1 ? "2D" : "3D")}</span>{j.name}{j.archived ? <span className="m" style={{ marginLeft: 6, opacity: 0.65 }} title="Archived — under the hot folder's _archive/">· archived</span> : null}</span><span className="m">{j.layer_count} × {j.layer_height_mm} mm</span>
                 <span className="m">{j.folder.slice(0, 8)} {j.folder.slice(9, 11)}:{j.folder.slice(11, 13)} · {j.bbox_mm.x} × {j.bbox_mm.y} × {j.height_mm} mm</span><span className={`m ${j.complete ? "" : "bad"}`}>{j.complete ? `${j.dpi} dpi` : "missing pages"}</span>
               </button>
             ))}
@@ -55,8 +55,15 @@ export function JobView({ status, gates, call, onGoPrint }: {
       <div className="card" style={{ marginTop: 12, display: "flex", alignItems: "center", gap: 12, flexWrap: "wrap" }}>
         {job ? (
           <>
-            <span>Queued <b>{job.name}</b> — {job.layer_count} × {job.layer_height_mm} mm.</span>
+            <span>Queued <b>{job.name}</b> — {job.layer_count} × {job.layer_height_mm} mm.{job.archived ? " (archived)" : ""}</span>
             <span className="spacer" style={{ flex: 1 }} />
+            {!job.archived && (
+              <button className="small" disabled={running}
+                title="Move this job into the hot folder's _archive/ — kept in history, out of the active list. Use once a print is complete."
+                onClick={() => { if (window.confirm(`Archive "${job.name}"?\n\nIt moves into the hot folder's _archive/ — kept for history, out of the active jobs list. Do this once the print is complete.`)) call("archive job", () => api.archiveJob(job.folder).then(refresh)); }}>
+                Archive job
+              </button>
+            )}
             <button className="cta primary" disabled={running} onClick={onGoPrint}>Configure &amp; start on Print →</button>
           </>
         ) : (

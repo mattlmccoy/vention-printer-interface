@@ -6,25 +6,38 @@ import { loadCameraSettings, videoConstraints } from "../lib/overview_settings.t
 
 const storage = typeof localStorage === "undefined" ? null : localStorage;
 
-/** Grab one still from the science stream: full-resolution via ImageCapture.takePhoto when the
- *  browser/camera support it (up to ~20 MP), else a lossless PNG of the current ≤4K video frame. */
+/** Grab one still from the science stream for layerwise CAD analysis, adding NO avoidable loss.
+ *  We deliberately do NOT use ImageCapture.takePhoto — it returns the camera's own JPEG and can
+ *  re-compress, hurting sub-pixel edge detection. Instead we take the current frame via
+ *  ImageCapture.grabFrame (full-res ImageBitmap) or the <video> element and encode PNG (the operator
+ *  then stores lossless WebP), so the pipeline adds zero loss on top of the stream.
+ *
+ *  HARDWARE CAVEAT (be honest): a UVC camera at 20 MP streams MJPEG — the frames are already
+ *  JPEG-compressed ON THE CAMERA (uncompressed 20 MP won't fit USB bandwidth), and no browser API
+ *  can bypass that. So this is "as lossless as the stream allows", not truly lossless at 20 MP. For
+ *  PIXEL-exact stills, pick a lower-resolution UNCOMPRESSED (YUY2) mode if the camera offers one —
+ *  trading resolution for true losslessness. Either way this path never adds a second compression. */
 async function grabScienceStill(stream: MediaStream | null, video: HTMLVideoElement | null): Promise<Blob | null> {
+  const toPng = (source: CanvasImageSource, w: number, h: number): Promise<Blob | null> => {
+    const canvas = document.createElement("canvas");
+    canvas.width = w; canvas.height = h;
+    const ctx = canvas.getContext("2d");
+    if (!ctx) return Promise.resolve(null);
+    ctx.drawImage(source, 0, 0, w, h);
+    return new Promise((resolve) => canvas.toBlob((b) => resolve(b), "image/png")); // lossless
+  };
   const track = stream?.getVideoTracks?.()[0] ?? null;
-  const IC = (window as unknown as { ImageCapture?: new (t: MediaStreamTrack) => { takePhoto: () => Promise<Blob> } }).ImageCapture;
+  const IC = (window as unknown as { ImageCapture?: new (t: MediaStreamTrack) => { grabFrame: () => Promise<ImageBitmap> } }).ImageCapture;
   if (track && IC) {
     try {
-      const photo = await new IC(track).takePhoto();
-      if (photo && photo.size > 0) return photo; // camera's full-res still (usually JPEG)
-    } catch { /* fall through to the live-frame grab */ }
+      const bmp = await new IC(track).grabFrame(); // full-res current frame, lossless
+      const blob = await toPng(bmp, bmp.width, bmp.height);
+      bmp.close();
+      if (blob) return blob;
+    } catch { /* fall through to drawing the video element */ }
   }
   if (!video || video.videoWidth === 0) return null;
-  const canvas = document.createElement("canvas");
-  canvas.width = video.videoWidth;
-  canvas.height = video.videoHeight;
-  const ctx = canvas.getContext("2d");
-  if (!ctx) return null;
-  ctx.drawImage(video, 0, 0);
-  return await new Promise((resolve) => canvas.toBlob((b) => resolve(b), "image/png"));
+  return await toPng(video, video.videoWidth, video.videoHeight);
 }
 
 /** Headless client-side SCIENCE capture (the wrong-camera fix). During a recorded print it holds the
@@ -76,12 +89,9 @@ export function ScienceCaptureClient({ status }: { status: StatusPayload | null 
     return () => window.clearInterval(id);
   }, [active, status?.capture_request?.seq]);
 
-  // On each new "capture now" signal, grab a still and upload it (server re-encodes to lossless
-  // WebP). Prefers ImageCapture.takePhoto for the camera's FULL sensor resolution (up to ~20 MP on
-  // the science ELP) — capture marks fire at gantry-parked dwell points, so the photo latency is
-  // fine. Falls back to an instant, pixel-lossless grab of the live frame (≤4K) where takePhoto
-  // isn't supported. NOTE: takePhoto returns the camera's own (typically JPEG) encoding, so the
-  // full-res path trades pixel-exactness for resolution; the fallback stays lossless. Dedup on seq.
+  // On each new "capture now" signal, grab a LOSSLESS still and upload it (server re-encodes to
+  // lossless WebP → pixel-exact end to end, for CAD comparison). Resolution = the science camera's
+  // streamed resolution (set it to the max, up to 20 MP, in Setup). Dedup on seq.
   useEffect(() => {
     const cr = status?.capture_request;
     if (!active || !cr || cr.seq <= lastSeq.current) return;

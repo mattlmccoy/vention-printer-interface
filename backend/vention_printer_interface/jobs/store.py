@@ -69,6 +69,13 @@ class JobInfo:
         return not self.missing_pages and len(self.pages) == self.layer_count
 
     @property
+    def archived(self) -> bool:
+        """True when this job lives under the hot folder's ``_archive/`` (a job the RIP archived,
+        or one the operator archived from the Jobs page). MetPrint ignores subdirs, so an archived
+        job is out of the active print path but still listed for history."""
+        return self.dir.parent.name == "_archive"
+
+    @property
     def kind(self) -> str:
         """"2D" for a flat RIP print, "3D" for a sliced part. Uses the manifest ``workflow`` when
         present (current jobs), else falls back to layer count — old jobs predate the workflow
@@ -106,6 +113,7 @@ class JobInfo:
             "missing_pages": list(self.missing_pages),
             "workflow": self.workflow,
             "kind": self.kind,
+            "archived": self.archived,
             "slicer_multipass": self.slicer_multipass,
             "has_preview": self.preview is not None,
         }
@@ -282,3 +290,30 @@ class JobStore:
     def within_roots(self, path: Path) -> bool:
         target = path.resolve()
         return any(root.exists() and root.resolve() in target.parents for root in self.roots)
+
+    def archive_job(self, folder: str) -> Path:
+        """Move a TOP-LEVEL job folder into its root's ``_archive/`` (operator "archive when
+        from the Jobs page). Only a direct child of a root that holds a job_info.json is eligible —
+        never a traversing name and never one already archived. Returns the new path.
+
+        Raises ``ValueError`` for a bad/traversing name or an already-archived destination, and
+        ``FileNotFoundError`` when no active root holds such a job.
+        """
+        import shutil
+
+        if not folder or folder in (".", "..") or "/" in folder or "\\" in folder:
+            raise ValueError(f"bad job folder: {folder!r}")
+        for root in self.roots:
+            src = root / folder
+            if (
+                src.is_dir()
+                and (src / "job_info.json").is_file()
+                and src.parent.resolve() == root.resolve()  # a direct child, not in _archive
+            ):
+                dest = root / "_archive" / folder
+                if dest.exists():
+                    raise ValueError(f"already archived: {folder}")
+                dest.parent.mkdir(parents=True, exist_ok=True)
+                shutil.move(str(src), str(dest))
+                return dest
+        raise FileNotFoundError(f"no active job folder named {folder!r} under the jobs root(s)")

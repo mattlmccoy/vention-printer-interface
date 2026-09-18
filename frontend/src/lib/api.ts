@@ -234,6 +234,8 @@ export const api = {
   setConfigPaths: (body: { jobs_root?: string | null; experiments_root?: string | null }) => req<PathsInfo & { restart_required: boolean }>("PUT", "/api/config/paths", body),
   avfCameras: () => req<{ cameras: Array<{ index: number; name: string; unique_id: string }>; science_uid: string | null }>("GET", "/api/vision/avf-cameras"),
   setScienceUid: (unique_id: string | null) => req<{ unique_id: string | null }>("PUT", "/api/vision/science-uid", { unique_id }),
+  // Move a completed job's folder into the hot folder's _archive/ (Jobs-page housekeeping).
+  archiveJob: (folder: string) => req<{ folder: string; archived_to: string }>("POST", "/api/jobs/archive", { folder }),
   macro: (name: string) => req<StatusPayload["print"]>("POST", `/api/macro/${name}`),
   priming: () => req<PrimingPayload>("GET", "/api/priming"),
   setPriming: (patch: Record<string, number>) => req<PrimingPayload>("PUT", "/api/priming", patch),
