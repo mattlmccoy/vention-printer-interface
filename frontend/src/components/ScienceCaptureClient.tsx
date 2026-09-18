@@ -6,13 +6,17 @@ import { loadCameraSettings, videoConstraints } from "../lib/overview_settings.t
 
 const storage = typeof localStorage === "undefined" ? null : localStorage;
 
-/** Grab one LOSSLESS still from the science stream for layerwise CAD analysis. The frame is
- *  captured at the science camera's streamed resolution (set it to the camera's max — up to 20 MP —
- *  in Setup) and encoded as PNG, which is pixel-exact; the operator then stores it as lossless WebP.
- *  We deliberately do NOT use ImageCapture.takePhoto: it returns the camera's own JPEG (lossy), which
- *  corrupts sub-pixel edge detection against CAD. ImageCapture.grabFrame (when available) returns the
- *  current frame as a full-resolution ImageBitmap losslessly; else we draw the <video> element. Both
- *  paths are lossless — the only variable is the streamed resolution. */
+/** Grab one still from the science stream for layerwise CAD analysis, adding NO avoidable loss.
+ *  We deliberately do NOT use ImageCapture.takePhoto — it returns the camera's own JPEG and can
+ *  re-compress, hurting sub-pixel edge detection. Instead we take the current frame via
+ *  ImageCapture.grabFrame (full-res ImageBitmap) or the <video> element and encode PNG (the operator
+ *  then stores lossless WebP), so the pipeline adds zero loss on top of the stream.
+ *
+ *  HARDWARE CAVEAT (be honest): a UVC camera at 20 MP streams MJPEG — the frames are already
+ *  JPEG-compressed ON THE CAMERA (uncompressed 20 MP won't fit USB bandwidth), and no browser API
+ *  can bypass that. So this is "as lossless as the stream allows", not truly lossless at 20 MP. For
+ *  PIXEL-exact stills, pick a lower-resolution UNCOMPRESSED (YUY2) mode if the camera offers one —
+ *  trading resolution for true losslessness. Either way this path never adds a second compression. */
 async function grabScienceStill(stream: MediaStream | null, video: HTMLVideoElement | null): Promise<Blob | null> {
   const toPng = (source: CanvasImageSource, w: number, h: number): Promise<Blob | null> => {
     const canvas = document.createElement("canvas");
