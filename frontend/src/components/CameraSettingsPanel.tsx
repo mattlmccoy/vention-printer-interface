@@ -209,7 +209,7 @@ export function CameraSettingsPanel({ role }: { role: SettingsRole }) {
             <select value={settings.resolution} onChange={(e) => setResolution(e.target.value)}>
               {resolutionsFor(role).map((rr) => <option key={rr.key} value={rr.key}>{rr.label}</option>)}
             </select>
-            <span className="hint" style={{ marginTop: 0 }}>{captureOnly ? "still capture · fps limited at this size" : "reopens the stream"}</span>
+            <span className="hint" style={{ marginTop: 0 }}>{captureOnly ? "stills capture at full res · live preview runs at 4K" : "reopens the stream"}</span>
           </label>
 
           <label className="row" style={{ gap: 8, alignItems: "center", flexWrap: "wrap" }}>
