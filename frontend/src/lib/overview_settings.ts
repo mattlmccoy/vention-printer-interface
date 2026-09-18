@@ -12,29 +12,59 @@ export interface OverviewSettings {
   manual: Record<string, number>; // live applyConstraints controls (exposureTime, brightness, …)
 }
 
-export const RESOLUTIONS: { key: string; label: string; width: number; height: number }[] = [
+export interface Resolution { key: string; label: string; width: number; height: number }
+
+/** The two client-side camera roles that carry their own live-tuned settings. */
+export type SettingsRole = "overview" | "science";
+
+// Resolutions offered PER ROLE. The overview is a live wide view (tops out at streamable 4K). The
+// SCIENCE camera shoots stills, so it also offers extra-high resolutions up to its native 20 MP
+// (5120×3840) — gated by frame rate (the capability sliders show the fps range each res supports;
+// at 20 MP that's very low). A 20 MP live preview may not stream, but the value is used for capture.
+const OVERVIEW_RES: Resolution[] = [
   { key: "3840x2160", label: "4K · 3840×2160", width: 3840, height: 2160 },
   { key: "1920x1080", label: "1080p · 1920×1080", width: 1920, height: 1080 },
   { key: "1280x720", label: "720p · 1280×720", width: 1280, height: 720 },
 ];
-
-export const DEFAULT_OVERVIEW_SETTINGS: OverviewSettings = {
-  resolution: "3840x2160",
-  frameRate: 30,
-  manual: {},
+const SCIENCE_RES: Resolution[] = [
+  { key: "5120x3840", label: "20MP · 5120×3840 (stills)", width: 5120, height: 3840 },
+  { key: "3840x2160", label: "4K · 3840×2160", width: 3840, height: 2160 },
+  { key: "2560x1440", label: "QHD · 2560×1440", width: 2560, height: 1440 },
+  { key: "1920x1080", label: "1080p · 1920×1080", width: 1920, height: 1080 },
+];
+const RESOLUTIONS_BY_ROLE: Record<SettingsRole, Resolution[]> = {
+  overview: OVERVIEW_RES,
+  science: SCIENCE_RES,
 };
 
-/** The two client-side camera roles that carry their own live-tuned settings. */
-export type SettingsRole = "overview" | "science";
+/** The resolution options for a role. */
+export function resolutionsFor(role: SettingsRole): Resolution[] {
+  return RESOLUTIONS_BY_ROLE[role];
+}
+
+/** Back-compat: the overview resolution list. */
+export const RESOLUTIONS: Resolution[] = OVERVIEW_RES;
+
+/** Per-role default settings. Overview + science both default to a STREAMABLE 4K@30 so the live
+ *  preview works; 20 MP is opt-in for the science camera (a still capture size). */
+export function defaultSettingsFor(role: SettingsRole): OverviewSettings {
+  void role; // both roles default to 4K@30 today; kept role-typed for future per-role defaults
+  return { resolution: "3840x2160", frameRate: 30, manual: {} };
+}
+
+export const DEFAULT_OVERVIEW_SETTINGS: OverviewSettings = defaultSettingsFor("overview");
+
 const KEYS: Record<SettingsRole, string> = {
   overview: "vpi.overviewSettings",
   science: "vpi.scienceSettings",
 };
 
-/** Width/height for a resolution key; unknown keys fall back to 4K (the default we always request). */
+/** Width/height for a "WIDTHxHEIGHT" key (parsed, so any listed or custom size works); junk falls
+ *  back to 4K. */
 export function resolutionWH(key: string): { width: number; height: number } {
-  const r = RESOLUTIONS.find((x) => x.key === key);
-  return r ? { width: r.width, height: r.height } : { width: 3840, height: 2160 };
+  const m = /^(\d+)x(\d+)$/.exec(key);
+  if (m) return { width: Number(m[1]), height: Number(m[2]) };
+  return { width: 3840, height: 2160 };
 }
 
 /** getUserMedia video constraints for a device at these settings (ideal, so the browser negotiates
@@ -49,19 +79,20 @@ export function videoConstraints(deviceId: string, s: OverviewSettings): MediaTr
   };
 }
 
-/** Load a role's settings, merged over the defaults (a partial saved blob keeps default fields). */
+/** Load a role's settings, merged over that role's defaults (a partial saved blob keeps defaults). */
 export function loadCameraSettings(storage: Storage | null, role: SettingsRole): OverviewSettings {
+  const def = defaultSettingsFor(role);
   try {
     const raw = storage?.getItem(KEYS[role]);
-    if (!raw) return { ...DEFAULT_OVERVIEW_SETTINGS, manual: {} };
+    if (!raw) return def;
     const p = JSON.parse(raw) as Partial<OverviewSettings>;
     return {
-      resolution: typeof p.resolution === "string" ? p.resolution : DEFAULT_OVERVIEW_SETTINGS.resolution,
-      frameRate: typeof p.frameRate === "number" ? p.frameRate : DEFAULT_OVERVIEW_SETTINGS.frameRate,
+      resolution: typeof p.resolution === "string" ? p.resolution : def.resolution,
+      frameRate: typeof p.frameRate === "number" ? p.frameRate : def.frameRate,
       manual: p.manual && typeof p.manual === "object" ? p.manual : {},
     };
   } catch {
-    return { ...DEFAULT_OVERVIEW_SETTINGS, manual: {} };
+    return def;
   }
 }
 

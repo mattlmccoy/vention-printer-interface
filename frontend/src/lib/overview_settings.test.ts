@@ -2,8 +2,10 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import {
   DEFAULT_OVERVIEW_SETTINGS,
+  defaultSettingsFor,
   loadCameraSettings,
   loadOverviewSettings,
+  resolutionsFor,
   resolutionWH,
   RESOLUTIONS,
   saveCameraSettings,
@@ -30,10 +32,32 @@ test("default overview settings are 4K @ 30", () => {
   assert.deepEqual(RESOLUTIONS.map((r) => r.key), ["3840x2160", "1920x1080", "1280x720"]);
 });
 
-test("resolutionWH parses a known key, falls back to 4K for junk", () => {
+test("resolutionsFor: overview tops out at 4K; science offers extra-high-res up to 20MP", () => {
+  assert.deepEqual(resolutionsFor("overview").map((r) => r.key), ["3840x2160", "1920x1080", "1280x720"]);
+  const sci = resolutionsFor("science").map((r) => r.key);
+  assert.equal(sci[0], "5120x3840"); // 20MP first — the science camera's native still resolution
+  assert.ok(sci.includes("2560x1440"));
+  assert.ok(sci.includes("3840x2160"));
+});
+
+test("defaultSettingsFor: overview 4K@30; science defaults to a streamable res (20MP is opt-in)", () => {
+  assert.deepEqual(defaultSettingsFor("overview"), { resolution: "3840x2160", frameRate: 30, manual: {} });
+  const sci = defaultSettingsFor("science");
+  assert.equal(sci.frameRate, 30);
+  // not 20MP by default — a 20MP live preview may not stream; it's selectable for capture
+  assert.notEqual(sci.resolution, "5120x3840");
+  assert.ok(resolutionsFor("science").some((r) => r.key === sci.resolution));
+});
+
+test("resolutionWH parses ANY WxH key (incl. 20MP), falls back to 4K for junk", () => {
   assert.deepEqual(resolutionWH("1920x1080"), { width: 1920, height: 1080 });
-  assert.deepEqual(resolutionWH("1280x720"), { width: 1280, height: 720 });
+  assert.deepEqual(resolutionWH("5120x3840"), { width: 5120, height: 3840 });
   assert.deepEqual(resolutionWH("nonsense"), { width: 3840, height: 2160 });
+});
+
+test("loadCameraSettings defaults per role (science default is a science resolution)", () => {
+  assert.deepEqual(loadCameraSettings(null, "science"), defaultSettingsFor("science"));
+  assert.deepEqual(loadCameraSettings(null, "overview"), defaultSettingsFor("overview"));
 });
 
 test("videoConstraints builds an exact-device, ideal-res/fps request", () => {

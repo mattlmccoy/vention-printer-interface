@@ -3,7 +3,8 @@ import { loadOverviewCameraId } from "../lib/webcam.ts";
 import { loadRoleMap } from "../lib/camera_roles.ts";
 import {
   loadCameraSettings,
-  RESOLUTIONS,
+  resolutionsFor,
+  resolutionWH,
   saveCameraSettings,
   videoConstraints,
   type OverviewSettings,
@@ -100,6 +101,16 @@ export function CameraSettingsPanel({ role }: { role: SettingsRole }) {
     });
   };
 
+  // Above ~4K the camera usually can't stream (only shoot a still), so a failed open is expected,
+  // not an error — show a "capture-only" note instead of "camera blocked".
+  const px = resolutionWH(settings.resolution);
+  const captureOnly = px.width * px.height > 8_300_000; // > 4K (e.g. 20 MP)
+  const notLiveMsg = status === "denied"
+    ? (captureOnly
+        ? "This resolution is a still-capture size — the live preview may not run this large."
+        : "camera blocked — allow it in the browser")
+    : "starting camera…";
+
   return (
     <div className="grid-gap">
       <b style={{ fontSize: 13 }}>{ROLE_LABEL[role]} camera</b>
@@ -111,15 +122,15 @@ export function CameraSettingsPanel({ role }: { role: SettingsRole }) {
         <>
           <div style={{ maxWidth: 480, background: "var(--image-bg, #000)", borderRadius: "var(--radius)", overflow: "hidden", aspectRatio: "16 / 9" }}>
             <video ref={videoRef} autoPlay playsInline muted style={{ display: status === "live" ? "block" : "none", width: "100%", height: "100%", objectFit: "cover" }} />
-            {status !== "live" && <div className="chart-empty" style={{ height: "100%" }}>{status === "denied" ? "camera blocked — allow it in the browser" : "starting camera…"}</div>}
+            {status !== "live" && <div className="chart-empty" style={{ height: "100%", display: "grid", placeItems: "center", textAlign: "center", padding: 12 }}>{notLiveMsg}</div>}
           </div>
 
-          <label className="row" style={{ gap: 8, alignItems: "center" }}>
+          <label className="row" style={{ gap: 8, alignItems: "center", flexWrap: "wrap" }}>
             <span className="hint" style={{ minWidth: 96, marginTop: 0 }}>resolution</span>
             <select value={settings.resolution} onChange={(e) => setResolution(e.target.value)}>
-              {RESOLUTIONS.map((rr) => <option key={rr.key} value={rr.key}>{rr.label}</option>)}
+              {resolutionsFor(role).map((rr) => <option key={rr.key} value={rr.key}>{rr.label}</option>)}
             </select>
-            <span className="hint" style={{ marginTop: 0 }}>reopens the stream</span>
+            <span className="hint" style={{ marginTop: 0 }}>{captureOnly ? "still capture · fps limited at this size" : "reopens the stream"}</span>
           </label>
 
           {status === "live" && (controls.length === 0 ? (
