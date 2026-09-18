@@ -62,7 +62,6 @@ export interface PrintSnap {
   n_layers: number;
   part_height_mm: number;
   elapsed_s: number;
-  dry_run: boolean;
   single_step: boolean;
   reason: string;
   current_step: { index: number; kind: string; axis: number | null; value: number | null; label: string } | null;

@@ -144,7 +144,7 @@ def test_status_job_tracks_current_layer_during_print(client: TestClient) -> Non
         time.sleep(0.02)
     client.post("/api/arm")
     client.post("/api/primed/capture")  # a print now requires a captured primed bed
-    assert client.post("/api/print/start", json={"dry_run": True}).status_code == 200
+    assert client.post("/api/print/start", json={}).status_code == 200
     seen = set()
     for _ in range(600):
         s = client.get("/api/status").json()

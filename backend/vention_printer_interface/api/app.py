@@ -280,7 +280,6 @@ class RecordingMetaBody(BaseModel):
 
 
 class PrintStartBody(BaseModel):
-    dry_run: bool = False
     single_step: bool = False
     name: str = ""
     notes: str = ""
@@ -1182,7 +1181,7 @@ def create_app(
             reasons = plan.validate(ctrl().limits)
             if reasons:
                 raise HTTPException(409, "print settings invalid: " + "; ".join(reasons))
-            name = body.name or ("dry-run" if body.dry_run else "print")
+            name = body.name or "print"
             job: JobInfo | None = app.state.job
             rec().start(
                 name,
@@ -1192,7 +1191,6 @@ def create_app(
                     "device": ctrl().snapshot()["device"],
                     "limits": ctrl().limits.to_dict(),
                     "print_settings": plan.to_dict(),
-                    "dry_run": body.dry_run,
                     # Link the run to the selected job so Runs is a print-history page (its card can
                     # show the job preview). Absent for a manual print with no job selected.
                     **(
@@ -1205,7 +1203,7 @@ def create_app(
             app.state.auto_run_open = True
             opened = True
         try:
-            guarded(printer().start, plan, body.dry_run, body.single_step)
+            guarded(printer().start, plan, body.single_step)
         except HTTPException:
             if opened:
                 app.state.auto_run_open = False

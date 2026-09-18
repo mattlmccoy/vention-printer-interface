@@ -41,7 +41,7 @@ export function MachineDock({ status, base, gates, call, view }: {
 
         {active && (
           <div className="dock-print">
-            <div className="dp-row"><span className="dp-state">{r.state === "paused" ? "PAUSED" : r.dry_run ? "DRY RUN" : "PRINTING"}</span><span className="dp-layer num">layer {r.layer}/{r.n_layers}</span></div>
+            <div className="dp-row"><span className="dp-state">{r.state === "paused" ? "PAUSED" : "PRINTING"}</span><span className="dp-layer num">layer {r.layer}/{r.n_layers}</span></div>
             <div className="bar" style={{ margin: "8px 0 4px" }}><i style={{ width: `${pct}%` }} /></div>
             <div className="bar-lbl">{pct}% · {fmtSecs(r.elapsed_s)}</div>
           </div>
