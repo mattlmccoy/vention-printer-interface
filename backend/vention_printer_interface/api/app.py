@@ -2069,6 +2069,48 @@ def create_app(
                 record["sidecar_url"] = _vision_file_url(run, _sidecar_rel_path(registered))
         return records
 
+    @app.post("/api/vision/science/capture")
+    async def science_capture(
+        request: Request,
+        layer: int = Query(...),
+        stage: str = Query(...),
+        cad_layer: int | None = Query(default=None),
+    ) -> dict[str, Any]:
+        """CLIENT-side science capture: the browser grabs the still from the ASSIGNED science camera
+        (opened by its deviceId — reliable on macOS, unlike the server's cv2 device index) and POSTs
+        the encoded image as the raw body. The operator decodes it and stores it through the same
+        path as a server grab, enriching job + axis positions server-side (the browser can't read
+        the recoater position). Query: layer (absolute), stage, cad_layer (printing index)."""
+        if stage not in ("pre_jet", "post_jet", "post_heat"):
+            raise HTTPException(400, f"bad stage {stage!r}")
+        vision = app.state.vision
+        if vision is None:
+            raise HTTPException(503, "science camera not assigned / capture service not running")
+        body = await request.body()
+        if not body:
+            raise HTTPException(400, "empty image body")
+        import cv2
+
+        arr = cv2.imdecode(np.frombuffer(body, dtype=np.uint8), cv2.IMREAD_COLOR)
+        if arr is None:
+            raise HTTPException(400, "could not decode uploaded image")
+        job = app.state.job.to_dict() if app.state.job is not None else {}
+        axis: dict[str, float] = {}
+        try:
+            ctrl = getattr(app.state, "controller", None)
+            tel = ctrl.snapshot().get("telemetry") if ctrl is not None else None
+            if tel and tel.get("positions"):
+                names = {1: "build", 2: "feed", 3: "printhead", 4: "recoater"}
+                axis = {names.get(int(k), str(k)): float(v) for k, v in tel["positions"].items()}
+        except Exception:  # noqa: BLE001 - axis positions are best-effort metadata
+            axis = {}
+        paths = vision.store_uploaded(
+            arr, layer=layer, stage=stage, cad_layer=cad_layer, axis_positions=axis, job=job
+        )
+        if paths is None:
+            raise HTTPException(409, "no active recording run to store the capture under")
+        return {"stored": True}
+
     @app.post("/api/analysis/{run}/dimensional")
     def analysis_dimensional_run(
         run: str, body: DimensionalAnalyzeRequest | None = None
