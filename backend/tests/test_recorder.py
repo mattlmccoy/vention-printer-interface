@@ -337,6 +337,47 @@ def test_layer_accuracy_commanded_vs_actual_build_height() -> None:
     assert s["mean_abs_dev_mm"] == pytest.approx((0.01 + 0.01 + 0.02) / 3)
 
 
+def test_layer_accuracy_first_layer_unknown_when_run_was_jumped() -> None:
+    # Timeline-jump (debug-only): the recording starts mid-print, so the first executed layer's
+    # per-layer increment can't be differenced against the (unrecorded) prior layer's cumulative.
+    # It must be None — NOT a huge false error from prev_cum=0 (the observed "layer 6: actual 0.2 /
+    # target 3.2 -> off by -3000um"). Cumulative is preserved; later layers difference normally.
+    telem = [
+        _tel(0, 10.0),  # baseline at the jump (piston already mid-build)
+        _tel(1_000_000_000, 10.2),  # first executed layer: +0.2 actual
+        _tel(2_000_000_000, 10.4),  # next: +0.2 actual
+    ]
+    layers = [
+        _lay(1_000_000_000, 6, "printing", 3.2),  # cumulative commanded 3.2 at the jumped-to layer
+        _lay(2_000_000_000, 7, "printing", 3.4),
+    ]
+    rows = layer_accuracy_rows(telem, layers, part_axis=1, jumped=True)
+    assert rows[0]["commanded_mm"] is None
+    assert rows[0]["actual_mm"] is None
+    assert rows[0]["deviation_mm"] is None
+    assert rows[0]["commanded_cum_mm"] == pytest.approx(3.2)  # cumulative kept
+    # the next layer differences against the first row's cumulative -> correct 0.2 vs 0.2
+    assert rows[1]["commanded_mm"] == pytest.approx(0.2)
+    assert rows[1]["actual_mm"] == pytest.approx(0.2)
+    assert rows[1]["deviation_mm"] == pytest.approx(0.0)
+    # a NON-jumped run keeps the legacy behavior (first layer differenced from cum 0)
+    assert layer_accuracy_rows(telem, layers, part_axis=1)[0]["commanded_mm"] == pytest.approx(3.2)
+
+
+def test_run_was_jumped_reads_the_print_seeked_event(tmp_path: Path) -> None:
+    from vention_printer_interface.recording.recorder import _run_was_jumped
+
+    assert _run_was_jumped(tmp_path) is False  # no events.json
+    (tmp_path / "events.json").write_text(
+        json.dumps([{"label": "layer_started", "data": {"layer": 1}}])
+    )
+    assert _run_was_jumped(tmp_path) is False  # no seek
+    (tmp_path / "events.json").write_text(
+        json.dumps([{"label": "layer_started"}, {"label": "print_seeked", "data": {"index": 40}}])
+    )
+    assert _run_was_jumped(tmp_path) is True
+
+
 def test_layer_accuracy_unknown_when_no_telemetry_in_window() -> None:
     # A layer with no telemetry sample in its window reports actual/deviation None, never a false 0.
     telem = [_tel(0, 5.0)]  # baseline only; nothing during the layers

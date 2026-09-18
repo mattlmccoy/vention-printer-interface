@@ -171,6 +171,10 @@ class PrintController:
                 raise RuntimeError("pause the print before jumping to a step")
             self.step_index = max(0, min(int(index), len(self.steps)))
             self._in_flight = None
+            new_index = self.step_index
+        # Record the jump so post-run analysis knows this was a debug seek (its first executed layer
+        # has no valid cumulative baseline -> its accuracy is suppressed, not a false huge error).
+        self._emit("print_seeked", {"index": new_index})
 
     def abort(self, reason: str = "operator abort") -> None:
         self._stop_safe()
