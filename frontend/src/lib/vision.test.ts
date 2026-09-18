@@ -1,6 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { calibrationReady, cameraAccessMessage, dismissQuickStart, formatCaptureMetaValue, formatValidation, overviewStreamUrl, panelVisible, parseCaptures, setPanelVisible, shouldShowQuickStart } from "./vision.ts";
+import { calibrationReady, cameraAccessMessage, captureLayerFull, captureLayerShort, dismissQuickStart, formatCaptureMetaValue, formatValidation, overviewStreamUrl, panelVisible, parseCaptures, setPanelVisible, shouldShowQuickStart } from "./vision.ts";
 
 class Mem implements Storage {
   m = new Map<string, string>();
@@ -62,6 +62,16 @@ test("parseCaptures maps manifest records and sorts by layer then stage order", 
     { layer: 1, stage: "post_heat", url: "/api/vision/runs/r1/file?path=vision%2Flayer_0001%2Fpost_heat.png", sidecarUrl: "/api/vision/runs/r1/file?path=vision%2Flayer_0001%2Fpost_heat.json" },
     { layer: 2, stage: "pre_jet", url: "/api/vision/runs/r1/file?path=vision%2Flayer_0002%2Fpre_jet.png", sidecarUrl: "/api/vision/runs/r1/file?path=vision%2Flayer_0002%2Fpre_jet.json" },
   ]);
+});
+
+test("captureLayerFull/Short differentiate the printing layer from the absolute build layer", () => {
+  const printing = { layer: 6, cadLayer: 1, stage: "post_jet", url: "/u" };
+  assert.equal(captureLayerFull(printing), "printing layer 1 · build layer 6");
+  assert.equal(captureLayerShort(printing), "P1");
+  // no printing index (e.g. an older capture): fall back to the absolute layer
+  const bare = { layer: 3, stage: "pre_jet", url: "/u" };
+  assert.equal(captureLayerFull(bare), "layer 3");
+  assert.equal(captureLayerShort(bare), "L3");
 });
 
 test("parseCaptures reads the printing/CAD layer (cad_layer) when present, else undefined", () => {

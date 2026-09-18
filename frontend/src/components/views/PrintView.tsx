@@ -126,8 +126,11 @@ export function PrintView({ status, gates, call, base, onJob, onRuns }: { status
   }
 
   const stateCls = r?.state === "fault" ? "fault" : active ? "run" : "idle";
-  const shownCap = caps.find((c) => c.layer === shownLayer && c.stage === cmpStage) ?? null;
-  const layerHasCaps = caps.some((c) => c.layer === shownLayer);
+  // shownLayer is the PRINTING layer; captures carry cadLayer (printing index) — match on that, not
+  // the absolute build layer, or the compare silently never lines up once there are precoats.
+  const capLayer = (c: Capture) => c.cadLayer ?? c.layer;
+  const shownCap = caps.find((c) => capLayer(c) === shownLayer && c.stage === cmpStage) ?? null;
+  const layerHasCaps = caps.some((c) => capLayer(c) === shownLayer);
   const imaging = (
     <div className="card imaging-card">
       <h3>{job ? `${job.name} · layer ${shownLayer}${job.layer_count ? ` of ${job.layer_count}` : ""}` : "layer"}
