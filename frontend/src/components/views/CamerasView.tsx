@@ -1,66 +1,13 @@
-import { useEffect, useMemo, useState } from "react";
-import { api, type VisionCalibrateResult, type VisionCaptureSidecar } from "../../lib/api.ts";
+import { useEffect, useState } from "react";
+import { api, type VisionCalibrateResult } from "../../lib/api.ts";
 import type { Gates } from "../../lib/format.ts";
 import type { StatusPayload } from "../../lib/telemetry.ts";
-import { formatCaptureMetaValue, parseCaptures, type Capture } from "../../lib/vision.ts";
 import { CalibrationBoardPanel } from "../CalibrationBoardPanel.tsx";
 import { CameraRoleAssigner } from "../CameraRoleAssigner.tsx";
 import { CameraSettingsPanel } from "../CameraSettingsPanel.tsx";
 import { CalibrationWizard } from "../CalibrationWizard.tsx";
 import { ValidationPanel } from "../ValidationPanel.tsx";
 import type { Call } from "./types.ts";
-
-const STAGES = ["pre_jet", "post_jet", "post_heat"] as const;
-const STAGE_LABEL: Record<string, string> = { pre_jet: "pre-jet", post_jet: "post-jet", post_heat: "post-heat" };
-
-/** One `<img>` with an honest failure state — the vision endpoints are freshly wired and a given
- *  run/layer/stage may simply have no image yet (or the file-serving route for it may not exist
- *  yet), so a 404 must always render as "unavailable", never as a blank/broken image (matches
- *  OverviewCameraPanel's fallback pattern). */
-function CamImg({ src, alt, className }: { src: string; alt: string; className?: string }) {
-  const [errored, setErrored] = useState(false);
-  useEffect(() => setErrored(false), [src]);
-  if (errored) return <div className="cam-panel-empty"><span className="cam-panel-ph" aria-hidden="true" /><span>{alt} unavailable</span></div>;
-  return <img className={className} src={src} alt={alt} onError={() => setErrored(true)} />;
-}
-
-/** Fetches and renders one capture's sidecar JSON (see backend vision/store.py's
- *  _SIDECAR_TEMPLATE) via its `sidecar_url`. Shows only fields the backend actually
- *  populated — an absent/null field renders "—", never a guessed value (data-contract-
- *  verification: unknown must never render as healthy/invented). */
-function CaptureMeta({ sidecarUrl }: { sidecarUrl?: string }) {
-  const [meta, setMeta] = useState<VisionCaptureSidecar | null>(null);
-  const [failed, setFailed] = useState(false);
-
-  useEffect(() => {
-    setMeta(null);
-    setFailed(false);
-    if (!sidecarUrl) return;
-    let live = true;
-    api.visionCaptureSidecar(sidecarUrl)
-      .then((m) => { if (live) setMeta(m); })
-      .catch(() => { if (live) setFailed(true); });
-    return () => { live = false; };
-  }, [sidecarUrl]);
-
-  if (!sidecarUrl) return null;
-  if (failed) return <div className="hint">metadata unavailable</div>;
-  if (!meta) return null; // loading — say nothing rather than show a stale/wrong value
-
-  const fmt = formatCaptureMetaValue;
-  return (
-    <div className="kv">
-      <span>layer</span><span>{fmt(meta.layer)}</span>
-      <span>stage</span><span>{fmt(meta.stage)}</span>
-      <span>axis positions (mm)</span><span>{fmt(meta.axis_positions_mm)}</span>
-      <span>capture requested</span><span>{fmt(meta.capture?.requested)}</span>
-      <span>capture actual</span><span>{fmt(meta.capture?.actual)}</span>
-      <span>exposure</span><span>{fmt(meta.controls?.exposure)}</span>
-      <span>gain</span><span>{fmt(meta.controls?.gain)}</span>
-      <span>calibration version</span><span>{fmt(meta.calibration?.version)}</span>
-    </div>
-  );
-}
 
 function CalibrationForm({ call, disabled }: { call: Call; disabled: boolean }) {
   const [imagePts, setImagePts] = useState("0,0\n100,0\n100,100\n0,100");
@@ -119,51 +66,6 @@ function CalibrationForm({ call, disabled }: { call: Call; disabled: boolean }) 
         <div className="kv">
           <span>reprojection error</span><span>{result.reprojection_error.toFixed(4)} px</span>
           <span>calibration version</span><span>{result.calibration_version}</span>
-        </div>
-      )}
-    </>
-  );
-}
-
-function CaptureBrowser({ base }: { base: string }) {
-  const [runs, setRuns] = useState<string[]>([]);
-  const [run, setRun] = useState("");
-  const [captures, setCaptures] = useState<Capture[]>([]);
-
-  useEffect(() => { api.recordings().then((r) => setRuns(r.runs.map((x) => x.run).reverse())).catch(() => undefined); }, []);
-  useEffect(() => {
-    if (!run) { setCaptures([]); return; }
-    let live = true;
-    api.visionCaptures(run).then((records) => { if (live) setCaptures(parseCaptures(records)); }).catch(() => { if (live) setCaptures([]); });
-    return () => { live = false; };
-  }, [run]);
-
-  const layers = useMemo(() => [...new Set(captures.map((c) => c.layer))].sort((a, b) => a - b), [captures]);
-  const [layer, setLayer] = useState<number | null>(null);
-  useEffect(() => setLayer(layers[0] ?? null), [layers.join(",")]);
-  const forLayer = captures.filter((c) => c.layer === layer);
-
-  return (
-    <>
-      <div className="cam-browser-row">
-        <label className="row">run <select value={run} onChange={(e) => setRun(e.target.value)}>
-          <option value="">select a run…</option>
-          {runs.map((r) => <option key={r} value={r}>{r}</option>)}
-        </select></label>
-        <label className="row">layer <select value={layer ?? ""} disabled={layers.length === 0} onChange={(e) => setLayer(Number(e.target.value))}>
-          {layers.map((l) => <option key={l} value={l}>{l}</option>)}
-        </select></label>
-      </div>
-      {run && layers.length === 0 && <div className="hint">no captures recorded for this run</div>}
-      {forLayer.length > 0 && (
-        <div className="cam-grid">
-          {forLayer.map((c) => (
-            <div key={c.stage} className="cam-still">
-              <header>{STAGE_LABEL[c.stage] ?? c.stage} · layer {c.layer}</header>
-              <CamImg src={`${base}${c.url}`} alt={`${c.stage} layer ${c.layer}`} />
-              <CaptureMeta sidecarUrl={c.sidecarUrl} />
-            </div>
-          ))}
         </div>
       )}
     </>
@@ -240,22 +142,6 @@ export function CamerasView({ status, gates, call, base, onOpenQuickStart }: {
   /** A7: reopens the camera-role quick-start wizard any time (cameras swapped/replaced/re-cabled) */
   onOpenQuickStart: () => void;
 }) {
-  const run = status?.recording.run ?? null;
-  const layer = status?.print?.layer ?? null;
-  const [layerCaptures, setLayerCaptures] = useState<Capture[]>([]);
-
-  useEffect(() => {
-    if (!run) { setLayerCaptures([]); return; }
-    let live = true;
-    api.visionCaptures(run).then((records) => { if (live) setLayerCaptures(parseCaptures(records)); }).catch(() => { if (live) setLayerCaptures([]); });
-    const id = window.setInterval(() => {
-      api.visionCaptures(run).then((records) => { if (live) setLayerCaptures(parseCaptures(records)); }).catch(() => undefined);
-    }, 4000);
-    return () => { live = false; window.clearInterval(id); };
-  }, [run]);
-
-  const currentStills = layer === null ? [] : layerCaptures.filter((c) => c.layer === layer);
-
   const [step, setStep] = useState(() => {
     const raw = typeof location !== "undefined" ? new URLSearchParams(location.search).get("step") : null;
     const q = raw === null || raw === "" ? NaN : Number(raw); // Number(null)===0 trap
@@ -339,30 +225,6 @@ export function CamerasView({ status, gates, call, base, onOpenQuickStart }: {
             <button className="small" disabled={step === STEPS.length - 1} onClick={() => setStep((n) => Math.min(STEPS.length - 1, n + 1))}>Next</button>
           </div>
         </div>
-      </div>
-
-      <div className="sec-h">review captures</div>
-      <p className="setup-intro">Inspect the stills the science camera recorded — the current run's layer as it prints, or browse any past run.</p>
-      <div className="cards-2">
-        <div className="card">
-          <h3>{run ? `current layer stills · layer ${layer ?? "—"}` : "current layer stills"}</h3>
-          {!run ? <div className="hint" style={{ marginTop: 0 }}>no active run — start a recording to capture layer stills</div> :
-            currentStills.length === 0 ? <div className="hint" style={{ marginTop: 0 }}>no captures for the current layer yet</div> : (
-              <div className="cam-grid">
-                {STAGES.map((s) => {
-                  const c = currentStills.find((x) => x.stage === s);
-                  return (
-                    <div key={s} className="cam-still">
-                      <header>{STAGE_LABEL[s]}</header>
-                      {c ? <CamImg src={`${base}${c.url}`} alt={STAGE_LABEL[s]} />
-                        : <div className="cam-panel-empty"><span className="cam-panel-ph" aria-hidden="true" /><span>not captured yet</span></div>}
-                    </div>
-                  );
-                })}
-              </div>
-            )}
-        </div>
-        <div className="card"><h3>capture browser</h3><CaptureBrowser base={base} /></div>
       </div>
 
       <div className="sec-h">calibration tools</div>
