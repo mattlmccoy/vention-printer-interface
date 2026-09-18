@@ -55,6 +55,11 @@ class JobInfo:
     timestamp: str
     pages: tuple[Path, ...]
     workflow: str = ""
+    # Multipass factor the SLICER declared, if any (#7). None when job_info carries no multipass
+    # field — the current Meteor RIP output does not, so this stays None until the slicer emits it.
+    # NEVER invented: the print's own n_jet_passes is separate and unaffected unless the operator
+    # chooses to apply this.
+    slicer_multipass: int | None = None
     preview: Path | None = None
     missing_pages: list[int] = field(default_factory=list)
     _cache: dict[tuple[int, int], bytes] = field(default_factory=dict, repr=False, compare=False)
@@ -101,8 +106,22 @@ class JobInfo:
             "missing_pages": list(self.missing_pages),
             "workflow": self.workflow,
             "kind": self.kind,
+            "slicer_multipass": self.slicer_multipass,
             "has_preview": self.preview is not None,
         }
+
+
+def _read_multipass(info: dict[str, Any]) -> int | None:
+    """Import the slicer's declared multipass factor if job_info carries one (#7). Accepts a few
+    plausible key names and returns the first that is a positive integer; None otherwise. Reads
+    only what is present — the current RIP output has no such key, so this returns None for it."""
+    for key in ("multipass", "jet_passes", "n_jet_passes", "passes"):
+        v = info.get(key)
+        if isinstance(v, bool):  # bool is an int subclass — reject it explicitly
+            continue
+        if isinstance(v, int) and v >= 1:
+            return v
+    return None
 
 
 def load_job(job_dir: Path) -> JobInfo:
@@ -143,6 +162,7 @@ def load_job(job_dir: Path) -> JobInfo:
         timestamp=str(info.get("timestamp", "")),
         pages=tuple(ordered),
         workflow=str(info.get("workflow") or ""),
+        slicer_multipass=_read_multipass(info),
         preview=preview,
         missing_pages=missing,
     )

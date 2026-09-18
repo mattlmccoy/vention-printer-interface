@@ -72,6 +72,13 @@ export const CAPTURE_STAGE_LABEL: Record<string, string> = {
   pre_jet: "pre-jet", post_jet: "post-jet", post_heat: "post-heat",
 };
 
+/** True when the slicer declared a multipass factor (#7) that the print is NOT currently set to —
+ *  drives the "created with multipass Nx" warning. A missing/invalid slicer value never warns
+ *  (data-contract: absence is not a mismatch). Pure. */
+export function multipassMismatch(slicer: number | null | undefined, currentPasses: number): boolean {
+  return slicer != null && slicer >= 1 && currentPasses !== slicer;
+}
+
 /** Toggle one stage in the enabled list, always returning the valid stages in canonical order.
  *  Pure so it can be unit-tested; the backend re-canonicalizes untrusted input regardless. */
 export function toggleCaptureStage(enabled: readonly string[], stage: string): string[] {

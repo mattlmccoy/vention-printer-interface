@@ -2,7 +2,7 @@ import { useEffect, useRef, useState } from "react";
 import { api, type MeteorStatus } from "../../lib/api.ts";
 import { estimateDurationS } from "../../lib/estimate.ts";
 import { fmtSecs, type Gates } from "../../lib/format.ts";
-import { CAPTURE_STAGES, CAPTURE_STAGE_LABEL, toggleCaptureStage, totalLayers, totalThickness, validate, type PrintSettings } from "../../lib/print_settings.ts";
+import { CAPTURE_STAGES, CAPTURE_STAGE_LABEL, multipassMismatch, toggleCaptureStage, totalLayers, totalThickness, validate, type PrintSettings } from "../../lib/print_settings.ts";
 import type { StatusPayload } from "../../lib/telemetry.ts";
 import { NumberField } from "../NumberField.tsx";
 import { Toggle } from "../Toggle.tsx";
@@ -24,6 +24,7 @@ export function PrintConfigurator({ status, gates, call, onStarted }: {
   const [name, setName] = useState("");
   const [meteor, setMeteor] = useState<MeteorStatus | null>(null);
   const [primed, setPrimed] = useState<boolean | null>(null); // null = unknown, else bed-primed?
+  const [mpDismissed, setMpDismissed] = useState(false); // dismissable multipass-mismatch warning (#7)
   const job = status?.job ?? null;
   const running = gates.printActive;
 
@@ -136,7 +137,20 @@ export function PrintConfigurator({ status, gates, call, onStarted }: {
                       ? `ready · ${meteor.layers_expected} layers in the hot folder`
                       : `not ready · ${meteor.detail}`}</span>
                   : <span className="warnv">firing status unavailable</span>}
+                {job.slicer_multipass != null && <>
+                  <span title="Multipass factor declared by the slicer when this file was created.">slicer multipass</span>
+                  <span className={multipassMismatch(job.slicer_multipass, plan.n_jet_passes) ? "warnv" : ""}>
+                    {job.slicer_multipass}× {plan.n_jet_passes !== job.slicer_multipass ? `(print: ${plan.n_jet_passes}×)` : ""}
+                  </span>
+                </>}
               </div>
+              {job.slicer_multipass != null && multipassMismatch(job.slicer_multipass, plan.n_jet_passes) && !mpDismissed && (
+                <div className="errline" style={{ display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap", marginTop: 8 }}>
+                  <span>⚠ This file was created with multipass enabled at {job.slicer_multipass}×, but the print is set to {plan.n_jet_passes}×.</span>
+                  <button className="cta sm" disabled={running} onClick={() => call("apply multipass", () => api.setPrintSettings({ n_jet_passes: job.slicer_multipass }).then(() => refresh()))}>Apply {job.slicer_multipass}×</button>
+                  <button className="small" onClick={() => setMpDismissed(true)}>dismiss</button>
+                </div>
+              )}
             </div>
           )}
           <div className="card">
