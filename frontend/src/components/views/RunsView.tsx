@@ -2,7 +2,7 @@ import { useEffect, useState, type MouseEvent as ReactMouseEvent } from "react";
 import { api, type RunMeta } from "../../lib/api.ts";
 import type { Gates } from "../../lib/format.ts";
 import type { EventItem, StatusPayload } from "../../lib/telemetry.ts";
-import { parseCaptures, type Capture } from "../../lib/vision.ts";
+import { captureLayerFull, captureLayerShort, parseCaptures, type Capture } from "../../lib/vision.ts";
 import {
   hasNativeSpeed,
   layerAccuracySummary,
@@ -410,8 +410,8 @@ export function RunsView({ status, gates, call, base }: { status: StatusPayload 
                           title="open — compare with the CAD layer"
                           onClick={() => setViewIdx(i)}
                           onKeyDown={(e) => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); setViewIdx(i); } }}>
-                          <img src={`${base}${c.url}`} alt={`layer ${c.layer} ${c.stage}`} onError={(e) => { (e.currentTarget as HTMLImageElement).style.display = "none"; }} />
-                          <span className="ll">L{c.layer}</span><span className="lb">{STAGE_LABEL[c.stage] ?? c.stage}</span>
+                          <img src={`${base}${c.url}`} alt={captureLayerFull(c)} onError={(e) => { (e.currentTarget as HTMLImageElement).style.display = "none"; }} />
+                          <span className="ll" title={captureLayerFull(c)}>{captureLayerShort(c)}</span><span className="lb">{STAGE_LABEL[c.stage] ?? c.stage}</span>
                         </div>
                       ))}
                     </div>
@@ -488,12 +488,12 @@ export function RunsView({ status, gates, call, base }: { status: StatusPayload 
         <div className="lightbox" role="dialog" aria-modal="true" aria-label="science-cam still" onClick={() => setViewIdx(-1)}>
           <div className="lb-body" onClick={(e) => e.stopPropagation()}>
             <div className="lb-h">
-              <span>layer {viewCap.layer} · {STAGE_LABEL[viewCap.stage] ?? viewCap.stage}</span>
+              <span>{captureLayerFull(viewCap)} · {STAGE_LABEL[viewCap.stage] ?? viewCap.stage}</span>
               <button className="iconbtn" onClick={() => setViewIdx(-1)} aria-label="close">✕</button>
             </div>
             <div className="lb-compare">
               <div className="cmp"><div className="cmp-h">science cam</div>
-                <img className="cmp-img" src={`${base}${viewCap.url}`} alt={`science cam layer ${viewCap.layer} ${viewCap.stage}`} /></div>
+                <img className="cmp-img" src={`${base}${viewCap.url}`} alt={`science cam · ${captureLayerFull(viewCap)} · ${viewCap.stage}`} /></div>
               <div className="cmp"><div className="cmp-h">CAD slice</div>
                 {viewJobFolder && !viewCadErr
                   ? <img className="cmp-img" src={api.jobLayerByFolderUrl(viewCap.cadLayer ?? viewCap.layer, viewJobFolder)} alt={`CAD layer ${viewCap.cadLayer ?? viewCap.layer}`} onError={() => setViewCadErr(true)} />

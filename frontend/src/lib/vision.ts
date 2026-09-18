@@ -44,6 +44,18 @@ export function parseCaptures(manifest: unknown[]): Capture[] {
   return out.sort((a, b) => a.layer - b.layer || (STAGE_ORDER[a.stage] ?? 99) - (STAGE_ORDER[b.stage] ?? 99));
 }
 
+/** Human label that distinguishes the PRINTING layer from the absolute build layer (which includes
+ *  precoats) — so "build layer 6" is never mistaken for the 6th printing layer. Falls back to the
+ *  bare layer for captures with no printing index (older runs). */
+export function captureLayerFull(c: { layer: number; cadLayer?: number }): string {
+  return c.cadLayer != null ? `printing layer ${c.cadLayer} · build layer ${c.layer}` : `layer ${c.layer}`;
+}
+
+/** Compact badge form: "P<printing>" when the printing index is known, else "L<build>". */
+export function captureLayerShort(c: { layer: number; cadLayer?: number }): string {
+  return c.cadLayer != null ? `P${c.cadLayer}` : `L${c.layer}`;
+}
+
 /** Pure formatting core for the capture browser's sidecar-metadata display: an absent value
  *  (null/undefined — the backend's sidecar template default for anything not populated) always
  *  renders as "—", never invented or silently blanked. Never throws on an object/array value. */
