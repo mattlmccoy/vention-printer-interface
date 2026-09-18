@@ -529,13 +529,15 @@ button.small { height: 34px; padding: 0 12px; border: 1px solid var(--line-contr
 @media (prefers-reduced-motion: reduce) { .dockdiag .mv { animation: none; } }
 /* compact 2x2 axis chips (position readouts kept modest — they were fine before) */
 .dock-axes { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
-.dock-chip { border: 1px solid var(--line); border-left: 3px solid var(--line-control); border-radius: var(--radius); background: var(--panel); padding: 7px 11px; }
+/* Horizontal banners (#9): label left, value right in each cell. The 2x2 grid + CHIP_ORDER
+   [3,4,2,1] place printhead top-left, recoater top-right, feed bottom-left, build bottom-right. */
+.dock-chip { border: 1px solid var(--line); border-left: 3px solid var(--line-control); border-radius: var(--radius); background: var(--panel); padding: 8px 11px; display: flex; align-items: baseline; justify-content: space-between; gap: 8px; }
 .dock-chip.ax-build { border-left-color: var(--trace-part); }
 .dock-chip.ax-feed { border-left-color: var(--trace-feed); }
 .dock-chip.ax-ph { border-left-color: var(--trace-ph); }
 .dock-chip.ax-rc { border-left-color: var(--trace-rc); }
-.dock-chip .k { display: block; font: 10px var(--font-mono); letter-spacing: .08em; text-transform: uppercase; color: var(--label); }
-.dock-chip .v { display: block; font: 600 17px var(--font-mono); color: var(--fg-strong); margin-top: 2px; white-space: nowrap; }
+.dock-chip .k { font: 10px var(--font-mono); letter-spacing: .08em; text-transform: uppercase; color: var(--label); }
+.dock-chip .v { font: 600 17px var(--font-mono); color: var(--fg-strong); white-space: nowrap; }
 .dock-chip .v.unref { color: var(--muted); }
 .dock-chip .v small { font-size: 10px; color: var(--muted); font-weight: 400; }
 .dock-mini { display: flex; gap: 8px; }
