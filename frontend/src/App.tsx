@@ -300,7 +300,7 @@ export function App() {
           estop={c?.telemetry?.estop_triggered ?? null} drivesReady={c?.telemetry?.drives_ready ?? null} heaterOn={c?.heater.on ?? null} heaterOnS={c?.heater.on_s ?? 0} heaterMaxS={c?.heater.max_on_s ?? 0}
           recActive={status?.recording.active ?? false} recRun={status?.recording.run ?? null} printState={r?.state ?? "idle"} version={version} />
         {/* Headless: captures the assigned science camera on the operator's per-layer signal. */}
-        <ScienceCaptureClient status={status} />
+        <ScienceCaptureClient status={status} onError={setErr} />
         <OverviewTimelapseClient status={status} />
         {cameraStudio && <CameraStudio status={status} onClose={() => setCameraStudio(false)} />}
       </div>

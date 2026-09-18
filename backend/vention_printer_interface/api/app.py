@@ -105,7 +105,7 @@ from vention_printer_interface.vision.cameras import (
     save_role_map,
     unresolved_roles,
 )
-from vention_printer_interface.vision.capture import VisionService
+from vention_printer_interface.vision.capture import VisionService, store_uploaded
 from vention_printer_interface.vision.events import label_to_stage
 from vention_printer_interface.vision.frame_source import (
     AVFoundationFrameSource,
@@ -2331,9 +2331,12 @@ def create_app(
         the recoater position). Query: layer (absolute), stage, cad_layer (printing index)."""
         if stage not in ("pre_jet", "post_jet", "post_heat"):
             raise HTTPException(400, f"bad stage {stage!r}")
+        # Browser device assignments are independent of server camera discovery. Saving an
+        # already captured image needs a run and calibration, not an open server camera.
         vision = app.state.vision
-        if vision is None:
-            raise HTTPException(503, "science camera not assigned / capture service not running")
+        calibration = vision.calibration if vision is not None else load_calibration(
+            vision_calibration_path
+        )
         body = await request.body()
         if not body:
             raise HTTPException(400, "empty image body")
@@ -2352,8 +2355,9 @@ def create_app(
                 axis = {names.get(int(k), str(k)): float(v) for k, v in tel["positions"].items()}
         except Exception:  # noqa: BLE001 - axis positions are best-effort metadata
             axis = {}
-        paths = vision.store_uploaded(
-            arr, layer=layer, stage=stage, cad_layer=cad_layer, axis_positions=axis, job=job
+        paths = store_uploaded(
+            arr, run_dir=rec().current_run_dir, calibration=calibration,
+            layer=layer, stage=stage, cad_layer=cad_layer, axis_positions=axis, job=job,
         )
         if paths is None:
             raise HTTPException(409, "no active recording run to store the capture under")

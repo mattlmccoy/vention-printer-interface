@@ -179,46 +179,12 @@ class VisionService:
         job: dict[str, Any] | None = None,
         host_timestamp_ns: int = 0,
     ) -> dict[str, str] | None:
-        """Store a CLIENT-uploaded still (the browser grabbed it from the assigned science camera
-        and POSTed it here). Goes through the same register + write_capture + manifest path as a
-        server grab, tagged source="client". Returns the written paths, or None if no run is active.
-        This is the reliable capture path on macOS, where the server's cv2 device index mis-resolves
-        between two identical cameras — the browser opens the right camera by its deviceId."""
-        base = self._run_dir_provider()
-        if base is None:
-            log.debug("no active run dir; dropping client capture layer %s %s", layer, stage)
-            return None
-        registered, registered_space = register_frame(image, self._calibration)
-        meta: dict[str, Any] = {
-            "run_id": Path(base).name,
-            "host_timestamp_ns": host_timestamp_ns or time.time_ns(),
-            "job": job or {},
-            "axis_positions_mm": axis_positions or {},
-            "cad_layer": cad_layer,
-            "camera": {"role": self._camera_role, "model": None, "asin": None,
-                       "device_id": None, "device_index": None},
-            "capture": {"requested": None,
-                        "actual": {"width": int(image.shape[1]), "height": int(image.shape[0])}},
-            "calibration": self._calibration_meta(),
-            "registered_space": registered_space,
-            "source": "client",
-        }
-        paths = write_capture(
-            Path(base), layer=layer, stage=stage, raw=image, registered=registered, meta=meta
+        """Store a browser still using the same camera-independent writer as the API."""
+        return store_uploaded(
+            image, run_dir=self._run_dir_provider(), calibration=self._calibration,
+            camera_role=self._camera_role, layer=layer, stage=stage, cad_layer=cad_layer,
+            axis_positions=axis_positions, job=job, host_timestamp_ns=host_timestamp_ns,
         )
-        registered_rel = Path(paths["registered"]).relative_to(Path(base)).as_posix()
-        append_manifest(
-            Path(base),
-            {
-                "run_id": meta["run_id"],
-                "layer": layer,
-                "cad_layer": cad_layer,
-                "stage": stage,
-                "registered": registered_rel,
-                "host_timestamp_ns": meta["host_timestamp_ns"],
-            },
-        )
-        return paths
 
     def _process(self, req: CaptureRequest) -> None:
         base = self._run_dir_provider()
@@ -321,15 +287,73 @@ class VisionService:
         return frame, False
 
     def _calibration_meta(self) -> dict[str, Any] | None:
-        calibration = self._calibration
-        if calibration is None:
-            return None
-        return {
-            "version": calibration.version,
-            "image_size": None,
-            "camera_matrix": None,
-            "distortion_model": None,
-            "distortion_coeffs": None,
-            "bed_homography": calibration.H.tolist(),
-            "validation": None,
-        }
+        return _calibration_metadata(self._calibration)
+
+
+def _calibration_metadata(calibration: Calibration | None) -> dict[str, Any] | None:
+    if calibration is None:
+        return None
+    return {
+        "version": calibration.version,
+        "image_size": None,
+        "camera_matrix": None,
+        "distortion_model": None,
+        "distortion_coeffs": None,
+        "bed_homography": calibration.H.tolist(),
+        "validation": None,
+    }
+
+
+def store_uploaded(
+    image: Any,
+    *,
+    run_dir: Path | None,
+    calibration: Calibration | None = None,
+    camera_role: str | None = "science",
+    layer: int,
+    stage: str,
+    cad_layer: int | None = None,
+    axis_positions: dict[str, float] | None = None,
+    job: dict[str, Any] | None = None,
+    host_timestamp_ns: int = 0,
+) -> dict[str, str] | None:
+    """Store a CLIENT-uploaded still (the browser grabbed it from the assigned science camera
+    and POSTed it here). Goes through the same register + write_capture + manifest path as a
+    server grab, tagged source="client". Returns the written paths, or None if no run is active.
+    This is the reliable capture path on macOS, where the server's cv2 device index mis-resolves
+    between two identical cameras — the browser opens the right camera by its deviceId."""
+    base = run_dir
+    if base is None:
+        log.debug("no active run dir; dropping client capture layer %s %s", layer, stage)
+        return None
+    registered, registered_space = register_frame(image, calibration)
+    meta: dict[str, Any] = {
+        "run_id": Path(base).name,
+        "host_timestamp_ns": host_timestamp_ns or time.time_ns(),
+        "job": job or {},
+        "axis_positions_mm": axis_positions or {},
+        "cad_layer": cad_layer,
+        "camera": {"role": camera_role, "model": None, "asin": None,
+                   "device_id": None, "device_index": None},
+        "capture": {"requested": None,
+                    "actual": {"width": int(image.shape[1]), "height": int(image.shape[0])}},
+        "calibration": _calibration_metadata(calibration),
+        "registered_space": registered_space,
+        "source": "client",
+    }
+    paths = write_capture(
+        Path(base), layer=layer, stage=stage, raw=image, registered=registered, meta=meta
+    )
+    registered_rel = Path(paths["registered"]).relative_to(Path(base)).as_posix()
+    append_manifest(
+        Path(base),
+        {
+            "run_id": meta["run_id"],
+            "layer": layer,
+            "cad_layer": cad_layer,
+            "stage": stage,
+            "registered": registered_rel,
+            "host_timestamp_ns": meta["host_timestamp_ns"],
+        },
+    )
+    return paths

@@ -45,7 +45,10 @@ async function grabScienceStill(stream: MediaStream | null, video: HTMLVideoElem
  * server's cv2 device index that mis-resolves two identical ELPs), heartbeats the operator so the
  * server skips its own grab, and — on each "capture now" signal (status.capture_request.seq) — grabs
  * a frame and uploads it. Decoupled from any live view: renders only a hidden <video>. */
-export function ScienceCaptureClient({ status }: { status: StatusPayload | null }) {
+export function ScienceCaptureClient({ status, onError }: {
+  status: StatusPayload | null;
+  onError: (message: string) => void;
+}) {
   const videoRef = useRef<HTMLVideoElement | null>(null);
   const streamRef = useRef<MediaStream | null>(null);
   const lastSeq = useRef(0);
@@ -103,10 +106,19 @@ export function ScienceCaptureClient({ status }: { status: StatusPayload | null 
     let cancelled = false;
     (async () => {
       const blob = await grabScienceStill(streamRef.current, videoRef.current);
-      if (!cancelled && blob) api.scienceCaptureUpload(blob, { layer, stage, cadLayer }).catch(() => {});
+      if (cancelled) return;
+      if (!blob) {
+        onError(`Science capture failed for layer ${cadLayer ?? layer}: no camera frame available.`);
+        return;
+      }
+      try {
+        await api.scienceCaptureUpload(blob, { layer, stage, cadLayer });
+      } catch (error) {
+        onError(`Science capture failed for layer ${cadLayer ?? layer}: ${error instanceof Error ? error.message : String(error)}`);
+      }
     })();
     return () => { cancelled = true; };
-  }, [status?.capture_request?.seq, active]);
+  }, [status?.capture_request?.seq, active, onError]);
 
   return <video ref={videoRef} autoPlay playsInline muted style={{ display: "none" }} aria-hidden="true" />;
 }
