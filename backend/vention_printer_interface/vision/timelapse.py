@@ -1,9 +1,13 @@
-"""Assemble a run's per-layer science stills into an animated-GIF timelapse (#4).
+"""Assemble a run's recorded stills into an animated-GIF timelapse (#4).
 
-The registered per-layer stills recorded during a print (``vision/manifest.json`` ->
-``vision/layer_XXXX/<stage>.webp``) are ordered by layer for one stage and encoded as a looping
-GIF. GIF plays inline in any ``<img>`` with no codec dependency — deliberately chosen over MP4 so
-it works regardless of the OpenCV/ffmpeg build the operator happens to have.
+Two sources:
+  * SCIENCE — the per-layer registered stills (``vision/manifest.json`` -> ``vision/layer_XXXX/
+    <stage>.webp``), ordered by layer for one stage. The metrology timelapse.
+  * OVERVIEW — time-ordered wide-view frames grabbed on a timer during the recording
+    (``overview/NNNNNN.webp``), for a whole-print timelapse of the streaming overview camera.
+
+GIF plays inline in any ``<img>`` with no codec dependency — deliberately chosen over MP4 so it
+works regardless of the OpenCV/ffmpeg build the operator happens to have.
 """
 
 from __future__ import annotations
@@ -14,6 +18,45 @@ from pathlib import Path
 from vention_printer_interface.vision.store import read_manifest
 
 CAPTURE_STAGES = ("pre_jet", "post_jet", "post_heat")
+_FRAME_EXTS = (".webp", ".png", ".jpg", ".jpeg")
+
+
+def _encode_gif(frames: list[Path], fps: float) -> bytes | None:
+    """Encode ordered image paths into a looping GIF (all frames resized to the first). None when
+    there are no frames."""
+    from PIL import Image
+
+    if not frames:
+        return None
+    imgs: list[Image.Image] = []
+    size: tuple[int, int] | None = None
+    for p in frames:
+        im = Image.open(p).convert("RGB")
+        if size is None:
+            size = im.size
+        elif im.size != size:
+            im = im.resize(size)
+        imgs.append(im)
+    duration_ms = max(1, round(1000.0 / max(fps, 0.1)))
+    buf = io.BytesIO()
+    imgs[0].save(
+        buf, format="GIF", save_all=True, append_images=imgs[1:],
+        duration=duration_ms, loop=0, disposal=2,
+    )
+    return buf.getvalue()
+
+
+def overview_frames(base: Path) -> list[Path]:
+    """The run's overview timelapse frames (``overview/*``), time-ordered by zero-padded name."""
+    d = Path(base) / "overview"
+    if not d.is_dir():
+        return []
+    return sorted(p for p in d.iterdir() if p.is_file() and p.suffix.lower() in _FRAME_EXTS)
+
+
+def build_overview_timelapse_gif(base: Path, fps: float = 10.0) -> bytes | None:
+    """Encode the run's overview frames into a looping GIF. None when there are no frames."""
+    return _encode_gif(overview_frames(base), fps)
 
 
 def timelapse_frames(base: Path, stage: str) -> list[Path]:
@@ -41,25 +84,5 @@ def best_stage(base: Path) -> str | None:
 
 
 def build_timelapse_gif(base: Path, stage: str, fps: float = 6.0) -> bytes | None:
-    """Encode the run's ``stage`` stills into a looping GIF. None when there are no frames."""
-    from PIL import Image
-
-    frames = timelapse_frames(base, stage)
-    if not frames:
-        return None
-    imgs: list[Image.Image] = []
-    size: tuple[int, int] | None = None
-    for p in frames:
-        im = Image.open(p).convert("RGB")
-        if size is None:
-            size = im.size
-        elif im.size != size:
-            im = im.resize(size)
-        imgs.append(im)
-    duration_ms = max(1, round(1000.0 / max(fps, 0.1)))
-    buf = io.BytesIO()
-    imgs[0].save(
-        buf, format="GIF", save_all=True, append_images=imgs[1:],
-        duration=duration_ms, loop=0, disposal=2,
-    )
-    return buf.getvalue()
+    """Encode the run's ``stage`` (science) stills into a looping GIF. None when there are none."""
+    return _encode_gif(timelapse_frames(base, stage), fps)

@@ -10,6 +10,7 @@ import { ErrorBoundary } from "./components/ErrorBoundary.tsx";
 import { StatusBar } from "./components/StatusBar.tsx";
 import { MachineDock } from "./components/MachineDock.tsx";
 import { ScienceCaptureClient } from "./components/ScienceCaptureClient.tsx";
+import { OverviewTimelapseClient } from "./components/OverviewTimelapseClient.tsx";
 import { CameraStudio } from "./components/CameraStudio.tsx";
 import { QuickStartVision } from "./components/QuickStartVision.tsx";
 import { PrintView } from "./components/views/PrintView.tsx";
@@ -300,6 +301,7 @@ export function App() {
           recActive={status?.recording.active ?? false} recRun={status?.recording.run ?? null} printState={r?.state ?? "idle"} version={version} />
         {/* Headless: captures the assigned science camera on the operator's per-layer signal. */}
         <ScienceCaptureClient status={status} />
+        <OverviewTimelapseClient status={status} />
         {cameraStudio && <CameraStudio status={status} onClose={() => setCameraStudio(false)} />}
       </div>
     </ErrorBoundary>

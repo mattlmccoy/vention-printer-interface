@@ -77,3 +77,64 @@ def test_timelapse_endpoint_serves_gif_and_404s_when_empty(tmp_path: Path) -> No
         assert r.content[:6] in (b"GIF87a", b"GIF89a")
         # bad run name -> 400
         assert c.get("/api/recordings/../timelapse.gif").status_code in (400, 404)
+
+
+def _overview_frame(base: Path, seq: int, color: tuple[int, int, int]) -> None:
+    d = base / "overview"
+    d.mkdir(parents=True, exist_ok=True)
+    Image.new("RGB", (16, 12), color).save(d / f"{seq:06d}.webp")
+
+
+def test_overview_frames_are_time_ordered(tmp_path: Path) -> None:
+    from vention_printer_interface.vision.timelapse import overview_frames
+
+    _overview_frame(tmp_path, 2, (2, 2, 2))
+    _overview_frame(tmp_path, 0, (0, 0, 0))
+    _overview_frame(tmp_path, 1, (1, 1, 1))
+    assert [p.stem for p in overview_frames(tmp_path)] == ["000000", "000001", "000002"]
+
+
+def test_build_overview_timelapse_gif(tmp_path: Path) -> None:
+    from vention_printer_interface.vision.timelapse import build_overview_timelapse_gif
+
+    assert build_overview_timelapse_gif(tmp_path) is None  # no frames
+    for i in range(4):
+        _overview_frame(tmp_path, i, (i * 30, 0, 0))
+    data = build_overview_timelapse_gif(tmp_path, fps=10.0)
+    assert data is not None
+    gif = Image.open(io.BytesIO(data))
+    assert gif.format == "GIF" and getattr(gif, "n_frames", 1) == 4
+
+
+def test_write_overview_frame_sequences(tmp_path: Path) -> None:
+    import numpy as np
+
+    from vention_printer_interface.vision.store import write_overview_frame
+
+    img = np.zeros((12, 16, 3), np.uint8)
+    p0 = write_overview_frame(tmp_path, img)
+    p1 = write_overview_frame(tmp_path, img)
+    assert p0.name == "000000.webp" and p1.name == "000001.webp"
+
+
+def test_overview_capture_endpoint_and_timelapse_source(tmp_path: Path) -> None:
+    import cv2
+    import numpy as np
+    from fastapi.testclient import TestClient
+
+    from vention_printer_interface.api.app import create_app
+
+    app = create_app(backend="none", experiments_root=tmp_path, poll_interval_s=0.05)
+    with TestClient(app) as c:
+        # no run recording -> 409
+        png = cv2.imencode(".png", np.zeros((12, 16, 3), np.uint8))[1].tobytes()
+        assert c.post("/api/vision/overview/capture", content=png).status_code == 409
+        c.post("/api/recording/start", json={"name": "ov-run"})
+        run = c.get("/api/recordings").json()["runs"][-1]["run"]
+        for _ in range(3):
+            assert c.post("/api/vision/overview/capture", content=png).status_code == 200
+        # overview timelapse serves a GIF; science source 404s (no science stills)
+        r = c.get(f"/api/recordings/{run}/timelapse.gif?source=overview")
+        assert r.status_code == 200 and r.content[:6] in (b"GIF87a", b"GIF89a")
+        assert c.get(f"/api/recordings/{run}/timelapse.gif?source=science").status_code == 404
+        assert c.get(f"/api/recordings/{run}/timelapse.gif?source=bogus").status_code == 400

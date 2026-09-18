@@ -129,7 +129,7 @@ from vention_printer_interface.vision.registration import (
     undistort_points,
     validate_dimensions,
 )
-from vention_printer_interface.vision.store import read_manifest
+from vention_printer_interface.vision.store import read_manifest, write_overview_frame
 
 log = logging.getLogger(__name__)
 
@@ -1616,24 +1616,41 @@ def create_app(
         )
 
     @app.get("/api/recordings/{run}/timelapse.gif")
-    def recording_timelapse(run: str, stage: str | None = None, fps: float = 6.0) -> Response:
-        """Animated-GIF timelapse of the run's per-layer science stills for one stage (#4). The
-        ``stage`` defaults to the one with the most recorded frames; 404 when the run has no stills.
-        GIF so it plays inline in an <img> with no codec dependency."""
+    def recording_timelapse(
+        run: str, source: str = "science", stage: str | None = None, fps: float = 6.0
+    ) -> Response:
+        """Animated-GIF timelapse of a run (#4). ``source=science`` (default) uses the per-layer
+        science stills for one ``stage`` (defaults to the fullest); ``source=overview`` uses the
+        time-ordered wide-view overview frames. 404 when the run has no frames for that source. GIF
+        so it plays inline in an <img> with no codec dependency."""
         run_dir = (root / run).resolve()
         if run_dir.parent != root.resolve() or not run_dir.is_dir():
             raise HTTPException(400, "bad run")
-        from vention_printer_interface.vision.timelapse import best_stage, build_timelapse_gif
-        chosen = stage or best_stage(run_dir)
-        if chosen is None:
-            raise HTTPException(404, "no science-cam stills recorded for this run")
-        data = build_timelapse_gif(run_dir, chosen, min(max(fps, 0.5), 30.0))
+        from vention_printer_interface.vision.timelapse import (
+            best_stage,
+            build_overview_timelapse_gif,
+            build_timelapse_gif,
+        )
+        fps = min(max(fps, 0.5), 30.0)
+        if source == "overview":
+            data = build_overview_timelapse_gif(run_dir, fps)
+            label = "overview"
+            empty = "no overview frames recorded for this run"
+        elif source == "science":
+            chosen = stage or best_stage(run_dir)
+            if chosen is None:
+                raise HTTPException(404, "no science-cam stills recorded for this run")
+            data = build_timelapse_gif(run_dir, chosen, fps)
+            label = chosen
+            empty = f"no {chosen} stills for this run"
+        else:
+            raise HTTPException(400, f"bad source {source!r} (science | overview)")
         if data is None:
-            raise HTTPException(404, f"no {chosen} stills for this run")
+            raise HTTPException(404, empty)
         return Response(
             content=data,
             media_type="image/gif",
-            headers={"Content-Disposition": f'inline; filename="{run}_{chosen}_timelapse.gif"'},
+            headers={"Content-Disposition": f'inline; filename="{run}_{label}_timelapse.gif"'},
         )
 
     @app.delete("/api/recordings/{run}")
@@ -2335,6 +2352,27 @@ def create_app(
         )
         if paths is None:
             raise HTTPException(409, "no active recording run to store the capture under")
+        return {"stored": True}
+
+    @app.post("/api/vision/overview/capture")
+    async def overview_capture(request: Request) -> dict[str, Any]:
+        """CLIENT-side OVERVIEW timelapse frame: the browser grabs a frame off the ASSIGNED overview
+        camera on a timer during a recorded print and POSTs the encoded image as the raw body.
+        Stored
+        time-ordered under ``<run>/overview/`` for a whole-print overview timelapse. 409 when no run
+        is recording (frames only make sense inside a run)."""
+        run_dir = rec().current_run_dir
+        if run_dir is None:
+            raise HTTPException(409, "no active recording run to store the overview frame under")
+        body = await request.body()
+        if not body:
+            raise HTTPException(400, "empty image body")
+        import cv2
+
+        arr = cv2.imdecode(np.frombuffer(body, dtype=np.uint8), cv2.IMREAD_COLOR)
+        if arr is None:
+            raise HTTPException(400, "could not decode uploaded image")
+        write_overview_frame(run_dir, arr)
         return {"stored": True}
 
     @app.post("/api/analysis/{run}/dimensional")
