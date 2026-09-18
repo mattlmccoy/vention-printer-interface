@@ -7,7 +7,7 @@ corresponds to a tagged merge to `main`.
 
 ### Fixed
 - **Science capture ownership waits for a real frame.** A browser camera stream that opened but never produced decoded pixels used to heartbeat anyway, suppressing the operator fallback and losing that layer's capture. Ownership now begins only after a playable frame exists; a later browser capture failure hands the exact layer/stage back to the operator under a sequence guard.
-- **Camera Studio handles two identical cameras independently.** The dock live-feed selector has its own saved key and can no longer overwrite the overview role. Studio panes validate actual video, expose a useful error and retry action, and can use a lower-bandwidth preview without changing the saved scientific capture mode.
+- **Camera previews handle two identical cameras independently.** The dock live-feed selector has its own saved key and can no longer overwrite the overview role. Studio and Setup panes validate actual video, expose a useful error and retry action, and use lower-bandwidth previews without changing the saved scientific capture mode.
 - **Release detection advances to v0.10.1.** The hosted console can now tell a v0.10.0 operator that this backend update is required.
 
 ## v0.8.4 — 2026-09-16

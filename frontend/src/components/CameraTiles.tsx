@@ -1,15 +1,10 @@
 import { useEffect, useRef, type ReactNode } from "react";
 import { labelCandidates, type VideoInput } from "../lib/webcam.ts";
+import { SETUP_PREVIEW_CONSTRAINTS } from "../lib/camera_ready.ts";
 
 // Low-res, low-fps preview so two identical 20MP cameras can stream side-by-side on one USB hub
 // without saturating it — the tile only has to be recognisable, not sharp. The real view opens at
 // full resolution once the operator has picked.
-const PREVIEW: MediaTrackConstraints = {
-  width: { ideal: 640 },
-  height: { ideal: 480 },
-  frameRate: { ideal: 15 },
-};
-
 /** One live preview tile for a single camera. Opens its own low-res stream and stops it on unmount
  * (or when the deviceId changes), so leaving the picker frees the camera + hub bandwidth. Rendered
  * as a <div> (not a <button>) so ancestor button rules — e.g. the wizard banner's
@@ -40,7 +35,7 @@ export function CameraTile({
     let cancelled = false;
     (async () => {
       try {
-        const stream = await md.getUserMedia({ video: { deviceId: { exact: cam.deviceId }, ...PREVIEW } });
+        const stream = await md.getUserMedia({ video: { deviceId: { exact: cam.deviceId }, ...SETUP_PREVIEW_CONSTRAINTS } });
         if (cancelled) {
           stream.getTracks().forEach((t) => t.stop());
           return;

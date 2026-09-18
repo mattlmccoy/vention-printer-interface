@@ -5,13 +5,13 @@ import {
   resolutionsFor,
   resolutionWH,
   saveCameraSettings,
-  videoConstraints,
   type OverviewSettings,
   type SettingsRole,
 } from "../lib/overview_settings.ts";
 import { applyPayload, numericControls, type NumericControl } from "../lib/track_settings.ts";
 import { formatExposure, maxFps } from "../lib/camera_caps.ts";
 import { api } from "../lib/api.ts";
+import { SETUP_PREVIEW_CONSTRAINTS, waitForCameraFrame } from "../lib/camera_ready.ts";
 
 const storage = typeof localStorage === "undefined" ? null : localStorage;
 
@@ -35,6 +35,7 @@ export function CameraSettingsPanel({ role }: { role: SettingsRole }) {
   const [settings, setSettings] = useState<OverviewSettings>(() => loadCameraSettings(storage, role));
   const [controls, setControls] = useState<NumericControl[]>([]);
   const [status, setStatus] = useState<"idle" | "live" | "none" | "denied">("idle");
+  const [error, setError] = useState<string | null>(null);
   const [reloadNonce, setReloadNonce] = useState(0);
   const [format, setFormat] = useState<string>(""); // "" = auto, else YUY2 / MJPG (server-side)
   const [model, setModel] = useState<string | null>(null);
@@ -99,18 +100,27 @@ export function CameraSettingsPanel({ role }: { role: SettingsRole }) {
   }, [role]);
 
   useEffect(() => {
-    if (!deviceId) { setStatus("none"); return; }
+    if (!deviceId) { setStatus("none"); setError(null); return; }
     const md = typeof navigator !== "undefined" ? navigator.mediaDevices : undefined;
     if (!md?.getUserMedia) { setStatus("none"); return; }
-    let cancelled = false;
+    const controller = new AbortController();
+    let opened: MediaStream | null = null;
     (async () => {
       try {
         stop();
-        const stream = await md.getUserMedia({ video: videoConstraints(deviceId, settings) });
-        if (cancelled) { stream.getTracks().forEach((t) => t.stop()); return; }
-        streamRef.current = stream;
-        if (videoRef.current) videoRef.current.srcObject = stream;
-        const track = stream.getVideoTracks()[0] ?? null;
+        setStatus("idle");
+        setError(null);
+        opened = await md.getUserMedia({
+          video: { deviceId: { exact: deviceId }, ...SETUP_PREVIEW_CONSTRAINTS },
+        });
+        if (controller.signal.aborted) { opened.getTracks().forEach((t) => t.stop()); return; }
+        const video = videoRef.current;
+        if (!video) throw new Error("camera preview is unavailable");
+        video.srcObject = opened;
+        await waitForCameraFrame(video, controller.signal);
+        if (controller.signal.aborted) { opened.getTracks().forEach((t) => t.stop()); return; }
+        streamRef.current = opened;
+        const track = opened.getVideoTracks()[0] ?? null;
         trackRef.current = track;
         for (const [key, value] of Object.entries(settings.manual)) {
           track?.applyConstraints(applyPayload(key, value)).catch(() => {});
@@ -123,13 +133,25 @@ export function CameraSettingsPanel({ role }: { role: SettingsRole }) {
           setControls(numericControls(caps, set).filter((c) => c.key !== "frameRate"));
         } catch { setControls([]); }
         setStatus("live");
-      } catch {
-        if (!cancelled) setStatus("denied");
+      } catch (cause) {
+        opened?.getTracks().forEach((t) => t.stop());
+        if (videoRef.current) videoRef.current.srcObject = null;
+        if (cause instanceof Error && cause.name === "AbortError") return;
+        setError(cause instanceof Error ? cause.message : "could not open camera preview");
+        setStatus("denied");
       }
     })();
-    return () => { cancelled = true; };
+    return () => {
+      controller.abort();
+      opened?.getTracks().forEach((t) => t.stop());
+      if (streamRef.current === opened) {
+        streamRef.current = null;
+        trackRef.current = null;
+      }
+      if (videoRef.current?.srcObject === opened) videoRef.current.srcObject = null;
+    };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [deviceId, settings.resolution, settings.frameRate, reloadNonce]);
+  }, [deviceId, reloadNonce]);
 
   useEffect(() => stop, []);
 
@@ -149,7 +171,6 @@ export function CameraSettingsPanel({ role }: { role: SettingsRole }) {
     pushServer();
   };
   const setFrameRate = (value: number) => {
-    trackRef.current?.applyConstraints({ frameRate: value }).catch(() => {});
     setSettings((s) => { const next = { ...s, frameRate: value }; saveCameraSettings(storage, role, next); return next; });
     pushServer({ fps: value });
   };
@@ -177,12 +198,9 @@ export function CameraSettingsPanel({ role }: { role: SettingsRole }) {
     if (key === "exposureTime") pushServer({ exposure: value });
   };
 
-  // Above ~4K the camera usually can't stream (only shoot a still), so a failed open is expected.
   const captureOnly = px.width * px.height > 8_300_000; // > 4K (e.g. 20 MP)
   const notLiveMsg = status === "denied"
-    ? (captureOnly
-        ? "This resolution is a still-capture size — the live preview may not run this large."
-        : "camera blocked — allow it in the browser")
+    ? (error ?? "camera preview could not produce a frame")
     : "starting camera…";
   const fmtNote = format === "YUY2" ? "uncompressed / lossless — best for CAD"
     : format === "MJPG" ? "compressed — higher fps/resolution"
@@ -201,13 +219,17 @@ export function CameraSettingsPanel({ role }: { role: SettingsRole }) {
             <video ref={videoRef} autoPlay playsInline muted style={{ display: status === "live" ? "block" : "none", width: "100%", height: "100%", objectFit: "cover" }} />
             {status !== "live" && <div className="chart-empty" style={{ height: "100%", display: "grid", placeItems: "center", textAlign: "center", padding: 12 }}>{notLiveMsg}</div>}
           </div>
+          <span className="hint" style={{ marginTop: 0 }}>
+            bandwidth-safe setup preview · recorded capture uses the settings below
+            {status === "denied" && <button className="small" style={{ marginLeft: 8 }} onClick={() => setReloadNonce((n) => n + 1)}>retry preview</button>}
+          </span>
 
           <label className="row" style={{ gap: 8, alignItems: "center", flexWrap: "wrap" }}>
             <span className="hint" style={{ minWidth: 96, marginTop: 0 }}>resolution</span>
             <select value={settings.resolution} onChange={(e) => setResolution(e.target.value)}>
               {resolutionsFor(role).map((rr) => <option key={rr.key} value={rr.key}>{rr.label}</option>)}
             </select>
-            <span className="hint" style={{ marginTop: 0 }}>{captureOnly ? "stills capture at full res · live preview runs at 4K" : "reopens the stream"}</span>
+            <span className="hint" style={{ marginTop: 0 }}>{captureOnly ? "stills capture at full res" : "recorded-capture resolution"}</span>
           </label>
 
           <label className="row" style={{ gap: 8, alignItems: "center", flexWrap: "wrap" }}>

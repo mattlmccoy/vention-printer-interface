@@ -45,3 +45,12 @@ export const SCIENCE_FALLBACK_CONSTRAINTS: Omit<MediaTrackConstraints, "deviceId
   height: { ideal: 1080, max: 1080 },
   frameRate: { ideal: 10, max: 15 },
 };
+
+/** Setup shows two cameras while the persistent dock may already hold a third browser stream.
+ * Keep those identification/settings previews deliberately small so identical cameras on one USB
+ * controller can all deliver pixels. Recorded-capture settings remain independent. */
+export const SETUP_PREVIEW_CONSTRAINTS: Omit<MediaTrackConstraints, "deviceId"> = {
+  width: { ideal: 640, max: 1280 },
+  height: { ideal: 480, max: 720 },
+  frameRate: { ideal: 15, max: 15 },
+};
