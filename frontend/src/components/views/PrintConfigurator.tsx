@@ -25,11 +25,12 @@ export function PrintConfigurator({ status, gates, call, onStarted }: {
   const [meteor, setMeteor] = useState<MeteorStatus | null>(null);
   const [primed, setPrimed] = useState<boolean | null>(null); // null = unknown, else bed-primed?
   const [mpDismissed, setMpDismissed] = useState(false); // dismissable multipass-mismatch warning (#7)
+  const [minWait, setMinWait] = useState(0.25); // the operator's real wait floor, for a matching estimate (#6)
   const job = status?.job ?? null;
   const running = gates.printActive;
 
   const refresh = () => {
-    api.printSettings().then((r) => { setPlan(r.plan as unknown as PrintSettings); setDirty(false); }).catch(() => undefined);
+    api.printSettings().then((r) => { setPlan(r.plan as unknown as PrintSettings); setMinWait(r.min_wait_s ?? 0.25); setDirty(false); }).catch(() => undefined);
     api.meteorStatus().then(setMeteor).catch(() => setMeteor(null));
     // A print is refused (409) until the bed is primed; fetch it so we can guide to Priming rather
     // than let START fail. The tab remounts this component, so a fresh capture is picked up on return.
@@ -71,7 +72,7 @@ export function PrintConfigurator({ status, gates, call, onStarted }: {
     if (!plan) return;
     if (dirty) await save();
     const heat = plan.heater_enabled ? "HEATER ON — fires each printing layer" : "⚠ HEATER OFF — no in-situ heating";
-    if (!window.confirm(`Start ${job ? job.name : "the manual print"} on the machine?\n\n${heat}\n${layers} layers · ${total.toFixed(1)} mm · ~${fmtSecs(estimateDurationS(plan))}`)) return;
+    if (!window.confirm(`Start ${job ? job.name : "the manual print"} on the machine?\n\n${heat}\n${layers} layers · ${total.toFixed(1)} mm · ~${fmtSecs(estimateDurationS(plan, minWait))}`)) return;
     await call("start", () => api.printStart({ single_step: single, name: name || job?.name || "print" }).then(onStarted));
   };
 
@@ -157,7 +158,7 @@ export function PrintConfigurator({ status, gates, call, onStarted }: {
             <h3>start</h3>
             {plan ? (
               <>
-                <div className="est" style={{ gridTemplateColumns: "1fr 1fr" }}><div><div className="l">about</div><div className="v" style={{ fontSize: 26 }}>{fmtSecs(estimateDurationS(plan))}</div></div><div><div className="l">layers</div><div className="v" style={{ fontSize: 26 }}>{layers}</div></div></div>
+                <div className="est" style={{ gridTemplateColumns: "1fr 1fr" }}><div><div className="l">about</div><div className="v" style={{ fontSize: 26 }}>{fmtSecs(estimateDurationS(plan, minWait))}</div></div><div><div className="l">layers</div><div className="v" style={{ fontSize: 26 }}>{layers}</div></div></div>
                 <div className="chk" style={{ margin: "16px 0" }}>
                   <label title="Fires the IR heater during the printing layers (after the precoats)."><Toggle label="heater" danger checked={plan.heater_enabled} disabled={running} onChange={(v) => edit({ heater_enabled: v })} /></label>
                   <label title="Start paused and advance ONE step at a time (debugging)."><input type="checkbox" checked={single} onChange={(e) => setSingle(e.target.checked)} /> single-step</label>

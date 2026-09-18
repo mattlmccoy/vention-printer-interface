@@ -13,6 +13,14 @@ test("estimate scales with layers and is in a sane range", () => {
   assert.ok(total > 29 && total < 7200);
 });
 
+test("estimate matches the backend golden for the default plan (#6 FE/backend determinism)", () => {
+  // Pinned to backend estimate_duration_s(PrintSettings(), 0.25) == 391.4. The two implementations
+  // must agree at the SAME wait floor, so the displayed estimate equals what the print actually runs.
+  assert.equal(estimateDurationS(DEFAULT_PLAN, 0.25), 391.4);
+  // Deterministic: identical inputs → identical output, always.
+  assert.equal(estimateDurationS(DEFAULT_PLAN, 0.25), estimateDurationS(DEFAULT_PLAN, 0.25));
+});
+
 test("heater on-time", () => {
   assert.equal(heaterOnTimeS(DEFAULT_PLAN), 0);
   // one 425->600 sweep per printing layer at the heater speed

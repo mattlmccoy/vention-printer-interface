@@ -72,6 +72,7 @@ def wait_print(c: TestClient, state: str, timeout: float = 30.0) -> dict[str, An
 
 def test_get_print_settings_has_plan_bounds_validation_and_steps(client: TestClient) -> None:
     r = client.get("/api/print-settings").json()
+    assert "min_wait_s" in r and r["min_wait_s"] == 0.1  # #6: the operator's real wait floor is exposed for a matching UI estimate
     assert r["plan"]["printing"]["n_layers"] == 10
     assert r["validation"] == [] and r["n_steps"] > 0 and r["total_layers"] == 13
     assert "bounds" in r and "max_speed" in r["bounds"]

@@ -20,6 +20,7 @@ from vention_printer_interface.control.print_settings import (
     PhasePlan,
     PrintSettings,
     compile_print,
+    estimate_duration_s,
 )
 from vention_printer_interface.control.safety import SafetyLimits
 
@@ -826,3 +827,14 @@ def test_estimate_duration_is_positive_and_scales_with_layers() -> None:
     # the whole default V1 plan runs well under 2 h; primed-start setup only homes two gantries.
     total = estimate_duration_s(PrintSettings())
     assert 0 < total < 7200
+
+
+def test_estimate_duration_is_deterministic_and_pins_frontend_parity() -> None:
+    # #6: the estimate is a deterministic constant-velocity model. This golden pins BOTH that the
+    # backend value is stable AND the exact number the frontend estimateDurationS must reproduce for
+    # the default plan at the default operator wait floor (0.25) — they diverged when the UI used 0.5.
+    assert estimate_duration_s(PrintSettings(), 0.25) == 391.4
+    # Same plan is byte-identical run to run (pure function of the plan + wait floor).
+    assert estimate_duration_s(PrintSettings(), 0.25) == estimate_duration_s(PrintSettings(), 0.25)
+    # A larger wait floor only ever raises the estimate (waits take max(pending, floor)).
+    assert estimate_duration_s(PrintSettings(), 0.5) >= estimate_duration_s(PrintSettings(), 0.25)
