@@ -750,10 +750,15 @@ def create_app(
             if vision_source is not None:
                 source: FrameSource = vision_source
             elif science_uid:
+                # Apply the science role's capture settings (resolution/fps/FORMAT — e.g. YUY2 for
+                # uncompressed/lossless stills) to the server-side unique-id-bound capture.
+                s = spec or camera_config.science
                 source = AVFoundationFrameSource(
                     science_uid,
-                    spec.width if spec else None,
-                    spec.height if spec else None,
+                    width=s.width if s else None,
+                    height=s.height if s else None,
+                    fps=s.fps if s else None,
+                    pixel_format=s.pixel_format if s else None,
                 )
             else:
                 assert spec is not None  # guaranteed by the early return above

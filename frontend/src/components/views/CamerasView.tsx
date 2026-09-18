@@ -8,6 +8,7 @@ import { loadCameraSettings, videoConstraints } from "../../lib/overview_setting
 import { CalibrationBoardPanel } from "../CalibrationBoardPanel.tsx";
 import { CameraRoleAssigner } from "../CameraRoleAssigner.tsx";
 import { CameraSettingsPanel } from "../CameraSettingsPanel.tsx";
+import { CaptureSettingsPanel } from "../CaptureSettingsPanel.tsx";
 import { CalibrationWizard } from "../CalibrationWizard.tsx";
 import { ValidationPanel } from "../ValidationPanel.tsx";
 import type { Call } from "./types.ts";
@@ -281,10 +282,14 @@ export function CamerasView({ status, gates, call, base, onOpenQuickStart }: {
           )}
           {step === 2 && (
             <div className="grid-gap">
-              <div className="hint" style={{ marginTop: 0 }}>Tune each camera live — resolution (up to 4K@30) and the controls it exposes (fps, exposure, …). Assign the cameras in step 2 first; settings are remembered per camera.</div>
+              <div className="hint" style={{ marginTop: 0 }}>Two settings per camera: the LIVE PREVIEW (browser) for tuning the on-screen view, and CAPTURE SETTINGS (server-side) for the recorded stills — format (YUY2 = lossless for CAD), resolution, fps, exposure. Assign the cameras above first; settings are remembered per camera.</div>
               <div className="cols-2">
                 <CameraSettingsPanel role="overview" />
                 <CameraSettingsPanel role="science" />
+              </div>
+              <div className="cols-2">
+                <CaptureSettingsPanel role="overview" />
+                <CaptureSettingsPanel role="science" />
               </div>
             </div>
           )}
