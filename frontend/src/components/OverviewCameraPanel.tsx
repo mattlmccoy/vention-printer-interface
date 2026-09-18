@@ -178,7 +178,7 @@ export function OverviewCameraPanel({ view }: { base?: string; view: View }) {
   return (
     <section className="cam-panel">
       <header className="cam-panel-head">
-        <span className="cam-panel-title">overview camera</span>
+        <span className="cam-panel-title">live feed</span>
         <span className="row" style={{ gap: 6 }}>
           {status === "live" && (
             <>
@@ -256,7 +256,7 @@ export function OverviewCameraPanel({ view }: { base?: string; view: View }) {
             const tiles = cands.length ? cands : inputs.filter((d) => d.label);
             return tiles.length ? (
               <div className="cam-pick" style={{ display: "flex", flexDirection: "column", gap: 6 }}>
-                <span className="hint">click the camera showing the print bed</span>
+                <span className="hint">pick which camera to show in the live feed</span>
                 <CameraTiles candidates={tiles} selectedId={selectedId} onPick={pickTile} />
               </div>
             ) : (

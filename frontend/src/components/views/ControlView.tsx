@@ -41,8 +41,8 @@ function Axis({ a, status, ok, call, step }: { a: AxisNo; status: StatusPayload 
         <button className="home" disabled={!ok} title={piston ? "home this piston — EJECTS POWDER (drives it fully up/flush)" : "home this axis"} onClick={() => { if (!piston || window.confirm(`Home the ${AXIS_NAMES[a]}? This drives it fully up (0 mm) = flush with the substrate and EJECTS any powder in the cylinder. Continue?`)) call(`home ${AXIS_NAMES[a]}`, () => api.home([a])); }}>⌂</button>
       </div>
       <div className="goto" style={{ gridColumn: "1 / -1", display: "flex", gap: 6, alignItems: "center", marginTop: 4 }}>
-        <input type="number" style={{ width: 90 }} value={target} placeholder="go to mm" onChange={(e) => setTarget(e.target.value)} disabled={!ok} />
-        <button className="small" disabled={!ok || target === ""} onClick={() => abs(Number(target))}>go</button>
+        <input type="number" style={{ flex: 1, minWidth: 0 }} value={target} placeholder="go to mm" onChange={(e) => setTarget(e.target.value)} disabled={!ok} />
+        <button className="small" style={{ flex: "0 0 auto" }} disabled={!ok || target === ""} onClick={() => abs(Number(target))}>go</button>
       </div>
     </div>
   );
@@ -83,9 +83,9 @@ export function ControlView({ status, gates, call, gantryStep, pistonStep, setGa
           <div className="actions" style={{ marginTop: 0 }}>
             <button className="cta" disabled={!ok} onClick={() => { if (window.confirm("Home the printhead gantry?")) call("home printhead", () => api.home([3])); }}>HOME PRINTHEAD</button>
             <button className="cta" disabled={!ok} onClick={() => { if (window.confirm("Home the recoater gantry?")) call("home recoater", () => api.home([4])); }}>HOME RECOATER</button>
-            <button className="cta danger" disabled={!gates.connected} onClick={() => call("stop", api.stop)}>STOP</button>
           </div>
           <div className="actions" style={{ marginTop: 8 }}>
+            <button className="cta danger" disabled={!gates.connected} onClick={() => call("stop", api.stop)}>STOP</button>
             <button className={`cta${anyUnref ? " primary" : ""}`} disabled={!ok} title="Reference every axis at its CURRENT reported position WITHOUT homing — only when the machine kept power and the positions match its own display." onClick={() => { if (window.confirm("Reference ALL axes at their CURRENT positions WITHOUT homing?\n\nOnly do this if the machine KEPT POWER and the positions shown match the machine's own HMI. If power was lost (positions read ~0), home instead.")) call("reference at current", api.referenceCurrent); }}>REFERENCE AT CURRENT{anyUnref ? " ⚠" : ""}</button>
           </div>
           <div className="hint" style={{ marginTop: 10 }}>Home one gantry at a time (pistons ejecting powder). Or, if the machine kept power and the positions are correct, <b>reference at current</b> to trust them without homing.</div>
