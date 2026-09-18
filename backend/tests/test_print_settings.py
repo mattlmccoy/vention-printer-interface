@@ -691,7 +691,7 @@ def test_overhead_capture_moves_recoater_to_pose_then_settles() -> None:
 
 
 def test_capture_marks_carry_the_printing_layer_index() -> None:
-    # A capture mark must record the PRINTING layer (1..N), not the absolute layer_no (which includes
+    # A capture mark must record the PRINTING layer (1..N), not the absolute layer_no (with
     # precoats). The Runs CAD slice + layer labels key off it: with 2 precoats + 3 printing layers,
     # the printing captures land at absolute layers 3,4,5 but printing layers 1,2,3.
     base = PrintSettings()
@@ -758,7 +758,7 @@ def test_capture_stages_enabled_defaults_to_all_three() -> None:
 
 def test_compile_emits_only_the_enabled_capture_stages() -> None:
     # With capture_stages on but only post_jet selected, compile must emit ONLY the post_jet mark
-    # — no pre_jet, no post_heat. This lets an operator capture just one (or two) stages to save disk.
+    # — no pre_jet, no post_heat. This lets an operator capture just one/two stages to save disk.
     plan = dataclasses.replace(
         one_layer(), capture_stages=True, capture_stages_enabled=("post_jet",)
     )
@@ -769,7 +769,7 @@ def test_compile_emits_only_the_enabled_capture_stages() -> None:
 
 
 def test_compile_emits_no_capture_marks_when_enabled_set_empty() -> None:
-    # Master on but nothing selected = no stage captures (belt-and-suspenders; the UI won't allow it).
+    # Master on but nothing selected = no stage captures (belt-and-suspenders; UI won't allow it).
     plan = dataclasses.replace(one_layer(), capture_stages=True, capture_stages_enabled=())
     labels = [s.label for s in compile_print(plan) if s.kind == "mark"]
     assert not any(lbl.startswith("capture:") for lbl in labels)
@@ -832,7 +832,7 @@ def test_estimate_duration_is_positive_and_scales_with_layers() -> None:
 def test_estimate_duration_is_deterministic_and_pins_frontend_parity() -> None:
     # #6: the estimate is a deterministic constant-velocity model. This golden pins BOTH that the
     # backend value is stable AND the exact number the frontend estimateDurationS must reproduce for
-    # the default plan at the default operator wait floor (0.25) — they diverged when the UI used 0.5.
+    # the default plan at the default operator wait floor (0.25) — they diverged when UI used 0.5.
     assert estimate_duration_s(PrintSettings(), 0.25) == 391.4
     # Same plan is byte-identical run to run (pure function of the plan + wait floor).
     assert estimate_duration_s(PrintSettings(), 0.25) == estimate_duration_s(PrintSettings(), 0.25)
