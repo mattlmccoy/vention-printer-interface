@@ -58,21 +58,25 @@ export function ControlView({ status, gates, call, gantryStep, pistonStep, setGa
   return (
     <div className="view fixed-page control-view">
       <div className="sec-h">axes</div>
-      <div className="cards-2">
+      {/* 2×2 banner layout: gantries on top (printhead left, recoater right), pistons below
+          (feed left, build right) — printhead TL, recoater TR, feed BL, build BR. */}
+      <div className="axes-2x2">
         <div className="card">
           <h3>gantries</h3>
           {stepper(gantryStep, setGantryStep)}
-          <Axis a={3} status={status} ok={ok} call={call} step={gantryStep} />
-          <div className="axis-sep" />
-          <Axis a={4} status={status} ok={ok} call={call} step={gantryStep} />
+          <div className="axis-pair">
+            <Axis a={3} status={status} ok={ok} call={call} step={gantryStep} />
+            <Axis a={4} status={status} ok={ok} call={call} step={gantryStep} />
+          </div>
           {lock && <div className="lock">{lock}</div>}
         </div>
         <div className="card">
           <h3>pistons</h3>
           {stepper(pistonStep, setPistonStep)}
-          <Axis a={1} status={status} ok={ok} call={call} step={pistonStep} />
-          <div className="axis-sep" />
-          <Axis a={2} status={status} ok={ok} call={call} step={pistonStep} />
+          <div className="axis-pair">
+            <Axis a={2} status={status} ok={ok} call={call} step={pistonStep} />
+            <Axis a={1} status={status} ok={ok} call={call} step={pistonStep} />
+          </div>
         </div>
       </div>
 

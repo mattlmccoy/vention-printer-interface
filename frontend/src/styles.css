@@ -197,6 +197,12 @@ button.small { height: 34px; padding: 0 12px; border: 1px solid var(--line-contr
 .fixed-page > * + * { margin-top: 16px; }
 .sec-h { font: 12px var(--font-mono); letter-spacing: .1em; text-transform: uppercase; color: var(--faint); margin: 4px 0 0; }
 .cards-2 { display: grid; grid-template-columns: repeat(auto-fit, minmax(340px, 1fr)); gap: 16px; align-items: start; }
+/* Controls page axes (#9): gantries card over pistons card, and within each card the two axes sit
+   side by side as horizontal banners — printhead TL, recoater TR (top), feed BL, build BR (bottom). */
+.axes-2x2 { display: flex; flex-direction: column; gap: 16px; }
+.axis-pair { display: grid; grid-template-columns: repeat(auto-fit, minmax(300px, 1fr)); gap: 4px 24px; }
+.axis-pair > .axis:first-child { border-top: none; }
+@media (min-width: 760px) { .axis-pair > .axis:nth-child(2) { border-top: none; } }
 .cards-3 { display: grid; grid-template-columns: repeat(auto-fit, minmax(280px, 1fr)); gap: 16px; align-items: start; }
 .grid-gap { display: flex; flex-direction: column; gap: 16px; min-width: 0; }
 /* Analysis (Lane A) compensation cells: big scale/yaw figure per axis */
@@ -529,15 +535,13 @@ button.small { height: 34px; padding: 0 12px; border: 1px solid var(--line-contr
 @media (prefers-reduced-motion: reduce) { .dockdiag .mv { animation: none; } }
 /* compact 2x2 axis chips (position readouts kept modest — they were fine before) */
 .dock-axes { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
-/* Horizontal banners (#9): label left, value right in each cell. The 2x2 grid + CHIP_ORDER
-   [3,4,2,1] place printhead top-left, recoater top-right, feed bottom-left, build bottom-right. */
-.dock-chip { border: 1px solid var(--line); border-left: 3px solid var(--line-control); border-radius: var(--radius); background: var(--panel); padding: 8px 11px; display: flex; align-items: baseline; justify-content: space-between; gap: 8px; }
+.dock-chip { border: 1px solid var(--line); border-left: 3px solid var(--line-control); border-radius: var(--radius); background: var(--panel); padding: 7px 11px; }
 .dock-chip.ax-build { border-left-color: var(--trace-part); }
 .dock-chip.ax-feed { border-left-color: var(--trace-feed); }
 .dock-chip.ax-ph { border-left-color: var(--trace-ph); }
 .dock-chip.ax-rc { border-left-color: var(--trace-rc); }
-.dock-chip .k { font: 10px var(--font-mono); letter-spacing: .08em; text-transform: uppercase; color: var(--label); }
-.dock-chip .v { font: 600 17px var(--font-mono); color: var(--fg-strong); white-space: nowrap; }
+.dock-chip .k { display: block; font: 10px var(--font-mono); letter-spacing: .08em; text-transform: uppercase; color: var(--label); }
+.dock-chip .v { display: block; font: 600 17px var(--font-mono); color: var(--fg-strong); margin-top: 2px; white-space: nowrap; }
 .dock-chip .v.unref { color: var(--muted); }
 .dock-chip .v small { font-size: 10px; color: var(--muted); font-weight: 400; }
 .dock-mini { display: flex; gap: 8px; }
