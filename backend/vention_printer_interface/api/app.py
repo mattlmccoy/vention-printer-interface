@@ -1478,6 +1478,27 @@ def create_app(
             headers={"Content-Disposition": f'attachment; filename="{run}.zip"'},
         )
 
+    @app.get("/api/recordings/{run}/timelapse.gif")
+    def recording_timelapse(run: str, stage: str | None = None, fps: float = 6.0) -> Response:
+        """Animated-GIF timelapse of the run's per-layer science stills for one stage (#4). The
+        ``stage`` defaults to the one with the most recorded frames; 404 when the run has no stills.
+        GIF so it plays inline in an <img> with no codec dependency."""
+        run_dir = (root / run).resolve()
+        if run_dir.parent != root.resolve() or not run_dir.is_dir():
+            raise HTTPException(400, "bad run")
+        from vention_printer_interface.vision.timelapse import best_stage, build_timelapse_gif
+        chosen = stage or best_stage(run_dir)
+        if chosen is None:
+            raise HTTPException(404, "no science-cam stills recorded for this run")
+        data = build_timelapse_gif(run_dir, chosen, min(max(fps, 0.5), 30.0))
+        if data is None:
+            raise HTTPException(404, f"no {chosen} stills for this run")
+        return Response(
+            content=data,
+            media_type="image/gif",
+            headers={"Content-Disposition": f'inline; filename="{run}_{chosen}_timelapse.gif"'},
+        )
+
     @app.delete("/api/recordings/{run}")
     def recording_delete(run: str) -> dict[str, Any]:
         """Delete a run directory (telemetry, stills, everything). Refuses the run currently being

@@ -218,6 +218,10 @@ export const api = {
   jobLayerByFolderUrl: (layer: number, folder: string) => `${base}/api/jobs/by-folder/${encodeURIComponent(folder)}/layers/${layer}.png`,
   // the slicer's isometric splash/preview image for a job folder (PNG); 404 when none exists
   jobPreviewUrl: (folder: string) => `${base}/api/jobs/by-folder/${encodeURIComponent(folder)}/preview.png`,
+  // Animated-GIF timelapse of a run's per-layer science stills for one stage (#4); default stage =
+  // the one with the most frames. Usable as an <img src> (plays inline) or a download link.
+  recordingTimelapseUrl: (run: string, stage?: string, fps = 6) =>
+    `${base}/api/recordings/${encodeURIComponent(run)}/timelapse.gif?fps=${fps}${stage ? `&stage=${encodeURIComponent(stage)}` : ""}`,
   macro: (name: string) => req<StatusPayload["print"]>("POST", `/api/macro/${name}`),
   priming: () => req<PrimingPayload>("GET", "/api/priming"),
   setPriming: (patch: Record<string, number>) => req<PrimingPayload>("PUT", "/api/priming", patch),
