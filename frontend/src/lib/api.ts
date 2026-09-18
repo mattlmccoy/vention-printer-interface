@@ -223,10 +223,13 @@ export const api = {
   jobLayerByFolderUrl: (layer: number, folder: string) => `${base}/api/jobs/by-folder/${encodeURIComponent(folder)}/layers/${layer}.png`,
   // the slicer's isometric splash/preview image for a job folder (PNG); 404 when none exists
   jobPreviewUrl: (folder: string) => `${base}/api/jobs/by-folder/${encodeURIComponent(folder)}/preview.png`,
-  // Animated-GIF timelapse of a run's per-layer science stills for one stage (#4); default stage =
-  // the one with the most frames. Usable as an <img src> (plays inline) or a download link.
-  recordingTimelapseUrl: (run: string, stage?: string, fps = 6) =>
-    `${base}/api/recordings/${encodeURIComponent(run)}/timelapse.gif?fps=${fps}${stage ? `&stage=${encodeURIComponent(stage)}` : ""}`,
+  // Animated-GIF timelapse of a run (#4). source "science" (per-layer stills for `stage`, default =
+  // the fullest stage) or "overview" (time-ordered wide-view frames). Usable as an <img src> or link.
+  recordingTimelapseUrl: (run: string, opts: { source?: "science" | "overview"; stage?: string; fps?: number } = {}) => {
+    const q = new URLSearchParams({ source: opts.source ?? "science", fps: String(opts.fps ?? 6) });
+    if (opts.source !== "overview" && opts.stage) q.set("stage", opts.stage);
+    return `${base}/api/recordings/${encodeURIComponent(run)}/timelapse.gif?${q.toString()}`;
+  },
   // AVFoundation cameras with stable unique ids + the science-camera binding for the unattended
   // (no-tab-open) server capture path (#/Phase 2). Empty `cameras` on non-macOS.
   // Data locations (jobs + runs) — persisted install-independently so a reinstall can't lose them.
@@ -266,6 +269,16 @@ export const api = {
       body: blob,
     });
     if (!res.ok) throw new ApiError(res.status, `${res.status} science capture`);
+    return true;
+  },
+  // Upload one OVERVIEW timelapse frame (raw body) during a recording; stored under <run>/overview/.
+  overviewTimelapseUpload: async (blob: Blob): Promise<boolean> => {
+    const res = await fetch(apiUrl(base, "/api/vision/overview/capture"), {
+      method: "POST",
+      headers: { [CLIENT_HEADER]: "1", "Content-Type": blob.type || "image/webp" },
+      body: blob,
+    });
+    if (!res.ok) throw new ApiError(res.status, `${res.status} overview capture`);
     return true;
   },
   visionCalibrate: (body: VisionCalibrateBody) => req<VisionCalibrateResult>("POST", "/api/vision/calibrate", body),

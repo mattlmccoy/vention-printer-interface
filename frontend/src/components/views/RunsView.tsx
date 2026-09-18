@@ -270,6 +270,7 @@ export function RunsView({ status, gates, call, base }: { status: StatusPayload 
   const [revealMsg, setRevealMsg] = useState(""); // absolute on-disk path, shown after Reveal
   const [stageSel, setStageSel] = useState<string[]>([...STAGE_ORDER]); // Runs stage filter (#1)
   const [showTl, setShowTl] = useState(false); // inline timelapse GIF (#4)
+  const [tlSource, setTlSource] = useState<"science" | "overview">("science"); // timelapse source
   const [viewIdx, setViewIdx] = useState(-1); // index into `caps` of the open lightbox still, or -1
   const [viewJobFolder, setViewJobFolder] = useState<string | null>(null); // for the CAD-slice compare
   const [viewCadErr, setViewCadErr] = useState(false); // CAD slice failed to load (e.g. archived job)
@@ -405,36 +406,43 @@ export function RunsView({ status, gates, call, base }: { status: StatusPayload 
 
               <div className="card">
                 <h3>science-cam stills<span className="hint" style={{ textTransform: "none", letterSpacing: 0, fontWeight: 400 }}>layer × stage</span></h3>
-                {caps.length > 0 && (() => {
-                  const tlStage = stageSel.length === 1 ? stageSel[0] : undefined; // else backend picks the fullest
-                  const tlUrl = api.recordingTimelapseUrl(selRun.run, tlStage);
+                {caps.length > 0 && (
+                  <div className="seg" style={{ marginBottom: 8 }}>
+                    {STAGE_ORDER.map((s) => {
+                      const on = stageSel.includes(s);
+                      const n = caps.filter((c) => c.stage === s).length;
+                      return (
+                        <button key={s} type="button" className={`small${on ? " on" : ""}`} aria-pressed={on}
+                          title={`show / hide ${STAGE_LABEL[s]} stills`}
+                          onClick={() => setStageSel((cur) => cur.includes(s) ? cur.filter((x) => x !== s) : STAGE_ORDER.filter((o) => cur.includes(o) || o === s))}>
+                          {STAGE_LABEL[s]}{n ? ` (${n})` : ""}
+                        </button>
+                      );
+                    })}
+                  </div>
+                )}
+                {(() => {
+                  const tlStage = tlSource === "science" && stageSel.length === 1 ? stageSel[0] : undefined;
+                  const tlUrl = api.recordingTimelapseUrl(selRun.run, { source: tlSource, stage: tlStage });
                   return (
                     <div className="row" style={{ gap: 8, marginBottom: 8, flexWrap: "wrap", alignItems: "center" }}>
+                      <span className="hint" style={{ marginTop: 0 }}>timelapse</span>
                       <span className="seg">
-                        {STAGE_ORDER.map((s) => {
-                          const on = stageSel.includes(s);
-                          const n = caps.filter((c) => c.stage === s).length;
-                          return (
-                            <button key={s} type="button" className={`small${on ? " on" : ""}`} aria-pressed={on}
-                              title={`show / hide ${STAGE_LABEL[s]} stills`}
-                              onClick={() => setStageSel((cur) => cur.includes(s) ? cur.filter((x) => x !== s) : STAGE_ORDER.filter((o) => cur.includes(o) || o === s))}>
-                              {STAGE_LABEL[s]}{n ? ` (${n})` : ""}
-                            </button>
-                          );
-                        })}
+                        <button type="button" className={`small${tlSource === "science" ? " on" : ""}`} aria-pressed={tlSource === "science"} onClick={() => setTlSource("science")}>science</button>
+                        <button type="button" className={`small${tlSource === "overview" ? " on" : ""}`} aria-pressed={tlSource === "overview"} onClick={() => setTlSource("overview")}>overview</button>
                       </span>
-                      <span className="spacer" style={{ flex: 1 }} />
                       <button className={`small${showTl ? " on" : ""}`} aria-pressed={showTl}
-                        title={`Play a timelapse of the ${tlStage ? STAGE_LABEL[tlStage] : "per-layer"} stills`}
-                        onClick={() => setShowTl((v) => !v)}>▶ timelapse{tlStage ? ` · ${STAGE_LABEL[tlStage]}` : ""}</button>
+                        title={`Play the ${tlSource} timelapse${tlStage ? ` · ${STAGE_LABEL[tlStage]}` : ""}`}
+                        onClick={() => setShowTl((v) => !v)}>▶ play</button>
                       <a className="small" href={tlUrl} download style={{ textDecoration: "none" }} title="Download the timelapse GIF">⬇ gif</a>
+                      {tlSource === "overview" && <span className="hint" style={{ marginTop: 0 }}>(enable overview timelapse in Setup before a print)</span>}
                     </div>
                   );
                 })()}
-                {showTl && caps.length > 0 && (
+                {showTl && (
                   <div className="tl-wrap" style={{ marginBottom: 10, background: "#000", borderRadius: 8, overflow: "hidden", textAlign: "center" }}>
-                    <img src={api.recordingTimelapseUrl(selRun.run, stageSel.length === 1 ? stageSel[0] : undefined)}
-                      alt="science-cam timelapse" style={{ maxWidth: "100%", height: "auto", display: "block", margin: "0 auto" }}
+                    <img src={api.recordingTimelapseUrl(selRun.run, { source: tlSource, stage: tlSource === "science" && stageSel.length === 1 ? stageSel[0] : undefined })}
+                      alt={`${tlSource} timelapse`} style={{ maxWidth: "100%", height: "auto", display: "block", margin: "0 auto" }}
                       onError={(e) => { (e.currentTarget as HTMLImageElement).style.display = "none"; }} />
                   </div>
                 )}

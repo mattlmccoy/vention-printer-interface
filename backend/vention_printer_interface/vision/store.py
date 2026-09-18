@@ -126,6 +126,21 @@ def write_capture(
     }
 
 
+def write_overview_frame(base: Path, image: Any, quality: int = 85) -> Path:
+    """Append one overview timelapse frame to ``<run>/overview/<NNNNNN>.webp`` (time-ordered by a
+    zero-padded sequence). Overview frames feed a visual whole-print timelapse, not metrology, so a
+    space-saving WebP quality is used (not the lossless 101 of science stills)."""
+    import cv2
+
+    d = Path(base) / "overview"
+    d.mkdir(parents=True, exist_ok=True)
+    seq = sum(1 for p in d.iterdir() if p.suffix.lower() == ".webp")
+    path = d / f"{seq:06d}.webp"
+    if not cv2.imwrite(str(path), image, [cv2.IMWRITE_WEBP_QUALITY, quality]):
+        raise RuntimeError(f"failed to write {path} (is OpenCV built with WebP?)")
+    return path
+
+
 def _manifest_path(base: Path) -> Path:
     return Path(base) / "vision" / "manifest.json"
 
