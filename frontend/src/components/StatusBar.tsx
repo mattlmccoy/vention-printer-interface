@@ -1,4 +1,9 @@
+import { useState } from "react";
 import { fmtSecs, tri } from "../lib/format.ts";
+import { ChangelogModal } from "./ChangelogModal.tsx";
+
+const SITE_VERSION = typeof __APP_VERSION__ === "string" ? __APP_VERSION__ : "0.0.0";
+const BUILD_ID = typeof __BUILD_ID__ === "string" ? __BUILD_ID__ : "";
 
 export interface StatusBarProps {
   state: string; backend: string; pollHz: number | null; reachable: boolean;
@@ -8,6 +13,7 @@ export interface StatusBarProps {
 
 /** Bottom status bar (family rule): never shows green; faults red, unknowns amber. */
 export function StatusBar(p: StatusBarProps) {
+  const [showLog, setShowLog] = useState(false);
   const unknown = p.estop === null || p.drivesReady === null;
   return (
     <footer className="statusbar">
@@ -20,8 +26,12 @@ export function StatusBar(p: StatusBarProps) {
       <span className="right">
         {p.printState !== "idle" && <span className={p.printState === "fault" ? "bad" : ""}>print <b>{p.printState}</b></span>}
         {p.recActive && <span title="telemetry, layer times and events are being written to this run folder">logging <b>{p.recRun}</b></span>}
-        {p.version && <span className="muted">v{p.version}</span>}
+        <button className="ver-badge" title="console version — click for the changelog" onClick={() => setShowLog(true)}
+          style={{ background: "none", border: "none", padding: 0, cursor: "pointer", color: "inherit", font: "inherit" }}>
+          <span className="muted">console v{SITE_VERSION}{BUILD_ID ? `·${BUILD_ID}` : ""}{p.version && p.version !== SITE_VERSION ? ` · op v${p.version}` : ""}</span>
+        </button>
       </span>
+      {showLog && <ChangelogModal siteVersion={SITE_VERSION} buildId={BUILD_ID} operatorVersion={p.version} onClose={() => setShowLog(false)} />}
     </footer>
   );
 }

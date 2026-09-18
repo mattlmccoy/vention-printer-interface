@@ -1,7 +1,18 @@
+import { execSync } from "node:child_process";
 import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { defineConfig } from "vite";
 import react from "@vitejs/plugin-react";
+
+// A per-build identifier so every deploy is distinguishable even between semver bumps (the user
+// asked to always see the version move). Git short SHA when available, else the build date.
+function buildId(): string {
+  try {
+    return execSync("git rev-parse --short HEAD", { encoding: "utf8" }).trim();
+  } catch {
+    return new Date().toISOString().slice(0, 10);
+  }
+}
 
 // The single-source version lives in the backend package; bake it into the build so the site can
 // tell whether the local operator (which reports its own version at /api/health) is behind it.
@@ -19,7 +30,7 @@ function appVersion(): string {
 // VITE_BASE="/vention-printer-interface/" for the GitHub Pages build; default "/" for the operator.
 export default defineConfig({
   base: process.env.VITE_BASE ?? "/",
-  define: { __APP_VERSION__: JSON.stringify(appVersion()) },
+  define: { __APP_VERSION__: JSON.stringify(appVersion()), __BUILD_ID__: JSON.stringify(buildId()) },
   plugins: [react()],
   server: {
     port: 5175,
