@@ -49,23 +49,43 @@ function CameraPane({ role, deviceId, run }: { role: CameraRole; deviceId: strin
     };
   }, [deviceId, role]);
 
-  const snapshot = () => {
-    const v = videoRef.current;
-    if (!v || !v.videoWidth) return;
-    const canvas = document.createElement("canvas");
-    canvas.width = v.videoWidth; canvas.height = v.videoHeight;
-    const ctx = canvas.getContext("2d");
-    if (!ctx) return;
-    ctx.drawImage(v, 0, 0);
+  // Full-resolution still: prefer ImageCapture.takePhoto (the camera's FULL sensor size — up to
+  // ~20 MP on the science ELP), independent of the ≤4K preview stream. Falls back to grabbing the
+  // live video frame where ImageCapture/takePhoto isn't supported. Either source is drawn to a
+  // canvas so the date/time/metadata overlay is burned into the exported PNG.
+  const snapshot = async () => {
     const now = new Date();
-    const label = snapshotOverlay(role, v.videoWidth, v.videoHeight, now, run);
-    const fs = Math.max(14, Math.round(v.videoHeight / 45));
+    let source: CanvasImageSource | null = null;
+    let w = 0, h = 0;
+    let bmp: ImageBitmap | null = null;
+    const track = streamRef.current?.getVideoTracks?.()[0] ?? null;
+    const IC = (window as unknown as { ImageCapture?: new (t: MediaStreamTrack) => { takePhoto: () => Promise<Blob> } }).ImageCapture;
+    if (track && IC) {
+      try {
+        const blob = await new IC(track).takePhoto();
+        bmp = await createImageBitmap(blob);
+        source = bmp; w = bmp.width; h = bmp.height;
+      } catch { source = null; }
+    }
+    if (!source) {
+      const v = videoRef.current;
+      if (!v || !v.videoWidth) return;
+      source = v; w = v.videoWidth; h = v.videoHeight;
+    }
+    const canvas = document.createElement("canvas");
+    canvas.width = w; canvas.height = h;
+    const ctx = canvas.getContext("2d");
+    if (!ctx) { bmp?.close(); return; }
+    ctx.drawImage(source, 0, 0, w, h);
+    bmp?.close();
+    const label = snapshotOverlay(role, w, h, now, run);
+    const fs = Math.max(14, Math.round(h / 45));
     ctx.font = `${fs}px monospace`;
     const tw = ctx.measureText(label).width;
     ctx.fillStyle = "rgba(0,0,0,0.6)";
-    ctx.fillRect(8, canvas.height - fs - 16, tw + 16, fs + 12);
+    ctx.fillRect(8, h - fs - 16, tw + 16, fs + 12);
     ctx.fillStyle = "#fff";
-    ctx.fillText(label, 16, canvas.height - 14);
+    ctx.fillText(label, 16, h - 14);
     canvas.toBlob((b) => { if (b) download(b, snapshotFilename(role, now)); }, "image/png");
   };
 
@@ -96,7 +116,7 @@ function CameraPane({ role, deviceId, run }: { role: CameraRole; deviceId: strin
           : <video ref={videoRef} autoPlay playsInline muted style={{ width: "100%", height: "100%", objectFit: "contain" }} />}
       </div>
       <div className="row" style={{ gap: 8 }}>
-        <button className="cta sm" disabled={!!error} onClick={snapshot}>snapshot</button>
+        <button className="cta sm" disabled={!!error} title="Full-resolution still (uses the camera's full sensor, up to 20 MP, where supported) with date/time + metadata burned in." onClick={snapshot}>snapshot</button>
         <button className={`cta sm${recording ? " danger" : ""}`} disabled={!!error} onClick={toggleRecord}>{recording ? "stop recording" : "record"}</button>
       </div>
     </div>
@@ -119,7 +139,7 @@ export function CameraStudio({ status, onClose }: { status: StatusPayload | null
   return (
     <div className="lightbox" role="dialog" aria-modal="true" aria-label="camera studio" onClick={onClose}>
       <div className="cs-panel" onClick={(e) => e.stopPropagation()}
-        style={{ width: "min(96vw, 1100px)", maxHeight: "90vh", overflow: "auto", background: "var(--panel, #14161a)", borderRadius: 12, padding: 20 }}>
+        style={{ width: "min(98vw, 1680px)", maxHeight: "94vh", overflow: "auto", background: "var(--panel, #14161a)", borderRadius: 12, padding: 20 }}>
         <div className="row" style={{ justifyContent: "space-between", alignItems: "baseline", marginBottom: 4 }}>
           <h3 style={{ margin: 0 }}>camera studio</h3>
           <button className="small" onClick={onClose}>close</button>
