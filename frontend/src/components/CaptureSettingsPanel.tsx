@@ -39,20 +39,20 @@ export function CaptureSettingsPanel({ role }: { role: Role }) {
         unique-id-bound science path), the only way to force <b>YUY2 = uncompressed/lossless</b>. Effective next time the camera opens.
       </div>
       <div className="fields" style={{ maxWidth: "none" }}>
-        <span title="Pixel format. YUY2 = uncompressed (LOSSLESS — best for CAD, lower max fps/resolution over USB); MJPG = compressed (higher fps/resolution); auto = let the driver choose.">format</span>
+        <span data-tip="Pixel format. YUY2 = uncompressed (LOSSLESS — best for CAD, lower max fps/resolution over USB); MJPG = compressed (higher fps/resolution); auto = let the driver choose.">format</span>
         <select value={s.format ?? ""} onChange={(e) => save({ format: e.target.value || null })}>
           <option value="">auto (driver picks)</option>
           <option value="YUY2">YUY2 — uncompressed / lossless</option>
           <option value="MJPG">MJPG — compressed</option>
         </select>
-        <span title="Capture resolution (width × height). Pair YUY2 with the camera's max resolution for lossless CAD stills.">resolution</span>
+        <span data-tip="Capture resolution (width × height). Pair YUY2 with the camera's max resolution for lossless CAD stills.">resolution</span>
         <span className="row" style={{ gap: 6 }}>
           <input type="number" value={w ?? ""} placeholder="width" style={{ width: 90 }} onChange={(e) => save({ resolution: [Number(e.target.value) || 0, Number(h) || 0] })} /> ×
           <input type="number" value={h ?? ""} placeholder="height" style={{ width: 90 }} onChange={(e) => save({ resolution: [Number(w) || 0, Number(e.target.value) || 0] })} />
         </span>
-        <span title="Capture frame rate. YUY2 at max resolution is bandwidth-heavy over USB — e.g. 7.5 fps for the science camera.">fps</span>
+        <span data-tip="Capture frame rate. YUY2 at max resolution is bandwidth-heavy over USB — e.g. 7.5 fps for the science camera.">fps</span>
         <input type="number" step="0.5" value={s.fps ?? ""} placeholder="e.g. 7.5" style={{ width: 90 }} onChange={(e) => save({ fps: e.target.value === "" ? null : Number(e.target.value) })} />
-        <span title="Manual exposure in the driver's units. Blank = auto-exposure.">exposure</span>
+        <span data-tip="Manual exposure in the driver's units. Blank = auto-exposure.">exposure</span>
         <input type="number" value={s.exposure ?? ""} placeholder="auto" style={{ width: 90 }} onChange={(e) => save({ exposure: e.target.value === "" ? null : Number(e.target.value) })} />
       </div>
       {msg && <div className="hint">{msg}</div>}

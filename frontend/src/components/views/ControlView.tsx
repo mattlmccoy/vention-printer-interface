@@ -38,7 +38,7 @@ function Axis({ a, status, ok, call, step }: { a: AxisNo; status: StatusPayload 
       <div className="jog">
         <button disabled={!ok} onClick={() => rel(-1)}>{jog.toHome}</button>
         <button disabled={!ok} onClick={() => rel(1)}>{jog.away}</button>
-        <button className="home" disabled={!ok} title={piston ? "home this piston — EJECTS POWDER (drives it fully up/flush)" : "home this axis"} onClick={() => { if (!piston || window.confirm(`Home the ${AXIS_NAMES[a]}? This drives it fully up (0 mm) = flush with the substrate and EJECTS any powder in the cylinder. Continue?`)) call(`home ${AXIS_NAMES[a]}`, () => api.home([a])); }}>⌂</button>
+        <button className="home" disabled={!ok} data-tip={piston ? "home this piston — EJECTS POWDER (drives it fully up/flush)" : "home this axis"} onClick={() => { if (!piston || window.confirm(`Home the ${AXIS_NAMES[a]}? This drives it fully up (0 mm) = flush with the substrate and EJECTS any powder in the cylinder. Continue?`)) call(`home ${AXIS_NAMES[a]}`, () => api.home([a])); }}>⌂</button>
       </div>
       <div className="goto" style={{ gridColumn: "1 / -1", display: "flex", gap: 6, alignItems: "center", marginTop: 4 }}>
         <input type="number" style={{ flex: 1, minWidth: 0 }} value={target} placeholder="go to mm" onChange={(e) => setTarget(e.target.value)} disabled={!ok} />
@@ -90,7 +90,7 @@ export function ControlView({ status, gates, call, gantryStep, pistonStep, setGa
           </div>
           <div className="actions" style={{ marginTop: 8 }}>
             <button className="cta danger" disabled={!gates.connected} onClick={() => call("stop", api.stop)}>STOP</button>
-            <button className={`cta${anyUnref ? " primary" : ""}`} disabled={!ok} title="Reference every axis at its CURRENT reported position WITHOUT homing — only when the machine kept power and the positions match its own display." onClick={() => { if (window.confirm("Reference ALL axes at their CURRENT positions WITHOUT homing?\n\nOnly do this if the machine KEPT POWER and the positions shown match the machine's own HMI. If power was lost (positions read ~0), home instead.")) call("reference at current", api.referenceCurrent); }}>REFERENCE AT CURRENT{anyUnref ? " ⚠" : ""}</button>
+            <button className={`cta${anyUnref ? " primary" : ""}`} disabled={!ok} data-tip="Reference every axis at its CURRENT reported position WITHOUT homing — only when the machine kept power and the positions match its own display." onClick={() => { if (window.confirm("Reference ALL axes at their CURRENT positions WITHOUT homing?\n\nOnly do this if the machine KEPT POWER and the positions shown match the machine's own HMI. If power was lost (positions read ~0), home instead.")) call("reference at current", api.referenceCurrent); }}>REFERENCE AT CURRENT{anyUnref ? " ⚠" : ""}</button>
           </div>
           <div className="hint" style={{ marginTop: 10 }}>Home one gantry at a time (pistons ejecting powder). Or, if the machine kept power and the positions are correct, <b>reference at current</b> to trust them without homing.</div>
         </div>
@@ -98,7 +98,7 @@ export function ControlView({ status, gates, call, gantryStep, pistonStep, setGa
           <h3>heater</h3>
           <div className="kv" style={{ marginTop: 0 }}><span>relay</span><span className={c?.heater.on ? "bad" : ""}>{tri(c?.heater.on, `ON ${fmtSecs(c?.heater.on_s)}`, "off", "not observed")}</span><span>watchdog</span><span>{fmtSecs(c?.heater.max_on_s)}</span><span>io module</span><span className="warnv">{Array.isArray(status?.device.heater_io) ? (status!.device.heater_io as number[]).join(" / ") : "—"} unverified</span></div>
           <div className="actions tight">
-            <button className="cta danger" disabled={!ok} title={`Turns the IR heater ON; it switches off after ${fmtSecs(c?.heater.max_on_s)} or on any fault.`} onClick={() => call("heater on", api.heaterOn)}>HEATER ON</button>
+            <button className="cta danger" disabled={!ok} data-tip={`Turns the IR heater ON; it switches off after ${fmtSecs(c?.heater.max_on_s)} or on any fault.`} onClick={() => call("heater on", api.heaterOn)}>HEATER ON</button>
             <button className="cta" disabled={!gates.connected} onClick={() => call("heater off", api.heaterOff)}>HEATER OFF</button>
           </div>
         </div>
