@@ -20,12 +20,10 @@ export function CameraRoleAssigner() {
     let cancelled = false;
     (async () => {
       try {
-        let devs = await md.enumerateDevices();
-        if (!videoInputs(devs).some((d) => d.label)) {
-          const probe = await md.getUserMedia({ video: true });
-          probe.getTracks().forEach((t) => t.stop());
-          devs = await md.enumerateDevices();
-        }
+        // Never call getUserMedia({video:true}) to unlock labels: macOS may select and wake an
+        // iPhone Continuity Camera. Existing site permission exposes labels; otherwise we show the
+        // permission hint without opening any unspecified device.
+        const devs = await md.enumerateDevices();
         if (!cancelled) setInputs(videoInputs(devs));
       } catch {
         // Camera blocked: fall through to the hint below.

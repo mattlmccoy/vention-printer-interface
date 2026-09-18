@@ -93,7 +93,9 @@ class _TrackingSource(FrameSource):
 
     def grab(self) -> Frame:
         self.grab_count += 1
-        return Frame(image=np.zeros((4, 4, 3), dtype=np.uint8), timestamp_ns=self.grab_count)
+        image = np.zeros((8, 8, 3), dtype=np.uint8)
+        image[:, 4:] = 255
+        return Frame(image=image, timestamp_ns=self.grab_count)
 
 
 def _wait_until(predicate: Any, timeout: float = 2.0) -> bool:
@@ -391,7 +393,9 @@ def test_science_capture_endpoint_stores_a_client_upload(
     app, client = app_and_client
     run_name = client.post("/api/recording/start", json={"name": "client-cap-e2e"}).json()["run"]
 
-    ok, buf = cv2.imencode(".webp", np.zeros((8, 8, 3), np.uint8))
+    image = np.zeros((64, 64, 3), np.uint8)
+    image[:, 32:] = 255
+    ok, buf = cv2.imencode(".webp", image)
     assert ok
     resp = client.post(
         "/api/vision/science/capture?layer=7&stage=post_jet&cad_layer=2",
@@ -466,6 +470,50 @@ def test_science_capture_endpoint_rejects_bad_stage_and_empty_body(
         "/api/vision/science/capture?layer=1&stage=pre_jet", content=b""
     ).status_code == 400
     client.post("/api/recording/stop")
+
+
+def test_science_capture_endpoint_rejects_blank_image(
+    app_and_client: tuple[FastAPI, TestClient], tmp_path: Path
+) -> None:
+    import cv2
+
+    _, client = app_and_client
+    run = client.post("/api/recording/start", json={"name": "blank-client-cap"}).json()["run"]
+    ok, buf = cv2.imencode(".webp", np.zeros((64, 64, 3), np.uint8))
+    assert ok
+    response = client.post(
+        "/api/vision/science/capture?layer=1&stage=post_jet",
+        content=buf.tobytes(),
+        headers={"content-type": "image/webp"},
+    )
+    assert response.status_code == 422
+    assert "blank or near-uniform" in response.json()["detail"]
+    assert not (tmp_path / run / "vision").exists()
+    client.post("/api/recording/stop")
+
+
+def test_macos_server_fallback_is_blocked_before_opening_an_indexed_camera(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr("vention_printer_interface.api.app.platform.system", lambda: "Darwin")
+    app = create_app(
+        backend="none",
+        experiments_root=tmp_path,
+        poll_interval_s=0.05,
+        device_enumerator=lambda: [],
+    )
+    with TestClient(app) as client:
+        client.post("/api/recording/start", json={"name": "mac-safe-fallback"})
+        app.state.events.append("capture:post_jet", {"layer": 3, "print_layer": 1})
+        capture = client.get("/api/status").json()["capture_request"]
+        assert capture["server_fallback_blocked"] is True
+        response = client.post(
+            "/api/vision/science/client-fallback", params={"seq": capture["seq"]}
+        )
+        assert response.status_code == 503
+        assert "Continuity Camera" in response.json()["detail"]
+        assert app.state.vision is None
+        client.post("/api/recording/stop")
 
 
 def test_vision_captures_endpoint_lists_capture_after_e2e_flow(

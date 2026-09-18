@@ -88,7 +88,13 @@ export interface StatusPayload {
   auto_log: boolean;
   recording: { active: boolean; run: string | null };
   /** "Capture now" signal for the browser science-capture client: seq ticks on each capture mark. */
-  capture_request?: { seq: number; layer: number | null; cad_layer: number | null; stage: string } | null;
+  capture_request?: {
+    seq: number;
+    layer: number | null;
+    cad_layer: number | null;
+    stage: string;
+    server_fallback_blocked?: boolean;
+  } | null;
 }
 
 /** Fixed-capacity ring of (t, value) samples per axis for the plot dock. */

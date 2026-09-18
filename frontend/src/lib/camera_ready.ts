@@ -6,20 +6,28 @@ export function waitForCameraFrame(
   timeoutMs = 6000,
 ): Promise<void> {
   return new Promise((resolve, reject) => {
-    let timer: ReturnType<typeof setTimeout>;
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    let poll: ReturnType<typeof setInterval> | undefined;
+    let settled = false;
     const cleanup = () => {
-      clearTimeout(timer);
+      if (timer !== undefined) clearTimeout(timer);
+      if (poll !== undefined) clearInterval(poll);
       video.removeEventListener("loadeddata", ready);
       video.removeEventListener("playing", ready);
       video.removeEventListener("error", failed);
       signal.removeEventListener("abort", aborted);
     };
     const finish = (error?: Error) => {
+      if (settled) return;
+      settled = true;
       cleanup();
       if (error) reject(error); else resolve();
     };
     const ready = () => {
-      if (video.readyState >= 2 && video.videoWidth > 0 && video.videoHeight > 0) finish();
+      if (
+        video.readyState >= 2 && video.videoWidth > 0 && video.videoHeight > 0
+        && cameraSourceHasContent(video, video.videoWidth, video.videoHeight)
+      ) finish();
     };
     const failed = () => finish(new Error(video.error?.message || "camera video could not play"));
     const aborted = () => finish(new DOMException("camera open cancelled", "AbortError"));
@@ -28,9 +36,10 @@ export function waitForCameraFrame(
     video.addEventListener("error", failed);
     signal.addEventListener("abort", aborted, { once: true });
     timer = setTimeout(
-      () => finish(new Error("camera opened but delivered no playable frames")),
+      () => finish(new Error("camera opened but delivered no usable image")),
       timeoutMs,
     );
+    poll = setInterval(ready, 120);
     if (signal.aborted) aborted();
     else {
       video.play().then(ready).catch((error: unknown) => {
@@ -40,10 +49,54 @@ export function waitForCameraFrame(
   });
 }
 
+/** Reject all-black, all-white, and near-uniform camera frames. Some UVC failures still report
+ * valid dimensions and timestamps while returning an empty grey/black raster. */
+export function cameraSourceHasContent(
+  source: CanvasImageSource,
+  width: number,
+  height: number,
+): boolean {
+  if (width <= 0 || height <= 0) return false;
+  try {
+    const canvas = document.createElement("canvas");
+    canvas.width = 48;
+    canvas.height = 36;
+    const ctx = canvas.getContext("2d", { willReadFrequently: true });
+    if (!ctx) return false;
+    ctx.drawImage(source, 0, 0, canvas.width, canvas.height);
+    const pixels = ctx.getImageData(0, 0, canvas.width, canvas.height).data;
+    let min = 255;
+    let max = 0;
+    let sum = 0;
+    let sumSq = 0;
+    const n = pixels.length / 4;
+    for (let i = 0; i < pixels.length; i += 4) {
+      const y = (pixels[i] + pixels[i + 1] + pixels[i + 2]) / 3;
+      min = Math.min(min, y);
+      max = Math.max(max, y);
+      sum += y;
+      sumSq += y * y;
+    }
+    const mean = sum / n;
+    const std = Math.sqrt(Math.max(0, sumSq / n - mean * mean));
+    return max - min >= 20 && std >= 8;
+  } catch {
+    return false;
+  }
+}
+
 export const SCIENCE_FALLBACK_CONSTRAINTS: Omit<MediaTrackConstraints, "deviceId"> = {
   width: { ideal: 1920, max: 1920 },
   height: { ideal: 1080, max: 1080 },
   frameRate: { ideal: 10, max: 15 },
+};
+
+/** Stable browser stream used to own layer captures. Full-resolution stills are requested from its
+ * exact USB-camera track through ImageCapture.takePhoto when the browser supports it. */
+export const SCIENCE_CAPTURE_STREAM_CONSTRAINTS: Omit<MediaTrackConstraints, "deviceId"> = {
+  width: { ideal: 1920, max: 1920 },
+  height: { ideal: 1080, max: 1080 },
+  frameRate: { ideal: 7.5, max: 10 },
 };
 
 /** Setup shows two cameras while the persistent dock may already hold a third browser stream.

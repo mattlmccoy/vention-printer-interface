@@ -11,6 +11,15 @@ export interface Release {
 
 export const CHANGELOG: Release[] = [
   {
+    version: "0.10.2",
+    date: "2026-09-18",
+    changes: [
+      "Science captures now stay bound to the exact USB camera selected in the browser; unsafe macOS index fallback can no longer wake an iPhone Continuity Camera.",
+      "Blank and near-uniform camera frames are rejected instead of being saved as successful layer captures.",
+      "Camera permission checks no longer open an unspecified camera, and capture streams use bandwidth-safe previews before requesting a full-resolution still.",
+    ],
+  },
+  {
     version: "0.10.1",
     date: "2026-09-18",
     changes: [

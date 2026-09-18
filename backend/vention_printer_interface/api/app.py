@@ -105,7 +105,11 @@ from vention_printer_interface.vision.cameras import (
     save_role_map,
     unresolved_roles,
 )
-from vention_printer_interface.vision.capture import VisionService, store_uploaded
+from vention_printer_interface.vision.capture import (
+    VisionService,
+    image_has_usable_content,
+    store_uploaded,
+)
 from vention_printer_interface.vision.events import label_to_stage
 from vention_printer_interface.vision.frame_source import (
     AVFoundationFrameSource,
@@ -664,6 +668,10 @@ def create_app(
 
     camera_config = build_camera_config()
     enumerator = device_enumerator or enumerate_devices
+    # macOS exposes OpenCV/AVFoundation camera indexes in a different order than browser and USB
+    # enumeration. With two identical ELP cameras, opening the apparent science index can therefore
+    # wake FaceTime or an iPhone Continuity Camera. Injected sources are deterministic and safe.
+    server_science_fallback_blocked = platform.system() == "Darwin" and vision_source is None
 
     @asynccontextmanager
     async def lifespan(app: FastAPI) -> AsyncIterator[None]:
@@ -680,8 +688,8 @@ def create_app(
         app.state.auto_log = True
         app.state.auto_run_open = False
         # Browser science-capture client: capture_request is the "capture now" signal (seq ticks per
-        # mark); science_client_until is the heartbeat deadline while a client is capturing (the
-        # server cv2 grab is skipped until then).
+        # mark); science_client_until is the heartbeat deadline while a client is capturing. On
+        # macOS the server index fallback is always blocked because it can select Continuity Camera.
         app.state.capture_request = None
         app.state.capture_seq = 0
         app.state.science_client_until = 0.0
@@ -701,10 +709,19 @@ def create_app(
                     "layer": data.get("layer"),
                     "cad_layer": data.get("print_layer"),
                     "stage": stage,
+                    "server_fallback_blocked": server_science_fallback_blocked,
                 }
                 # If a browser capture-client is live (recent heartbeat), IT captures — skip the
                 # server cv2 grab (which mis-resolves between two identical cameras on macOS).
                 if time.monotonic() < getattr(app.state, "science_client_until", 0.0):
+                    return
+                if server_science_fallback_blocked:
+                    log.warning(
+                        "science capture skipped for layer %s %s: browser has no usable frame and "
+                        "unsafe macOS camera-index fallback is disabled",
+                        data.get("layer"),
+                        stage,
+                    )
                     return
             vision = app.state.vision
             if vision is not None:
@@ -2313,7 +2330,8 @@ def create_app(
     def science_client_heartbeat() -> dict[str, Any]:
         """The browser science-capture client pings this while it's mounted and ready to capture.
         While the heartbeat is fresh, the server SKIPS its own cv2 grab on each capture mark (the
-        client captures from the right camera instead). Lapses after ~8s so the server resumes."""
+        client captures from the right camera instead). On non-macOS systems a lapse after ~8s lets
+        the server resume; macOS never falls back to an ambiguous OS camera index."""
         app.state.science_client_until = time.monotonic() + 8.0
         return {"ok": True, "until_s": 8.0}
 
@@ -2327,6 +2345,12 @@ def create_app(
             raise HTTPException(409, "capture request is no longer current")
         if rec().current_run_dir is None:
             raise HTTPException(409, "no active recording run")
+        if server_science_fallback_blocked:
+            raise HTTPException(
+                503,
+                "server science fallback is disabled on macOS because camera indexes can open "
+                "FaceTime or Continuity Camera; the assigned USB camera must capture in-browser",
+            )
         vision = vision_service()
         if vision is None:
             raise HTTPException(503, "science capture service is not running")
@@ -2372,6 +2396,8 @@ def create_app(
         arr = cv2.imdecode(np.frombuffer(body, dtype=np.uint8), cv2.IMREAD_COLOR)
         if arr is None:
             raise HTTPException(400, "could not decode uploaded image")
+        if not image_has_usable_content(arr):
+            raise HTTPException(422, "uploaded science image is blank or near-uniform")
         job = app.state.job.to_dict() if app.state.job is not None else {}
         axis: dict[str, float] = {}
         try:

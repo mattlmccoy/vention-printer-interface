@@ -4,12 +4,19 @@ import threading
 import time
 
 import numpy as np
+import pytest
 
-from vention_printer_interface.vision.capture import VisionService
+from vention_printer_interface.vision.capture import VisionService, image_has_usable_content
 from vention_printer_interface.vision.events import CAPTURE_LABELS, CaptureRequest, label_to_stage
 from vention_printer_interface.vision.frame_source import Frame, FrameSource, SimulatedFrameSource
 from vention_printer_interface.vision.registration import Calibration
 from vention_printer_interface.vision.store import read_manifest
+
+
+def _usable_image(width=8, height=8):
+    image = np.zeros((height, width, 3), np.uint8)
+    image[:, width // 2 :] = 255
+    return image
 
 
 def test_capture_labels_are_the_three_stage_marks():
@@ -72,7 +79,7 @@ class _TrackingSource(FrameSource):
         if not self._open:
             raise RuntimeError("source not open")
         self.grab_count += 1
-        return Frame(image=np.zeros((4, 4, 3), np.uint8), timestamp_ns=time.time_ns())
+        return Frame(image=_usable_image(), timestamp_ns=time.time_ns())
 
 
 def _svc(tmp_path, source=None, calibration=None, camera_role=None):
@@ -222,7 +229,7 @@ def test_worker_uses_grab_fresh_not_grab(tmp_path):
             raise AssertionError("worker must call grab_fresh(), not grab()")
 
         def grab_fresh(self, discard: int = 2) -> Frame:
-            return Frame(image=np.zeros((4, 4, 3), np.uint8), timestamp_ns=42)
+            return Frame(image=_usable_image(), timestamp_ns=42)
 
     svc = _svc(tmp_path, source=GrabFreshOnly())
     svc.start()
@@ -259,7 +266,7 @@ def test_store_uploaded_writes_a_client_still_sidecar_and_manifest(tmp_path):
     import json
 
     svc = _svc(tmp_path, camera_role="science")
-    img = np.zeros((6, 8, 3), np.uint8)
+    img = _usable_image()
     paths = svc.store_uploaded(
         img,
         layer=8,
@@ -285,6 +292,39 @@ def test_store_uploaded_returns_none_with_no_active_run(tmp_path):
     # No active run dir -> nothing stored (never invents a location).
     svc = VisionService(source=SimulatedFrameSource(), run_dir_provider=lambda: None)
     assert svc.store_uploaded(np.zeros((4, 4, 3), np.uint8), layer=1, stage="pre_jet") is None
+
+
+def test_image_content_guard_rejects_blank_and_accepts_a_real_scene():
+    assert not image_has_usable_content(np.zeros((64, 64, 3), np.uint8))
+    assert not image_has_usable_content(np.full((64, 64, 3), 127, np.uint8))
+    assert not image_has_usable_content(np.full((64, 64, 3), 250, np.uint8))
+    assert image_has_usable_content(_usable_image(64, 64))
+
+
+def test_store_uploaded_rejects_blank_frame_before_writing(tmp_path):
+    svc = _svc(tmp_path, camera_role="science")
+    with pytest.raises(ValueError, match="blank or near-uniform"):
+        svc.store_uploaded(np.zeros((64, 64, 3), np.uint8), layer=1, stage="pre_jet")
+    assert not (tmp_path / "vision").exists()
+
+
+def test_worker_rejects_blank_camera_frame_before_writing(tmp_path):
+    class BlankSource(FrameSource):
+        def open(self):
+            pass
+
+        def close(self):
+            pass
+
+        def grab(self):
+            return Frame(image=np.zeros((64, 64, 3), np.uint8), timestamp_ns=time.time_ns())
+
+    svc = _svc(tmp_path, source=BlankSource())
+    svc.start()
+    svc.on_event("capture:post_jet", {"layer": 1})
+    svc.drain(timeout=2.0)
+    svc.stop()
+    assert not (tmp_path / "vision").exists()
 
 
 def test_capture_records_the_printing_cad_layer(tmp_path):
@@ -382,7 +422,7 @@ def test_worker_regrabs_once_when_first_frame_predates_the_event(tmp_path):
         def grab_fresh(self, discard: int = 2) -> Frame:
             self.calls += 1
             ts = 100 if self.calls == 1 else 5_000_000_000
-            return Frame(image=np.zeros((4, 4, 3), np.uint8), timestamp_ns=ts)
+            return Frame(image=_usable_image(), timestamp_ns=ts)
 
     source = StaleThenFresh()
     svc = _svc(tmp_path, source=source)
@@ -412,7 +452,7 @@ def test_worker_does_not_regrab_when_first_frame_is_already_fresh(tmp_path):
 
         def grab_fresh(self, discard: int = 2) -> Frame:
             self.calls += 1
-            return Frame(image=np.zeros((4, 4, 3), np.uint8), timestamp_ns=5_000_000_000)
+            return Frame(image=_usable_image(), timestamp_ns=5_000_000_000)
 
     source = CountingFresh()
     svc = _svc(tmp_path, source=source)
@@ -440,7 +480,7 @@ def test_worker_logs_warning_when_still_stale_after_regrab(tmp_path, caplog):
 
         def grab_fresh(self, discard: int = 2) -> Frame:
             self.calls += 1
-            return Frame(image=np.zeros((4, 4, 3), np.uint8), timestamp_ns=100)
+            return Frame(image=_usable_image(), timestamp_ns=100)
 
     source = AlwaysStale()
     svc = _svc(tmp_path, source=source)
@@ -472,7 +512,7 @@ def test_worker_skips_staleness_check_when_event_has_no_host_timestamp(tmp_path)
 
         def grab_fresh(self, discard: int = 2) -> Frame:
             self.calls += 1
-            return Frame(image=np.zeros((4, 4, 3), np.uint8), timestamp_ns=1)
+            return Frame(image=_usable_image(), timestamp_ns=1)
 
     source = CountingFresh()
     svc = _svc(tmp_path, source=source)
@@ -539,7 +579,7 @@ def test_queue_full_drops_oldest_request_and_increments_drops(tmp_path):
         def grab_fresh(self, discard: int = 2) -> Frame:
             self.entered.set()
             block.wait(timeout=5.0)
-            return Frame(image=np.zeros((4, 4, 3), np.uint8), timestamp_ns=time.time_ns())
+            return Frame(image=_usable_image(), timestamp_ns=time.time_ns())
 
     source = Blocking()
     svc = VisionService(
@@ -582,7 +622,7 @@ def test_capture_sidecar_marks_stale_true_when_frame_still_predates_event(tmp_pa
             raise AssertionError("worker must call grab_fresh(), not grab()")
 
         def grab_fresh(self, discard: int = 2) -> Frame:
-            return Frame(image=np.zeros((4, 4, 3), np.uint8), timestamp_ns=100)
+            return Frame(image=_usable_image(), timestamp_ns=100)
 
     svc = _svc(tmp_path, source=AlwaysStale())
     svc.start()
@@ -606,7 +646,7 @@ def test_capture_sidecar_marks_stale_false_when_frame_is_fresh(tmp_path):
             raise AssertionError("worker must call grab_fresh(), not grab()")
 
         def grab_fresh(self, discard: int = 2) -> Frame:
-            return Frame(image=np.zeros((4, 4, 3), np.uint8), timestamp_ns=5_000_000_000)
+            return Frame(image=_usable_image(), timestamp_ns=5_000_000_000)
 
     svc = _svc(tmp_path, source=Fresh())
     svc.start()

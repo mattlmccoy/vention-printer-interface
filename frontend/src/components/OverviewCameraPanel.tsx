@@ -50,13 +50,9 @@ export function OverviewCameraPanel({ view }: { base?: string; view: View }) {
     let cancelled = false;
     (async () => {
       try {
-        // Unlock device labels: enumerate, and if labels are blank, prompt once with a temp stream.
-        let devs = await md.enumerateDevices();
-        if (!videoInputs(devs).some((d) => d.label)) {
-          const probe = await md.getUserMedia({ video: true });
-          probe.getTracks().forEach((t) => t.stop());
-          devs = await md.enumerateDevices();
-        }
+        // Never use an unconstrained permission probe here: on macOS it can wake the iPhone
+        // Continuity Camera. Only exact deviceIds selected from labelled inputs are opened.
+        const devs = await md.enumerateDevices();
         if (cancelled) return;
         const ins = videoInputs(devs);
         setInputs(ins);

@@ -1,37 +1,61 @@
 import { useEffect, useRef, useState } from "react";
 import { api } from "../lib/api.ts";
-import { waitForCameraFrame } from "../lib/camera_ready.ts";
+import {
+  cameraSourceHasContent,
+  SCIENCE_CAPTURE_STREAM_CONSTRAINTS,
+  SETUP_PREVIEW_CONSTRAINTS,
+  waitForCameraFrame,
+} from "../lib/camera_ready.ts";
 import type { StatusPayload } from "../lib/telemetry.ts";
 import { loadRoleMap } from "../lib/camera_roles.ts";
-import { loadCameraSettings, videoConstraints } from "../lib/overview_settings.ts";
+import { loadCameraSettings } from "../lib/overview_settings.ts";
 
 const storage = typeof localStorage === "undefined" ? null : localStorage;
 
-/** Grab one still from the science stream for layerwise CAD analysis, adding NO avoidable loss.
- *  We deliberately do NOT use ImageCapture.takePhoto — it returns the camera's own JPEG and can
- *  re-compress, hurting sub-pixel edge detection. Instead we take the current frame via
- *  ImageCapture.grabFrame (full-res ImageBitmap) or the <video> element and encode PNG (the operator
- *  then stores lossless WebP), so the pipeline adds zero loss on top of the stream.
+/** Grab one still from the exact assigned science-camera track for layerwise CAD analysis. Prefer
+ *  ImageCapture.takePhoto at the requested still resolution; if the browser/camera does not expose
+ *  it, use the current validated stream frame and encode it as PNG before upload.
  *
  *  HARDWARE CAVEAT (be honest): a UVC camera at 20 MP streams MJPEG — the frames are already
  *  JPEG-compressed ON THE CAMERA (uncompressed 20 MP won't fit USB bandwidth), and no browser API
  *  can bypass that. So this is "as lossless as the stream allows", not truly lossless at 20 MP. For
- *  PIXEL-exact stills, pick a lower-resolution UNCOMPRESSED (YUY2) mode if the camera offers one —
- *  trading resolution for true losslessness. Either way this path never adds a second compression. */
-async function grabScienceStill(stream: MediaStream | null, video: HTMLVideoElement | null): Promise<Blob | null> {
+ *  PIXEL-exact stills, pick a lower-resolution UNCOMPRESSED (YUY2) mode if the camera offers one.
+ *  Every path rejects blank and near-uniform frames before they can be recorded as captures. */
+async function grabScienceStill(
+  stream: MediaStream | null,
+  video: HTMLVideoElement | null,
+  requested: { width: number; height: number },
+): Promise<Blob | null> {
   const toPng = (source: CanvasImageSource, w: number, h: number): Promise<Blob | null> => {
     const canvas = document.createElement("canvas");
     canvas.width = w; canvas.height = h;
     const ctx = canvas.getContext("2d");
     if (!ctx) return Promise.resolve(null);
     ctx.drawImage(source, 0, 0, w, h);
+    if (!cameraSourceHasContent(canvas, w, h)) return Promise.resolve(null);
     return new Promise((resolve) => canvas.toBlob((b) => resolve(b), "image/png")); // lossless
   };
   const track = stream?.getVideoTracks?.()[0] ?? null;
-  const IC = (window as unknown as { ImageCapture?: new (t: MediaStreamTrack) => { grabFrame: () => Promise<ImageBitmap> } }).ImageCapture;
+  const IC = (window as unknown as { ImageCapture?: new (t: MediaStreamTrack) => {
+    takePhoto?: (settings?: { imageWidth?: number; imageHeight?: number }) => Promise<Blob>;
+    grabFrame: () => Promise<ImageBitmap>;
+  } }).ImageCapture;
   if (track && IC) {
+    const capture = new IC(track);
+    if (capture.takePhoto) {
+      try {
+        const photo = await capture.takePhoto({
+          imageWidth: requested.width,
+          imageHeight: requested.height,
+        });
+        const bitmap = await createImageBitmap(photo);
+        const usable = cameraSourceHasContent(bitmap, bitmap.width, bitmap.height);
+        bitmap.close();
+        if (usable) return photo;
+      } catch { /* fall through to the live stream frame */ }
+    }
     try {
-      const bmp = await new IC(track).grabFrame(); // full-res current frame, lossless
+      const bmp = await capture.grabFrame();
       const blob = await toPng(bmp, bmp.width, bmp.height);
       bmp.close();
       if (blob) return blob;
@@ -79,29 +103,33 @@ export function ScienceCaptureClient({ status, onError }: {
     const video = videoRef.current;
     if (!video) return;
     (async () => {
-      const configured = videoConstraints(deviceId, loadCameraSettings(storage, "science"));
-      let stream: MediaStream | null = null;
-      try {
-        stream = await md.getUserMedia({ video: configured });
-        if (controller.signal.aborted) {
-          stream.getTracks().forEach((t) => t.stop());
+      for (const constraints of [SCIENCE_CAPTURE_STREAM_CONSTRAINTS, SETUP_PREVIEW_CONSTRAINTS]) {
+        let stream: MediaStream | null = null;
+        try {
+          stream = await md.getUserMedia({
+            video: { deviceId: { exact: deviceId }, ...constraints },
+          });
+          if (controller.signal.aborted) {
+            stream.getTracks().forEach((t) => t.stop());
+            return;
+          }
+          video.srcObject = stream;
+          await waitForCameraFrame(video, controller.signal);
+          if (controller.signal.aborted) {
+            stream.getTracks().forEach((t) => t.stop());
+            return;
+          }
+          streamRef.current = stream;
+          setStreamReady(true);
           return;
+        } catch (cause) {
+          stream?.getTracks().forEach((t) => t.stop());
+          video.srcObject = null;
+          if (cause instanceof Error && cause.name === "AbortError") return;
         }
-        video.srcObject = stream;
-        await waitForCameraFrame(video, controller.signal);
-        if (controller.signal.aborted) {
-          stream.getTracks().forEach((t) => t.stop());
-          return;
-        }
-        streamRef.current = stream;
-        setStreamReady(true);
-      } catch {
-        stream?.getTracks().forEach((t) => t.stop());
-        video.srcObject = null;
-        // The configured science mode did not deliver pixels. Do not silently lower the capture
-        // resolution because that invalidates calibration; send no heartbeat and let the server
-        // capture on demand using its configured camera mode.
       }
+      // No exact-device stream produced a real image. Do not heartbeat: the status banner will
+      // report the capture unavailable, and macOS will never try an unsafe index fallback.
     })();
     return () => { controller.abort(); stop(); };
   }, [active, deviceId]);
@@ -128,22 +156,29 @@ export function ScienceCaptureClient({ status, onError }: {
     };
   }, [active, streamReady]);
 
-  // On each new "capture now" signal, grab a LOSSLESS still and upload it (server re-encodes to
-  // lossless WebP → pixel-exact end to end, for CAD comparison). Resolution = the science camera's
-  // streamed resolution (set it to the max, up to 20 MP, in Setup). Dedup on seq.
+  // On each new "capture now" signal, ask the exact assigned track for a full-resolution still.
+  // Fall back to its validated live frame, never to an OS camera index. Dedup on seq.
   useEffect(() => {
     const cr = status?.capture_request;
     if (!active || !cr || cr.seq <= lastSeq.current) return;
     lastSeq.current = cr.seq;
-    // No verified heartbeat means the server already owns this event and has queued its capture.
-    if (!captureOwnerRef.current) return;
+    if (!captureOwnerRef.current) {
+      if (cr.server_fallback_blocked) {
+        onError(`Science capture failed for layer ${cr.cad_layer ?? cr.layer}: assigned USB camera did not produce a usable frame; unsafe macOS index fallback was blocked.`);
+      }
+      return;
+    }
     if (cr.layer == null) return;
     const layer = cr.layer;
     const cadLayer = cr.cad_layer ?? undefined;
     const stage = cr.stage;
     let cancelled = false;
     (async () => {
-      const blob = await grabScienceStill(streamRef.current, videoRef.current);
+      const desired = loadCameraSettings(storage, "science").resolution.split("x").map(Number);
+      const blob = await grabScienceStill(streamRef.current, videoRef.current, {
+        width: Number.isFinite(desired[0]) ? desired[0] : 1920,
+        height: Number.isFinite(desired[1]) ? desired[1] : 1080,
+      });
       if (cancelled) return;
       if (!blob) {
         stop();

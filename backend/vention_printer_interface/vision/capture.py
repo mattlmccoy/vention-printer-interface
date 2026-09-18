@@ -21,12 +21,40 @@ from collections.abc import Callable, Generator
 from pathlib import Path
 from typing import Any
 
+import numpy as np
+
 from vention_printer_interface.vision.events import CaptureRequest, label_to_stage
 from vention_printer_interface.vision.frame_source import Frame, FrameSource
 from vention_printer_interface.vision.registration import Calibration, register_frame
 from vention_printer_interface.vision.store import append_manifest, write_capture
 
 log = logging.getLogger(__name__)
+
+
+def image_has_usable_content(image: Any) -> bool:
+    """Return False for empty UVC frames that still have valid dimensions/timestamps.
+
+    The failed ELP/AVFoundation path observed in production returned black or nearly uniform gray
+    20 MP rasters instead of raising. Sample down to at most 64x64 so this guard is cheap even for
+    full-resolution stills. Thresholds are deliberately conservative: failed captures measured
+    below 6.3 gray-level standard deviation, while real bed images measured above 47.
+    """
+    try:
+        arr = np.asarray(image)
+        if arr.ndim not in (2, 3) or arr.size == 0 or arr.shape[0] <= 0 or arr.shape[1] <= 0:
+            return False
+        row_step = max(1, arr.shape[0] // 64)
+        col_step = max(1, arr.shape[1] // 64)
+        sample = arr[::row_step, ::col_step]
+        if sample.ndim == 3:
+            sample = sample[..., :3].astype(np.float32).mean(axis=2)
+        else:
+            sample = sample.astype(np.float32)
+        if not np.isfinite(sample).all():
+            return False
+        return bool(np.ptp(sample) >= 20.0 and np.std(sample) >= 8.0)
+    except (TypeError, ValueError):
+        return False
 
 
 class VisionService:
@@ -201,6 +229,8 @@ class VisionService:
                 frame, stale = self._ensure_fresh(frame, req)
             finally:
                 self._close_source_locked()
+        if not image_has_usable_content(frame.image):
+            raise ValueError("camera returned a blank or near-uniform frame")
         registered, registered_space = register_frame(frame.image, self._calibration)
 
         meta: dict[str, Any] = {
@@ -326,6 +356,8 @@ def store_uploaded(
     if base is None:
         log.debug("no active run dir; dropping client capture layer %s %s", layer, stage)
         return None
+    if not image_has_usable_content(image):
+        raise ValueError("uploaded science image is blank or near-uniform")
     registered, registered_space = register_frame(image, calibration)
     meta: dict[str, Any] = {
         "run_id": Path(base).name,

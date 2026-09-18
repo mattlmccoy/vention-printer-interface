@@ -28,7 +28,9 @@ def test_browser_upload_without_server_camera(tmp_path: Path, calibrated: bool) 
     with TestClient(app) as client:
         assert app.state.vision is None
         run = client.post("/api/recording/start", json={"name": "browser-only"}).json()["run"]
-        ok, encoded = cv2.imencode(".png", np.full((8, 8, 3), 127, np.uint8))
+        image = np.zeros((64, 64, 3), np.uint8)
+        image[:, 32:] = 255
+        ok, encoded = cv2.imencode(".png", image)
         assert ok
         url = "/api/vision/science/capture?layer=7&stage=post_jet&cad_layer=2"
         response = client.post(url, content=encoded.tobytes())

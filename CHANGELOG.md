@@ -3,6 +3,13 @@
 Notable changes to the Vention Printer Interface. Versions follow semantic versioning; each entry
 corresponds to a tagged merge to `main`.
 
+## v0.10.2 — 2026-09-18
+
+### Fixed
+- **Science capture no longer wakes iPhone Continuity Camera.** Browser capture stays bound to the assigned USB device ID, and the unsafe macOS OpenCV/AVFoundation index fallback is blocked because its indexes do not match USB/browser enumeration.
+- **Empty captures cannot pass as successful science images.** Browser and operator paths reject black, white, and near-uniform frames before storage and surface a capture failure instead.
+- **Camera permission checks never open an unspecified device.** Setup and the overview panel no longer use an unconstrained camera probe that macOS could route to an iPhone.
+
 ## v0.10.1 — 2026-09-18
 
 ### Fixed
