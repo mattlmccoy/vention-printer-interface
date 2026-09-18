@@ -3,6 +3,7 @@ import { createRoot } from "react-dom/client";
 import { App } from "./App.tsx";
 import { UpdateBanner } from "./components/UpdateBanner.tsx";
 import { PathsBanner } from "./components/PathsBanner.tsx";
+import { Tooltip } from "./components/Tooltip.tsx";
 import { SITE_MODE } from "./lib/api.ts";
 import "./theme.css";
 import "./styles.css";
@@ -11,6 +12,7 @@ createRoot(document.getElementById("root")!).render(
   <React.StrictMode>
     <PathsBanner />
     <UpdateBanner />
+    <Tooltip />
     <App />
   </React.StrictMode>,
 );
