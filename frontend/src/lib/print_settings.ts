@@ -64,6 +64,7 @@ export interface PrintSettings {
   capture_stages_enabled: string[]; // which stages to capture when capture_stages is on (subset of CAPTURE_STAGES)
   capture_recoater_mm: number; // overhead science cam: recoater pose to centre it over the bed (0 = fixed cam)
   capture_settle_s: number; // dwell after moving to the capture pose before the shot
+  capture_hold_s: number; // dwell after the trigger so the asynchronous browser exposure finishes
 }
 
 /** The three per-layer capture stages, in the canonical order the backend emits them. */
@@ -106,7 +107,7 @@ export const DEFAULT_PLAN: PrintSettings = {
   heater_speed: 50, heater_accel: 250, n_heater_passes: 1,
   heater_enabled: false, settle_s: 1, feed_backlash_mm: 0, feed_fast_speed: 5, feed_fast_accel: 30,
   capture_stages: false, capture_stages_enabled: ["pre_jet", "post_jet", "post_heat"],
-  capture_recoater_mm: 0, capture_settle_s: 0.5,
+  capture_recoater_mm: 0, capture_settle_s: 0.5, capture_hold_s: 2,
 };
 
 export type StepKind = "home" | "set_speed" | "set_accel" | "move_abs" | "move_rel" | "wait" | "dwell" | "heater" | "mark";
@@ -244,6 +245,17 @@ export function compilePrint(plan: PrintSettings): Step[] {
 
       // ---- printing ----
       printLayer += 1;
+      const capStages = plan.capture_stages ? plan.capture_stages_enabled : [];
+      const addCapture = (stage: string) => {
+        if (plan.capture_recoater_mm > 0) {
+          add(name, layerNo, "move_abs", RECOATER, plan.capture_recoater_mm);
+          add(name, layerNo, "wait");
+          if (plan.capture_settle_s > 0) add(name, layerNo, "dwell", null, plan.capture_settle_s, "camera settle");
+        }
+        add(name, layerNo, "mark", null, null, `capture:${stage}`);
+        if (plan.capture_hold_s > 0) add(name, layerNo, "dwell", null, plan.capture_hold_s, "camera capture hold");
+      };
+      if (capStages.includes("pre_jet")) addCapture("pre_jet");
       // Nozzle-purge schedule (firing is external; we only DWELL at the start position so the
       // printhead can fire): every pass, once per layer, or every N printing layers.
       const purgeOn = plan.purge_dwell_s > 0;
@@ -268,6 +280,7 @@ export function compilePrint(plan: PrintSettings): Step[] {
         add(name, layerNo, "move_abs", PRINTHEAD, back);
         add(name, layerNo, "wait");
       }
+      if (capStages.includes("post_jet")) addCapture("post_jet");
       if (plan.pre_heater_drop_mm > 0) {
         add(name, layerNo, "move_rel", PART, plan.pre_heater_drop_mm, "pre-heater drop");
         add(name, layerNo, "wait");
@@ -289,6 +302,7 @@ export function compilePrint(plan: PrintSettings): Step[] {
         add(name, layerNo, "move_rel", PART, -plan.pre_heater_drop_mm, "raise to layer");
         add(name, layerNo, "wait");
       }
+      if (capStages.includes("post_heat")) addCapture("post_heat");
       // NO end-of-layer recoater reposition. The recoater stays where the spread (home) or the heater
       // sweep (600) left it and moves out to the spread start (950) only at the NEXT layer's start,
       // AFTER that layer's feed preload. Parking it at 950 here made the next preload land too late.

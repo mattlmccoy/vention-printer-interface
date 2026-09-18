@@ -79,10 +79,12 @@ def test_timelapse_endpoint_serves_gif_and_404s_when_empty(tmp_path: Path) -> No
         assert c.get("/api/recordings/../timelapse.gif").status_code in (400, 404)
 
 
-def _overview_frame(base: Path, seq: int, color: tuple[int, int, int]) -> None:
+def _overview_frame(
+    base: Path, seq: int, color: tuple[int, int, int], size: tuple[int, int] = (16, 12)
+) -> None:
     d = base / "overview"
     d.mkdir(parents=True, exist_ok=True)
-    Image.new("RGB", (16, 12), color).save(d / f"{seq:06d}.webp")
+    Image.new("RGB", size, color).save(d / f"{seq:06d}.webp")
 
 
 def test_overview_frames_are_time_ordered(tmp_path: Path) -> None:
@@ -99,11 +101,12 @@ def test_build_overview_timelapse_gif(tmp_path: Path) -> None:
 
     assert build_overview_timelapse_gif(tmp_path) is None  # no frames
     for i in range(4):
-        _overview_frame(tmp_path, i, (i * 30, 0, 0))
+        _overview_frame(tmp_path, i, (i * 30, 0, 0), (1280, 720))
     data = build_overview_timelapse_gif(tmp_path, fps=10.0)
     assert data is not None
     gif = Image.open(io.BytesIO(data))
     assert gif.format == "GIF" and getattr(gif, "n_frames", 1) == 4
+    assert gif.size == (640, 360)
 
 
 def test_write_overview_frame_sequences(tmp_path: Path) -> None:

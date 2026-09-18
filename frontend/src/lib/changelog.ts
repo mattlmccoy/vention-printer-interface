@@ -11,6 +11,15 @@ export interface Release {
 
 export const CHANGELOG: Release[] = [
   {
+    version: "0.10.3",
+    date: "2026-09-18",
+    changes: [
+      "Pre-jet, post-jet, and post-heat science stills now stop at the commissioned camera pose, settle, and hold until the browser finishes the exposure.",
+      "Overview timelapse playback now assembles bounded previews instead of retaining every 4K frame in memory; original captured frames remain untouched.",
+      "The overview timelapse switch and interval now live with the other run settings on the Print page.",
+    ],
+  },
+  {
     version: "0.10.2",
     date: "2026-09-18",
     changes: [

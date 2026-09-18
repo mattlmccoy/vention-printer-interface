@@ -7,6 +7,7 @@ import type { StatusPayload } from "../../lib/telemetry.ts";
 import { NumberField } from "../NumberField.tsx";
 import { Toggle } from "../Toggle.tsx";
 import { LAYER_HEIGHTS_MM, snapLayerHeightMm } from "../../lib/layer_height.ts";
+import { loadOverviewTimelapse, saveOverviewTimelapse } from "../../lib/timelapse_settings.ts";
 import type { Call } from "./types.ts";
 
 const BUDGET = 145;
@@ -26,6 +27,7 @@ export function PrintConfigurator({ status, gates, call, onStarted }: {
   const [primed, setPrimed] = useState<boolean | null>(null); // null = unknown, else bed-primed?
   const [mpDismissed, setMpDismissed] = useState(false); // dismissable multipass-mismatch warning (#7)
   const [minWait, setMinWait] = useState(0.25); // the operator's real wait floor, for a matching estimate (#6)
+  const [overviewTl, setOverviewTl] = useState(() => loadOverviewTimelapse(typeof localStorage === "undefined" ? null : localStorage));
   const job = status?.job ?? null;
   const running = gates.printActive;
 
@@ -39,6 +41,11 @@ export function PrintConfigurator({ status, gates, call, onStarted }: {
   useEffect(() => { refresh(); }, [gates.reachable, job?.path]);
 
   const edit = (patch: Partial<PrintSettings>) => plan && (setPlan({ ...plan, ...patch }), setDirty(true));
+  const editOverviewTl = (patch: Partial<typeof overviewTl>) => {
+    const next = { ...overviewTl, ...patch };
+    setOverviewTl(next);
+    saveOverviewTimelapse(typeof localStorage === "undefined" ? null : localStorage, next);
+  };
   const editPh = (ph: "thin_precoat" | "printing" | "postcoat", patch: Partial<PrintSettings["printing"]>) => plan && edit({ [ph]: { ...plan[ph], ...patch } } as Partial<PrintSettings>);
   const editAllPhases = (patch: Partial<PrintSettings["printing"]>) => plan && edit({
     thin_precoat: { ...plan.thin_precoat, ...patch },
@@ -118,6 +125,7 @@ export function PrintConfigurator({ status, gates, call, onStarted }: {
                     })}
                   </span>
                 </>)}
+                <span data-tip="Capture the wide overview camera on a timer for whole-print playback under Runs.">overview timelapse</span><label className="row"><Toggle checked={overviewTl.enabled} disabled={running} onChange={(v) => editOverviewTl({ enabled: v })} /> <span className="hint">record wide view every</span> <input type="number" min={0.5} max={60} step={0.5} value={overviewTl.intervalS} disabled={running || !overviewTl.enabled} onChange={(e) => editOverviewTl({ intervalS: Number(e.target.value) || 3 })} style={{ width: 64 }} /> <span className="hint">seconds</span></label>
               </div>
               {reasons.length > 0 ? <div className="errline">{reasons.join(" · ")}</div> : <div className="okline">printable</div>}
             </>

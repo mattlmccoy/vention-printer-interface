@@ -21,9 +21,14 @@ CAPTURE_STAGES = ("pre_jet", "post_jet", "post_heat")
 _FRAME_EXTS = (".webp", ".png", ".jpg", ".jpeg")
 
 
-def _encode_gif(frames: list[Path], fps: float) -> bytes | None:
-    """Encode ordered image paths into a looping GIF (all frames resized to the first). None when
-    there are no frames."""
+def _encode_gif(
+    frames: list[Path], fps: float, max_size: tuple[int, int] | None = None
+) -> bytes | None:
+    """Encode ordered image paths into a looping GIF, optionally bounded for playback memory.
+
+    The source stills remain untouched at full resolution. Bounding only the assembled preview is
+    essential for overview runs: retaining hundreds of decoded 4K frames can consume gigabytes.
+    """
     from PIL import Image
 
     if not frames:
@@ -31,11 +36,14 @@ def _encode_gif(frames: list[Path], fps: float) -> bytes | None:
     imgs: list[Image.Image] = []
     size: tuple[int, int] | None = None
     for p in frames:
-        im = Image.open(p).convert("RGB")
+        with Image.open(p) as opened:
+            im = opened.convert("RGB")
+        if size is None and max_size is not None:
+            im.thumbnail(max_size, Image.Resampling.LANCZOS)
         if size is None:
             size = im.size
         elif im.size != size:
-            im = im.resize(size)
+            im = im.resize(size, Image.Resampling.LANCZOS)
         imgs.append(im)
     duration_ms = max(1, round(1000.0 / max(fps, 0.1)))
     buf = io.BytesIO()
@@ -55,8 +63,8 @@ def overview_frames(base: Path) -> list[Path]:
 
 
 def build_overview_timelapse_gif(base: Path, fps: float = 10.0) -> bytes | None:
-    """Encode the run's overview frames into a looping GIF. None when there are no frames."""
-    return _encode_gif(overview_frames(base), fps)
+    """Encode a playback-sized overview GIF. Full-resolution source frames remain on disk."""
+    return _encode_gif(overview_frames(base), fps, max_size=(640, 360))
 
 
 def timelapse_frames(base: Path, stage: str) -> list[Path]:

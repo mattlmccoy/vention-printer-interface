@@ -664,30 +664,37 @@ def test_layer_numbers_and_heights_over_a_full_plan() -> None:
 
 
 def test_capture_stages_defaults_to_disabled() -> None:
-    # Captures are OFF by default: no cameras are wired in yet, and an operator turns them on
-    # explicitly once the vision package is present. An enabled capture must never add motion.
+    # Captures are OFF by default until an operator commissions the camera and capture pose.
     assert PrintSettings().capture_stages is False
 
 
 def test_overhead_capture_moves_recoater_to_pose_then_settles() -> None:
-    # Overhead science cam on the recoater gantry: with capture_stages + capture_recoater_mm set,
-    # the per-layer capture drives the recoater to the capture pose, waits, dwells to settle, then
-    # marks (imaging the printed layer at the recoat plane). With capture_recoater_mm=0 (fixed cam)
-    # it is just the mark in place — no capture move.
+    # Every enabled stage uses the same calibrated overhead pose, settles before the trigger, and
+    # holds after it so the asynchronous browser exposure finishes before the next move.
     base = dataclasses.replace(one_layer(), capture_stages=True)
 
     fixed = compile_print(dataclasses.replace(base, capture_recoater_mm=0.0))
     i = next(k for k, s in enumerate(fixed) if s.label == "capture:post_jet")
     assert fixed[i - 1].kind != "dwell"  # no camera-settle dwell; the mark fires in place
+    assert fixed[i + 1].kind == "dwell" and fixed[i + 1].label == "camera capture hold"
 
     over = compile_print(
-        dataclasses.replace(base, capture_recoater_mm=475.0, capture_settle_s=0.3)
+        dataclasses.replace(
+            base, capture_recoater_mm=475.0, capture_settle_s=0.3, capture_hold_s=1.8
+        )
     )
-    j = next(k for k, s in enumerate(over) if s.label == "capture:post_jet")
-    assert (over[j - 3].kind, over[j - 3].axis, over[j - 3].value) == ("move_abs", RECOATER, 475.0)
-    assert over[j - 2].kind == "wait"
-    assert over[j - 1].kind == "dwell" and over[j - 1].value == 0.3
-    assert over[j - 1].label == "camera settle"
+    for stage in ("pre_jet", "post_jet", "post_heat"):
+        j = next(k for k, s in enumerate(over) if s.label == f"capture:{stage}")
+        assert (over[j - 3].kind, over[j - 3].axis, over[j - 3].value) == (
+            "move_abs",
+            RECOATER,
+            475.0,
+        )
+        assert over[j - 2].kind == "wait"
+        assert over[j - 1].kind == "dwell" and over[j - 1].value == 0.3
+        assert over[j - 1].label == "camera settle"
+        assert over[j + 1].kind == "dwell" and over[j + 1].value == 1.8
+        assert over[j + 1].label == "camera capture hold"
 
 
 def test_capture_marks_carry_the_printing_layer_index() -> None:
@@ -710,7 +717,7 @@ def test_capture_marks_carry_the_printing_layer_index() -> None:
     assert all(s.print_layer is None for s in precoat_marks)
 
 
-def test_capture_marks_emitted_without_added_motion() -> None:
+def test_capture_marks_emitted_at_each_process_boundary() -> None:
     # one_layer() disables captures for the pinned-sequence tests above; re-enable it here.
     plan = dataclasses.replace(one_layer(), capture_stages=True)
     steps = compile_print(plan)
@@ -790,14 +797,20 @@ def test_bounded_filters_capture_stages_enabled_to_valid_canonical_order() -> No
     )
 
 
-def test_captures_add_no_motion() -> None:
-    # Enabling captures must add ONLY marks — never any axis motion. The motion choreography must be
-    # byte-identical whether captures are on or off (no cameras are installed yet).
-    def motion(plan: PrintSettings) -> list[tuple[str, int | None, float | None]]:
-        return [(s.kind, s.axis, s.value) for s in compile_print(plan) if s.kind != "mark"]
+def test_fixed_camera_captures_add_no_axis_motion() -> None:
+    # A zero capture pose means a fixed camera: triggers add timing holds but cannot alter any axis
+    # or heater command. Recoater-mounted operation is covered by the calibrated-pose test above.
+    def machine_actions(plan: PrintSettings) -> list[tuple[str, int | None, float | None]]:
+        return [
+            (s.kind, s.axis, s.value)
+            for s in compile_print(plan)
+            if s.axis is not None or s.kind == "heater"
+        ]
 
-    off = motion(dataclasses.replace(one_layer(), capture_stages=False))
-    on = motion(dataclasses.replace(one_layer(), capture_stages=True))
+    off = machine_actions(dataclasses.replace(one_layer(), capture_stages=False))
+    on = machine_actions(
+        dataclasses.replace(one_layer(), capture_stages=True, capture_recoater_mm=0.0)
+    )
     assert on == off
 
 
@@ -814,6 +827,8 @@ def test_bounded_passes_through_capture_stages() -> None:
     assert PrintSettings.bounded({"capture_stages": False}, lim).capture_stages is False
     assert PrintSettings.bounded({"capture_stages": True}, lim).capture_stages is True
     assert PrintSettings.bounded({}, lim).capture_stages is False  # default unchanged (off)
+    assert PrintSettings.bounded({"capture_hold_s": 99}, lim).capture_hold_s == 10.0
+    assert PrintSettings.bounded({"capture_hold_s": -1}, lim).capture_hold_s == 0.0
 
 
 def test_estimate_duration_is_positive_and_scales_with_layers() -> None:

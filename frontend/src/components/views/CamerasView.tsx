@@ -3,7 +3,6 @@ import { api, type VisionCalibrateResult } from "../../lib/api.ts";
 import type { Gates } from "../../lib/format.ts";
 import type { StatusPayload } from "../../lib/telemetry.ts";
 import { loadRoleMap } from "../../lib/camera_roles.ts";
-import { loadOverviewTimelapse, saveOverviewTimelapse } from "../../lib/timelapse_settings.ts";
 import { loadCameraSettings, videoConstraints } from "../../lib/overview_settings.ts";
 import { CalibrationBoardPanel } from "../CalibrationBoardPanel.tsx";
 import { CameraRoleAssigner } from "../CameraRoleAssigner.tsx";
@@ -195,31 +194,6 @@ function UnattendedSciencePanel() {
   );
 }
 
-/** Opt-in: record a whole-print OVERVIEW timelapse (wide-view frames on a timer) alongside the
- *  always-on per-layer science timelapse. Plays back under the Runs tab (timelapse → overview). */
-function OverviewTimelapsePanel() {
-  const s0 = loadOverviewTimelapse(typeof localStorage === "undefined" ? null : localStorage);
-  const [enabled, setEnabled] = useState(s0.enabled);
-  const [intervalS, setIntervalS] = useState(s0.intervalS);
-  const persist = (en: boolean, iv: number) => saveOverviewTimelapse(typeof localStorage === "undefined" ? null : localStorage, { enabled: en, intervalS: iv });
-  return (
-    <div className="body">
-      <div className="hint" style={{ marginTop: 0 }}>
-        When on, the overview camera is captured every few seconds during a recorded print and assembled into a
-        whole-print timelapse (view it under Runs → timelapse → overview). The per-layer science timelapse is always recorded.
-      </div>
-      <label className="row" style={{ gap: 8 }}>
-        <input type="checkbox" checked={enabled} onChange={(e) => { setEnabled(e.target.checked); persist(e.target.checked, intervalS); }} />
-        record an overview timelapse during prints
-      </label>
-      <label className="row" style={{ gap: 8, marginTop: 6 }}>
-        every <input type="number" min={0.5} max={60} step={0.5} value={intervalS} style={{ width: 72 }}
-          onChange={(e) => { const v = Number(e.target.value) || 3; setIntervalS(v); persist(enabled, v); }} /> seconds
-      </label>
-    </div>
-  );
-}
-
 export function CamerasView({ status, gates, call, base, onOpenQuickStart }: {
   status: StatusPayload | null; gates: Gates; call: Call; base: string;
   /** A7: reopens the camera-role quick-start wizard any time (cameras swapped/replaced/re-cabled) */
@@ -324,10 +298,6 @@ export function CamerasView({ status, gates, call, base, onOpenQuickStart }: {
         <details className="rp-drawer">
           <summary>unattended science capture (bind camera by unique id)</summary>
           <UnattendedSciencePanel />
-        </details>
-        <details className="rp-drawer">
-          <summary>overview timelapse (record the wide view during prints)</summary>
-          <OverviewTimelapsePanel />
         </details>
       </div>
     </div>

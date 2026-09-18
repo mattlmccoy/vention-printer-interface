@@ -60,11 +60,16 @@ export function OverviewTimelapseClient({ status }: { status: StatusPayload | nu
           try { bmp = await new IC(track).grabFrame(); source = bmp; w = bmp.width; h = bmp.height; } catch { source = null; }
         }
         if (!source) { if (!video || !video.videoWidth) return; source = video; w = video.videoWidth; h = video.videoHeight; }
+        // This stream can be 4K, but these are playback frames rather than metrology stills. Store
+        // a bounded source frame so a long run can be assembled without repeatedly decoding 4K.
+        const scale = Math.min(1, 1280 / w, 720 / h);
+        const outW = Math.max(1, Math.round(w * scale));
+        const outH = Math.max(1, Math.round(h * scale));
         const canvas = document.createElement("canvas");
-        canvas.width = w; canvas.height = h;
+        canvas.width = outW; canvas.height = outH;
         const ctx = canvas.getContext("2d");
         if (!ctx) { bmp?.close(); return; }
-        ctx.drawImage(source, 0, 0, w, h);
+        ctx.drawImage(source, 0, 0, outW, outH);
         bmp?.close();
         const blob = await new Promise<Blob | null>((res) => canvas.toBlob((b) => res(b), "image/webp", 0.85));
         if (blob) await api.overviewTimelapseUpload(blob).catch(() => {});

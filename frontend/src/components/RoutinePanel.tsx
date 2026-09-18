@@ -68,6 +68,7 @@ interface Draft {
   capture_stages: boolean;
   capture_recoater_mm: number;
   capture_settle_s: number;
+  capture_hold_s: number;
 }
 
 function speedsOf(phase: Record<string, unknown>): Speeds {
@@ -130,6 +131,7 @@ function readDraft(plan: Record<string, unknown>): Draft {
     capture_stages: typeof plan.capture_stages === "boolean" ? plan.capture_stages : false,
     capture_recoater_mm: n(plan.capture_recoater_mm),
     capture_settle_s: n(plan.capture_settle_s, 0.5),
+    capture_hold_s: n(plan.capture_hold_s, 2),
   };
 }
 
@@ -188,6 +190,7 @@ export function RoutinePanel({ gates, call }: { gates: Gates; call: Call }) {
       capture_stages: d.capture_stages,
       capture_recoater_mm: d.capture_recoater_mm,
       capture_settle_s: d.capture_settle_s,
+      capture_hold_s: d.capture_hold_s,
     };
     return api.setPrintSettings(patch).then((np) => { setP(np); setDraft(readDraft(np.plan)); setDirty(false); });
   });
@@ -300,6 +303,7 @@ export function RoutinePanel({ gates, call }: { gates: Gates; call: Call }) {
             <div className="rp-row"><span data-tip="Emit layerwise vision capture marks during the print (needs cameras).">capture stages</span><span className="rv"><Toggle checked={d.capture_stages} disabled={!ok} onChange={(v) => setD({ capture_stages: v })} /></span></div>
             <div className="rp-row"><span data-tip="Overhead science cam on the recoater: recoater ABSOLUTE position that centres it over the bed for a top-down shot. 0 = fixed camera (no capture move).">capture pose (mm)</span><span className="rv"><NumberField value={d.capture_recoater_mm} disabled={!ok} onChange={(v) => setD({ capture_recoater_mm: v })} /></span></div>
             <div className="rp-row"><span data-tip="Dwell after moving to the capture pose, before the shot, so the gantry vibration settles.">capture settle (s)</span><span className="rv"><NumberField step="0.1" value={d.capture_settle_s} disabled={!ok} onChange={(v) => setD({ capture_settle_s: v })} /></span></div>
+            <div className="rp-row"><span data-tip="Dwell after the capture trigger so the browser finishes exposing and transferring the frame before motion resumes.">capture hold (s)</span><span className="rv"><NumberField step="0.1" value={d.capture_hold_s} disabled={!ok} onChange={(v) => setD({ capture_hold_s: v })} /></span></div>
           </div>
         </div>
       </details>

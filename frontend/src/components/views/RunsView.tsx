@@ -435,7 +435,7 @@ export function RunsView({ status, gates, call, base }: { status: StatusPayload 
                         title={`Play the ${tlSource} timelapse${tlStage ? ` · ${STAGE_LABEL[tlStage]}` : ""}`}
                         onClick={() => setShowTl((v) => !v)}>▶ play</button>
                       <a className="small" href={tlUrl} download style={{ textDecoration: "none" }} title="Download the timelapse GIF">⬇ gif</a>
-                      {tlSource === "overview" && <span className="hint" style={{ marginTop: 0 }}>(enable overview timelapse in Setup before a print)</span>}
+                      {tlSource === "overview" && <span className="hint" style={{ marginTop: 0 }}>(enable overview timelapse on Print before a run)</span>}
                     </div>
                   );
                 })()}

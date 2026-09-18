@@ -25,6 +25,29 @@ test("toggleCaptureStage drops unknown stages and can empty the set", () => {
 
 test("the default plan enables all three capture stages", () => {
   assert.deepEqual(DEFAULT_PLAN.capture_stages_enabled, [...CAPTURE_STAGES]);
+  assert.equal(DEFAULT_PLAN.capture_hold_s, 2);
+});
+
+test("science stages stop at the calibrated pose and hold after each trigger", () => {
+  const p = {
+    ...DEFAULT_PLAN,
+    thin_precoat: { ...DEFAULT_PLAN.thin_precoat, n_layers: 0 },
+    printing: { ...DEFAULT_PLAN.printing, n_layers: 1 },
+    postcoat: { ...DEFAULT_PLAN.postcoat, n_layers: 0 },
+    capture_stages: true,
+    capture_recoater_mm: 454.4,
+    capture_settle_s: 0.5,
+    capture_hold_s: 2,
+  };
+  const steps = compilePrint(p);
+  for (const stage of CAPTURE_STAGES) {
+    const i = steps.findIndex((s) => s.label === `capture:${stage}`);
+    assert.ok(i >= 3);
+    assert.deepEqual([steps[i - 3].kind, steps[i - 3].axis, steps[i - 3].value], ["move_abs", 4, 454.4]);
+    assert.equal(steps[i - 2].kind, "wait");
+    assert.equal(steps[i - 1].label, "camera settle");
+    assert.equal(steps[i + 1].label, "camera capture hold");
+  }
 });
 
 test("defaults match V1.py and the backend", () => {

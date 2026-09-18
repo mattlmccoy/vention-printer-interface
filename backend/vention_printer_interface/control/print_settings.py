@@ -177,9 +177,8 @@ class PrintSettings:
     ipa_dhvap_j_g: float = 663.0
     heater_section_power_w: float = 75.0
     # When True, compile_print emits capture:pre_jet / capture:post_jet / capture:post_heat marks
-    # at gantry-parked points in each printing layer for the vision package to key stage captures
-    # off of. Purely additive: NO motion is added in either state (the camera rides the recoater
-    # gantry, so no printhead park is needed). OFF by default — no cameras are installed yet.
+    # at the commissioned overhead pose in each printing layer for the vision package to key stage
+    # captures off of. OFF by default until the camera and capture pose are commissioned.
     capture_stages: bool = False
     # Which of the three stage marks compile_print emits when capture_stages is on (#2 per-stage
     # selection). Default = all three (so enabling captures behaves exactly as before). An operator
@@ -192,6 +191,9 @@ class PrintSettings:
     # emit the capture mark in place, no capture move (the original behaviour).
     capture_recoater_mm: float = 0.0
     capture_settle_s: float = 0.5
+    # Hold the machine still after a browser capture trigger. The trigger is asynchronous; without
+    # this dwell, the next move can begin while the browser is exposing/transferring the frame.
+    capture_hold_s: float = 2.0
 
     @property
     def total_thickness_mm(self) -> float:
@@ -364,6 +366,7 @@ class PrintSettings:
                 num("capture_recoater_mm", base.capture_recoater_mm), 0.0, base.recoater_end_mm
             ),
             capture_settle_s=_clamp(num("capture_settle_s", base.capture_settle_s), 0.0, 10.0),
+            capture_hold_s=_clamp(num("capture_hold_s", base.capture_hold_s), 0.0, 10.0),
         )
 
 
@@ -517,10 +520,46 @@ def compile_print(plan: PrintSettings) -> tuple[Step, ...]:
             # ---- printing ----
             print_layer += 1
             cap_stages = plan.capture_stages_enabled if plan.capture_stages else ()
+
+            def add_capture(
+                stage: str,
+                phase: str = name,
+                absolute_layer: int = layer_no,
+                printing_layer: int = print_layer,
+            ) -> None:
+                """Put the recoater-mounted camera at its calibrated pose and hold through the
+                asynchronous browser exposure. A zero pose preserves fixed-camera operation."""
+                if plan.capture_recoater_mm > 0:
+                    add(phase, absolute_layer, "move_abs", RECOATER, plan.capture_recoater_mm)
+                    add(phase, absolute_layer, "wait")
+                    if plan.capture_settle_s > 0:
+                        add(
+                            phase,
+                            absolute_layer,
+                            "dwell",
+                            value=plan.capture_settle_s,
+                            label="camera settle",
+                        )
+                add(
+                    phase,
+                    absolute_layer,
+                    "mark",
+                    label=f"capture:{stage}",
+                    print_layer=printing_layer,
+                )
+                if plan.capture_hold_s > 0:
+                    add(
+                        phase,
+                        absolute_layer,
+                        "dwell",
+                        value=plan.capture_hold_s,
+                        label="camera capture hold",
+                    )
+
             if "pre_jet" in cap_stages:
-                # Capture mark only — NO printhead motion. The camera rides the recoater gantry, so
-                # the printhead stays home; the freshly-coated layer is imaged where it lies.
-                add(name, layer_no, "mark", label="capture:pre_jet", print_layer=print_layer)
+                # Stop during the 950 -> home spreading return when the calibrated camera reaches
+                # the bed. The image is pre-jet; the remaining spread and jet then resume together.
+                add_capture("pre_jet")
             # Nozzle-purge schedule (firing is external; we only DWELL at the start position so the
             # printhead can fire): every pass, once per layer, or every N printing layers.
             purge_on = plan.purge_dwell_s > 0
@@ -559,15 +598,7 @@ def compile_print(plan: PrintSettings) -> tuple[Step, ...]:
                 add(name, layer_no, "move_abs", PRINTHEAD, back)
                 add(name, layer_no, "wait")
             if "post_jet" in cap_stages:
-                if plan.capture_recoater_mm > 0:
-                    # Overhead science cam rides the recoater: drive it to the capture pose (centred
-                    # over the bed), let it settle, then shoot the freshly printed layer — it sits
-                    # at the constant recoat plane, so scale/focus don't drift across the build.
-                    add(name, layer_no, "move_abs", RECOATER, plan.capture_recoater_mm)
-                    add(name, layer_no, "wait")
-                    add(name, layer_no, "dwell", value=plan.capture_settle_s, label="camera settle")
-                # else fixed camera: gantries are already parked (recoater home, printhead home).
-                add(name, layer_no, "mark", label="capture:post_jet", print_layer=print_layer)
+                add_capture("post_jet")
             if plan.pre_heater_drop_mm > 0:  # drop before heating (net descent stays one layer)
                 add(name, layer_no, "move_rel", PART, plan.pre_heater_drop_mm, "pre-heater drop")
                 add(name, layer_no, "wait")
@@ -594,7 +625,7 @@ def compile_print(plan: PrintSettings) -> tuple[Step, ...]:
             # made the next layer's preload land too late (recoater already at 950); the feed must
             # drop BEFORE the recoater moves out. (Precoat layers return to 350 above.)
             if "post_heat" in cap_stages:
-                add(name, layer_no, "mark", label="capture:post_heat", print_layer=print_layer)
+                add_capture("post_heat")
             add(name, layer_no, "mark", label="layer_end")
         if exhausted:
             break
