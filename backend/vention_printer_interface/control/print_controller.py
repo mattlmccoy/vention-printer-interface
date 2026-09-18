@@ -6,8 +6,8 @@ steps (speed, accel, move issue, heater, mark) are issued back to back until a `
 ``min_wait_s`` has passed since the move was issued (the controller may not have registered the
 move on the very next poll — the V1.py sleep quirk). A wait that exceeds ``step_timeout_s`` is a
 protection event: stop all, heater off, FAULT. A controller FAULT or disarm aborts the print.
-The heater is switched only through ``Controller.heater_on/off`` (armed-gated) and never in a
-dry run.
+The heater is switched only through ``Controller.heater_on/off`` (armed-gated), and fires only
+when the plan's ``heater_enabled`` is set.
 """
 
 from __future__ import annotations
@@ -66,7 +66,6 @@ class PrintController:
         self.part_zero_mm: float | None = None
         self.state = PrintState.IDLE
         self.step_index = 0  # next step to issue
-        self.dry_run = False
         self.single_step = False
         self.reason = ""
         self._pause_requested = False
@@ -84,7 +83,7 @@ class PrintController:
         self._height = 0.0
 
     # ---- operator actions -------------------------------------------------------------------
-    def start(self, plan: PrintSettings, dry_run: bool = False, single_step: bool = False) -> None:
+    def start(self, plan: PrintSettings, single_step: bool = False) -> None:
         with self._lock:
             if self.state in (PrintState.RUNNING, PrintState.PAUSED):
                 raise RuntimeError("a print is already running")
@@ -93,11 +92,11 @@ class PrintController:
                 raise RuntimeError("print settings invalid: " + "; ".join(reasons))
             self._c._require_armed()
             self._reset(plan)
-            self.dry_run, self.single_step = dry_run, single_step
+            self.single_step = single_step
             self.part_zero_mm = self._part_position()
             self.state = PrintState.RUNNING
             self._started_at = self._clock()
-        self._emit("print_started", {"n_steps": len(self.steps), "dry_run": dry_run})
+        self._emit("print_started", {"n_steps": len(self.steps)})
 
     def start_macro(self, name: str, steps: tuple[Step, ...]) -> None:
         """Run a park macro on the same machine (armed-gated, pausable, abortable)."""
@@ -297,8 +296,6 @@ class PrintController:
             elif step.kind == "move_rel":
                 self._c.move_relative(step.axis or 0, float(step.value or 0.0))
             elif step.kind == "heater":
-                if self.dry_run:
-                    return None
                 if step.value:
                     self._c.heater_on()
                     return ("heater_on", {"step": step.index})
@@ -366,7 +363,6 @@ class PrintController:
                 "n_layers": self.plan.total_layers if self.plan else 0,
                 "part_height_mm": self._height,
                 "elapsed_s": round(elapsed, 1),
-                "dry_run": self.dry_run,
                 "single_step": self.single_step,
                 "reason": self.reason,
                 "current_step": None

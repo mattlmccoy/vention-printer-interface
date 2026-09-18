@@ -151,16 +151,30 @@ def test_one_layer_runs_to_done_with_layer_events() -> None:
         c.stop()
 
 
-def test_dry_run_never_touches_heater() -> None:
+def test_heater_fires_when_enabled() -> None:
+    # Dry run is gone (#3): a plan with heater_enabled always fires the heater — there is no
+    # motion-only mode. To skip heat, an operator turns heater_enabled off in the configurator.
     rc, c, t = make()
     seen: list[str] = []
     rc.on_event = lambda label, data: seen.append(label)
     try:
         c.arm()
-        rc.start(fast_plan(), dry_run=True)
+        rc.start(fast_plan(heater=True))
+        assert wait(lambda: rc.snapshot()["state"] == "done")
+        assert "heater_on" in seen
+    finally:
+        c.stop()
+
+
+def test_heater_off_when_disabled() -> None:
+    rc, c, t = make()
+    seen: list[str] = []
+    rc.on_event = lambda label, data: seen.append(label)
+    try:
+        c.arm()
+        rc.start(fast_plan(heater=False))
         assert wait(lambda: rc.snapshot()["state"] == "done")
         assert "heater_on" not in seen and t.mqtt_latest(HEATER) != "1"
-        assert rc.snapshot()["dry_run"] is True
     finally:
         c.stop()
 
@@ -294,7 +308,6 @@ def test_snapshot_shape_idle() -> None:
         "n_layers",
         "part_height_mm",
         "elapsed_s",
-        "dry_run",
         "single_step",
         "reason",
         "current_step",

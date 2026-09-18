@@ -156,11 +156,11 @@ def test_start_requires_primed_bed(client: TestClient) -> None:
     client.put("/api/print-settings", json=FAST)
     connect_arm_no_prime(client)
     # armed + valid settings, but no primed bed captured yet -> refused with a prime-the-bed detail
-    r = client.post("/api/print/start", json={"dry_run": True})
+    r = client.post("/api/print/start", json={})
     assert r.status_code == 409 and "prime" in r.json()["detail"].lower()
     # capture the primed bed, then the start proceeds (no longer a 409)
     assert client.post("/api/primed/capture").status_code == 200
-    ok = client.post("/api/print/start", json={"dry_run": True})
+    ok = client.post("/api/print/start", json={})
     assert ok.status_code != 409
 
 
@@ -177,7 +177,7 @@ def test_start_refused_when_not_armed_or_invalid(client: TestClient) -> None:
 def test_run_to_done_with_auto_log_and_layers(client: TestClient) -> None:
     client.put("/api/print-settings", json=FAST)
     connect_arm(client)
-    r = client.post("/api/print/start", json={"dry_run": False})
+    r = client.post("/api/print/start", json={})
     assert r.status_code == 200 and r.json()["state"] == "running"
     assert client.get("/api/status").json()["recording"]["active"] is True  # auto-log opened
     done = wait_print(client, "done")
@@ -212,11 +212,12 @@ def test_pause_resume_abort(client: TestClient) -> None:
     assert client.get("/api/status").json()["controller"]["heater"]["commanded_on"] is False
 
 
-def test_dry_run_and_single_step(client: TestClient) -> None:
+def test_single_step(client: TestClient) -> None:
+    # Dry run removed (#3); single-step (debug) remains: start paused, advance one step at a time.
     client.put("/api/print-settings", json=FAST)
     connect_arm(client)
-    r = client.post("/api/print/start", json={"dry_run": True, "single_step": True})
-    assert r.status_code == 200 and r.json()["dry_run"] is True
+    r = client.post("/api/print/start", json={"single_step": True})
+    assert r.status_code == 200 and r.json()["single_step"] is True
     wait_print(client, "paused")
     assert client.post("/api/print/step").status_code == 200
     wait_print(client, "paused")
@@ -244,7 +245,7 @@ def test_steps_route_lists_compiled_steps(client: TestClient) -> None:
     assert client.get("/api/print/steps").json()["steps"] == []
     client.put("/api/print-settings", json=FAST)
     connect_arm(client)
-    assert client.post("/api/print/start", json={"dry_run": True}).status_code == 200
+    assert client.post("/api/print/start", json={}).status_code == 200
     r = client.get("/api/print/steps")
     assert r.status_code == 200
     steps = r.json()["steps"]
@@ -273,7 +274,7 @@ def test_auto_log_toggle(client: TestClient) -> None:
     assert client.put("/api/auto-log", json={"enabled": False}).json()["enabled"] is False
     client.put("/api/print-settings", json=FAST)
     connect_arm(client)
-    client.post("/api/print/start", json={"dry_run": True})
+    client.post("/api/print/start", json={})
     assert client.get("/api/status").json()["recording"]["active"] is False
 
 

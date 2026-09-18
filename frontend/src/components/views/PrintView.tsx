@@ -69,12 +69,12 @@ export function PrintView({ status, gates, call, base, onJob, onRuns }: { status
   const shownLayer = active && printLayer > 0 ? printLayer : (job ? 1 : 0);
 
   // Finish summary: shown when a print ends. Build-piston accuracy is pulled from the just-finished
-  // run's layer_accuracy.csv (newest recording); a dry run has no meaningful accuracy.
+  // run's layer_accuracy.csv (newest recording).
   const finished = r?.state === "done" || r?.state === "aborted" || r?.state === "fault";
   const [finishRows, setFinishRows] = useState<LayerAccuracy[] | null>(null);
   const [accuracyLoading, setAccuracyLoading] = useState(false);
   useEffect(() => {
-    if (!finished || r?.dry_run) { setFinishRows(null); setAccuracyLoading(false); return; }
+    if (!finished) { setFinishRows(null); setAccuracyLoading(false); return; }
     let live = true;
     setAccuracyLoading(true);
     (async () => {
@@ -90,9 +90,9 @@ export function PrintView({ status, gates, call, base, onJob, onRuns }: { status
       }
     })();
     return () => { live = false; };
-  }, [finished, r?.dry_run, r?.state]);
+  }, [finished, r?.state]);
   const pct = r && r.n_steps ? Math.round((100 * r.step_index) / r.n_steps) : 0;
-  const label = !status ? "OFFLINE" : isMacro && active ? r!.macro!.replace("_", " ").toUpperCase() : r?.state === "running" ? (r.dry_run ? "DRY RUN" : "PRINTING") : r?.state === "paused" ? "PAUSED" : (r?.state ?? "idle").toUpperCase();
+  const label = !status ? "OFFLINE" : isMacro && active ? r!.macro!.replace("_", " ").toUpperCase() : r?.state === "running" ? "PRINTING" : r?.state === "paused" ? "PAUSED" : (r?.state ?? "idle").toUpperCase();
   const stagePh = plan && r ? plan[r.phase as "thin_precoat" | "printing" | "postcoat"] : undefined;
   const stageOffset = plan && r ? (r.phase === "printing" ? plan.thin_precoat.n_layers : r.phase === "postcoat" ? plan.thin_precoat.n_layers + plan.printing.n_layers : 0) : 0;
   const stageStep = r ? Math.max(1, r.layer - stageOffset) : 0;
@@ -196,12 +196,12 @@ export function PrintView({ status, gates, call, base, onJob, onRuns }: { status
         const measuredRows = (finishRows ?? []).filter((x) => x.actual_cum_mm != null);
         const measuredFinal = measuredRows.length ? (measuredRows.at(-1)!.actual_cum_mm as number) : null;
         const dHeight = measuredFinal != null ? measuredFinal - r.part_height_mm : null;
-        const accCell = hasAcc ? `${acc!.meanAbsDevMm!.toFixed(3)} mm` : r.dry_run ? "n/a" : accuracyLoading ? "…" : "—";
+        const accCell = hasAcc ? `${acc!.meanAbsDevMm!.toFixed(3)} mm` : accuracyLoading ? "…" : "—";
         return (
           <div className={`card finish-card ${cls}`}>
             <div className="finish-head">
               <span className={`state-pill ${cls === "done" ? "run" : "fault"}`}>{label2}</span>
-              <span className="cmd-name">{job ? job.name : "manual print"}{r.dry_run ? " · dry run" : ""}</span>
+              <span className="cmd-name">{job ? job.name : "manual print"}</span>
               <span className="spacer" />
               <button className="cta sm" onClick={onRuns}>View in Runs →</button>
               <button className="cta sm primary" onClick={onJob}>{job ? "Print again" : "New print"}</button>
@@ -211,12 +211,12 @@ export function PrintView({ status, gates, call, base, onJob, onRuns }: { status
               <div className="fstat"><b>{layersDone}<small> / {r.n_layers}</small></b><span>layers</span></div>
               <div className="fstat"><b>{fmtSecs(r.elapsed_s)}</b><span>duration</span></div>
               <div className="fstat"><b>{fmtMm(r.part_height_mm, 2)}</b><span>commanded height</span></div>
-              <div className="fstat"><b>{measuredFinal != null ? fmtMm(measuredFinal, 2) : (r.dry_run ? "n/a" : "—")}</b><span>measured height</span></div>
+              <div className="fstat"><b>{measuredFinal != null ? fmtMm(measuredFinal, 2) : "—"}</b><span>measured height</span></div>
               <div className="fstat"><b>{dHeight != null ? `${dHeight >= 0 ? "+" : ""}${dHeight.toFixed(2)} mm` : "—"}</b><span>height Δ (meas − cmd)</span></div>
               <div className="fstat"><b>{accCell}</b><span>build-piston mean |dev|{hasAcc ? ` · n=${acc!.n}` : ""}</span></div>
               <div className="fstat"><b>{hasAcc ? `${acc!.maxAbsDevMm!.toFixed(3)} mm` : "—"}</b><span>max |dev|{hasAcc && acc!.maxLayer != null ? ` · layer ${acc!.maxLayer}` : ""}</span></div>
             </div>
-            {!hasAcc && !r.dry_run && !accuracyLoading ? <div className="hint" style={{ marginTop: 10 }}>Per-layer build-piston accuracy appears here from the recorded run (needs telemetry during the print).</div> : null}
+            {!hasAcc && !accuracyLoading ? <div className="hint" style={{ marginTop: 10 }}>Per-layer build-piston accuracy appears here from the recorded run (needs telemetry during the print).</div> : null}
           </div>
         );
       })()}

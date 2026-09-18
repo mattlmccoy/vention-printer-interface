@@ -20,16 +20,19 @@ export function PrintConfigurator({ status, gates, call, onStarted }: {
 }) {
   const [plan, setPlan] = useState<PrintSettings | null>(null);
   const [dirty, setDirty] = useState(false);
-  const [dry, setDry] = useState(true);
   const [single, setSingle] = useState(false);
   const [name, setName] = useState("");
   const [meteor, setMeteor] = useState<MeteorStatus | null>(null);
+  const [primed, setPrimed] = useState<boolean | null>(null); // null = unknown, else bed-primed?
   const job = status?.job ?? null;
   const running = gates.printActive;
 
   const refresh = () => {
     api.printSettings().then((r) => { setPlan(r.plan as unknown as PrintSettings); setDirty(false); }).catch(() => undefined);
     api.meteorStatus().then(setMeteor).catch(() => setMeteor(null));
+    // A print is refused (409) until the bed is primed; fetch it so we can guide to Priming rather
+    // than let START fail. The tab remounts this component, so a fresh capture is picked up on return.
+    api.primed().then((r) => setPrimed(r.primed !== null)).catch(() => setPrimed(null));
   };
   useEffect(() => { refresh(); }, [gates.reachable, job?.path]);
 
@@ -66,11 +69,9 @@ export function PrintConfigurator({ status, gates, call, onStarted }: {
   const start = async () => {
     if (!plan) return;
     if (dirty) await save();
-    if (!dry) {
-      const heat = plan.heater_enabled ? "HEATER ON — fires each printing layer" : "⚠ HEATER OFF — no in-situ heating";
-      if (!window.confirm(`Start ${job ? job.name : "the manual print"} on the machine?\n\n${heat}\n${layers} layers · ${total.toFixed(1)} mm · ~${fmtSecs(estimateDurationS(plan))}`)) return;
-    }
-    await call("start", () => api.printStart({ dry_run: dry, single_step: single, name: name || job?.name || "print" }).then(onStarted));
+    const heat = plan.heater_enabled ? "HEATER ON — fires each printing layer" : "⚠ HEATER OFF — no in-situ heating";
+    if (!window.confirm(`Start ${job ? job.name : "the manual print"} on the machine?\n\n${heat}\n${layers} layers · ${total.toFixed(1)} mm · ~${fmtSecs(estimateDurationS(plan))}`)) return;
+    await call("start", () => api.printStart({ single_step: single, name: name || job?.name || "print" }).then(onStarted));
   };
 
   return (
@@ -144,14 +145,19 @@ export function PrintConfigurator({ status, gates, call, onStarted }: {
               <>
                 <div className="est" style={{ gridTemplateColumns: "1fr 1fr" }}><div><div className="l">about</div><div className="v" style={{ fontSize: 26 }}>{fmtSecs(estimateDurationS(plan))}</div></div><div><div className="l">layers</div><div className="v" style={{ fontSize: 26 }}>{layers}</div></div></div>
                 <div className="chk" style={{ margin: "16px 0" }}>
-                  <label><input type="checkbox" checked={dry} onChange={(e) => setDry(e.target.checked)} /> dry run (motion only — no heat / no jet)</label>
-                  <label title="Fires the IR heater during the printing layers (after the precoats). Forced off in a dry run."><Toggle label="heater" danger checked={plan.heater_enabled && !dry} disabled={dry || running} onChange={(v) => edit({ heater_enabled: v })} />{dry ? <span className="hint">&nbsp;(off in dry run)</span> : null}</label>
-                  <label><input type="checkbox" checked={single} onChange={(e) => setSingle(e.target.checked)} /> single-step</label>
+                  <label title="Fires the IR heater during the printing layers (after the precoats)."><Toggle label="heater" danger checked={plan.heater_enabled} disabled={running} onChange={(v) => edit({ heater_enabled: v })} /></label>
+                  <label title="Start paused and advance ONE step at a time (debugging)."><input type="checkbox" checked={single} onChange={(e) => setSingle(e.target.checked)} /> single-step</label>
                   <label><input type="checkbox" checked={status?.auto_log ?? true} onChange={(e) => call("auto-log", () => api.setAutoLog(e.target.checked))} /> record</label>
                 </div>
                 <input type="text" placeholder={job?.name ?? "run name"} value={name} onChange={(e) => setName(e.target.value)} style={{ width: "100%" }} />
+                {primed === false && !running && (
+                  <div className="errline" style={{ display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap" }}>
+                    <span>⚠ bed not primed — prime it before printing</span>
+                    <button className="cta sm" onClick={() => { window.location.hash = "priming"; }}>Go to Priming →</button>
+                  </div>
+                )}
                 <div className="actions one tight">
-                  <button className={`cta ${dry ? "" : "primary"}`} disabled={!gates.controllable || reasons.length > 0 || running} onClick={start}>{dry ? "START DRY RUN" : "START PRINT"}</button>
+                  <button className="cta primary" disabled={!gates.controllable || reasons.length > 0 || running || primed === false} onClick={start}>START PRINT</button>
                   {dirty && <button className="cta" disabled={running} onClick={save}>SAVE CHANGES</button>}
                 </div>
                 {!gates.controllable && <div className="lock">{gates.connected ? "read-only · take control from the connection pill" : "connect a controller to start"}</div>}

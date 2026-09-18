@@ -12,7 +12,7 @@ function status(state: StatusPayload["controller"]["state"], armed: boolean, pri
       limits: { max_speed: {}, max_accel: {}, travel_min: {}, travel_max: {}, heater_max_on_s: 120, telemetry_timeout_s: 2, near_limit_mm: 5 },
       heater: { on: null, commanded_on: false, on_s: 0, max_on_s: 120 }, telemetry: null },
     axis_motion: {},
-    print: { state: print_settings as StatusPayload["print"]["state"], macro: null, part_zero_mm: null, part_height_measured_mm: null, step_index: 0, n_steps: 0, phase: "", layer: 0, n_layers: 0, part_height_mm: 0, elapsed_s: 0, dry_run: false, single_step: false, reason: "", current_step: null, plan: null },
+    print: { state: print_settings as StatusPayload["print"]["state"], macro: null, part_zero_mm: null, part_height_measured_mm: null, step_index: 0, n_steps: 0, phase: "", layer: 0, n_layers: 0, part_height_mm: 0, elapsed_s: 0, single_step: false, reason: "", current_step: null, plan: null },
     auto_log: true,
     recording: { active: false, run: null },
   };
