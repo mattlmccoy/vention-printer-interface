@@ -67,10 +67,21 @@ export function resolutionWH(key: string): { width: number; height: number } {
   return { width: 3840, height: 2160 };
 }
 
+/** The resolution to actually OPEN the live preview at. 20 MP (and anything above ~4K) can't stream
+ *  over USB — only shoot a still — so a preview request at that size fails and the camera never goes
+ *  live, hiding every capability slider (exposure!). Cap the preview at 4K; the snapshot resolution
+ *  (the dropdown / server setting) stays independent and can still be full-res. */
+export function streamableRes(key: string): string {
+  const { width, height } = resolutionWH(key);
+  if (width * height > 8_300_000) return "3840x2160"; // > 4K → fall back to a streamable 4K preview
+  return `${width}x${height}`;
+}
+
 /** getUserMedia video constraints for a device at these settings (ideal, so the browser negotiates
- *  down when the camera/hub can't do it). */
+ *  down when the camera/hub can't do it). The preview is capped to a streamable size so the camera
+ *  opens even when the chosen snapshot resolution is a still-only 20 MP. */
 export function videoConstraints(deviceId: string, s: OverviewSettings): MediaTrackConstraints {
-  const { width, height } = resolutionWH(s.resolution);
+  const { width, height } = resolutionWH(streamableRes(s.resolution));
   return {
     deviceId: { exact: deviceId },
     width: { ideal: width },

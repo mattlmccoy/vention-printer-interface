@@ -8,6 +8,7 @@ import {
   resolutionsFor,
   resolutionWH,
   RESOLUTIONS,
+  streamableRes,
   saveCameraSettings,
   saveOverviewSettings,
   videoConstraints,
@@ -24,6 +25,16 @@ function memStorage(): Storage {
     length: 0,
   } as unknown as Storage;
 }
+
+test("streamableRes caps the LIVE PREVIEW at 4K so the camera actually opens", () => {
+  // 20 MP can't stream (only shoot a still) — the preview must fall back to a streamable size so the
+  // camera goes live and its capability sliders (exposure!) appear. The snapshot stays full-res.
+  assert.equal(streamableRes("5120x3840"), "3840x2160");
+  // Anything already streamable passes through untouched.
+  assert.equal(streamableRes("3840x2160"), "3840x2160");
+  assert.equal(streamableRes("1920x1080"), "1920x1080");
+  assert.equal(streamableRes("1280x720"), "1280x720");
+});
 
 test("default overview settings are 4K @ 30", () => {
   assert.equal(DEFAULT_OVERVIEW_SETTINGS.resolution, "3840x2160");
@@ -68,6 +79,14 @@ test("videoConstraints builds an exact-device, ideal-res/fps request", () => {
     height: { ideal: 1080 },
     frameRate: { ideal: 24 },
   });
+});
+
+test("videoConstraints caps a 20 MP snapshot setting to a STREAMABLE 4K preview request", () => {
+  // Regression guard: opening the preview at 20 MP fails, hiding the exposure slider. The preview
+  // request must fall back to 4K even though the snapshot setting stays 5120×3840.
+  const c = videoConstraints("devA", { resolution: "5120x3840", frameRate: 7.5, manual: {} });
+  assert.deepEqual((c.width as { ideal: number }), { ideal: 3840 });
+  assert.deepEqual((c.height as { ideal: number }), { ideal: 2160 });
 });
 
 test("load returns defaults with no storage / empty storage, and merges a partial saved blob", () => {
