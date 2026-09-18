@@ -1,6 +1,28 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { calibrationReady, cameraAccessMessage, captureLayerFull, captureLayerShort, dismissQuickStart, formatCaptureMetaValue, formatValidation, overviewStreamUrl, panelVisible, parseCaptures, setPanelVisible, shouldShowQuickStart } from "./vision.ts";
+import { calibrationReady, cameraAccessMessage, captureLayerFull, captureLayerShort, dismissQuickStart, formatCaptureMetaValue, formatValidation, overviewStreamUrl, panelVisible, parseCaptures, setPanelVisible, shouldShowQuickStart, visibleCaptures, type Capture } from "./vision.ts";
+
+const _caps: Capture[] = [
+  { layer: 3, stage: "pre_jet", url: "/a" },
+  { layer: 3, stage: "post_jet", url: "/b" },
+  { layer: 3, stage: "post_heat", url: "/c" },
+  { layer: 4, stage: "post_jet", url: "/d" },
+];
+
+test("visibleCaptures keeps only selected stages and preserves original indices", () => {
+  const shown = visibleCaptures(_caps, ["post_jet"]);
+  assert.deepEqual(shown.map((s) => s.index), [1, 3]);
+  assert.deepEqual(shown.map((s) => s.cap.url), ["/b", "/d"]);
+});
+
+test("visibleCaptures with all stages returns every capture in order", () => {
+  const shown = visibleCaptures(_caps, ["pre_jet", "post_jet", "post_heat"]);
+  assert.deepEqual(shown.map((s) => s.index), [0, 1, 2, 3]);
+});
+
+test("visibleCaptures with no stages selected shows nothing", () => {
+  assert.deepEqual(visibleCaptures(_caps, []), []);
+});
 
 class Mem implements Storage {
   m = new Map<string, string>();

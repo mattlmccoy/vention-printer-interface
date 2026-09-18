@@ -2,7 +2,7 @@ import { useEffect, useRef, useState } from "react";
 import { api, type MeteorStatus } from "../../lib/api.ts";
 import { estimateDurationS } from "../../lib/estimate.ts";
 import { fmtSecs, type Gates } from "../../lib/format.ts";
-import { totalLayers, totalThickness, validate, type PrintSettings } from "../../lib/print_settings.ts";
+import { CAPTURE_STAGES, CAPTURE_STAGE_LABEL, toggleCaptureStage, totalLayers, totalThickness, validate, type PrintSettings } from "../../lib/print_settings.ts";
 import type { StatusPayload } from "../../lib/telemetry.ts";
 import { NumberField } from "../NumberField.tsx";
 import { Toggle } from "../Toggle.tsx";
@@ -99,6 +99,22 @@ export function PrintConfigurator({ status, gates, call, onStarted }: {
                 {!job && <><span>print layers</span><input type="number" value={plan.printing.n_layers} disabled={running} onChange={(e) => editPh("printing", { n_layers: num(e.target.value, plan.printing.n_layers) })} /></>}
                 <span>heater</span><label className="row"><Toggle checked={plan.heater_enabled} disabled={running} onChange={(v) => edit({ heater_enabled: v })} /> <span className="hint">fire the IR heater each printing layer,</span> <input type="number" value={plan.n_heater_passes} disabled={running || !plan.heater_enabled} onChange={(e) => edit({ n_heater_passes: num(e.target.value, plan.n_heater_passes) })} style={{ width: 56 }} /> pass(es)</label>
                 <span title="Emit layerwise vision capture marks (pre-jet / post-jet / post-heat) for the camera on the recoater gantry.">layer captures</span><label className="row"><Toggle checked={plan.capture_stages} disabled={running} onChange={(v) => edit({ capture_stages: v })} /> <span className="hint">record the science camera at each layer stage</span></label>
+                {plan.capture_stages && (<>
+                  <span title="Choose which of the three per-layer stages to photograph. Fewer stages = less disk. At least one must stay on.">capture stages</span>
+                  <span className="row" style={{ gap: 10, flexWrap: "wrap" }}>
+                    {CAPTURE_STAGES.map((s) => {
+                      const on = plan.capture_stages_enabled.includes(s);
+                      const soleOn = on && plan.capture_stages_enabled.length === 1; // keep ≥1 selected
+                      return (
+                        <label key={s} className="row" style={{ gap: 4 }} title={soleOn ? "at least one stage must stay selected" : undefined}>
+                          <input type="checkbox" checked={on} disabled={running || soleOn}
+                            onChange={() => edit({ capture_stages_enabled: toggleCaptureStage(plan.capture_stages_enabled, s) })} />
+                          {CAPTURE_STAGE_LABEL[s]}
+                        </label>
+                      );
+                    })}
+                  </span>
+                </>)}
               </div>
               {reasons.length > 0 ? <div className="errline">{reasons.join(" · ")}</div> : <div className="okline">printable</div>}
             </>
