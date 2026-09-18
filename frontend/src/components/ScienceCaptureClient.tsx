@@ -6,25 +6,34 @@ import { loadCameraSettings, videoConstraints } from "../lib/overview_settings.t
 
 const storage = typeof localStorage === "undefined" ? null : localStorage;
 
-/** Grab one still from the science stream: full-resolution via ImageCapture.takePhoto when the
- *  browser/camera support it (up to ~20 MP), else a lossless PNG of the current ≤4K video frame. */
+/** Grab one LOSSLESS still from the science stream for layerwise CAD analysis. The frame is
+ *  captured at the science camera's streamed resolution (set it to the camera's max — up to 20 MP —
+ *  in Setup) and encoded as PNG, which is pixel-exact; the operator then stores it as lossless WebP.
+ *  We deliberately do NOT use ImageCapture.takePhoto: it returns the camera's own JPEG (lossy), which
+ *  corrupts sub-pixel edge detection against CAD. ImageCapture.grabFrame (when available) returns the
+ *  current frame as a full-resolution ImageBitmap losslessly; else we draw the <video> element. Both
+ *  paths are lossless — the only variable is the streamed resolution. */
 async function grabScienceStill(stream: MediaStream | null, video: HTMLVideoElement | null): Promise<Blob | null> {
+  const toPng = (source: CanvasImageSource, w: number, h: number): Promise<Blob | null> => {
+    const canvas = document.createElement("canvas");
+    canvas.width = w; canvas.height = h;
+    const ctx = canvas.getContext("2d");
+    if (!ctx) return Promise.resolve(null);
+    ctx.drawImage(source, 0, 0, w, h);
+    return new Promise((resolve) => canvas.toBlob((b) => resolve(b), "image/png")); // lossless
+  };
   const track = stream?.getVideoTracks?.()[0] ?? null;
-  const IC = (window as unknown as { ImageCapture?: new (t: MediaStreamTrack) => { takePhoto: () => Promise<Blob> } }).ImageCapture;
+  const IC = (window as unknown as { ImageCapture?: new (t: MediaStreamTrack) => { grabFrame: () => Promise<ImageBitmap> } }).ImageCapture;
   if (track && IC) {
     try {
-      const photo = await new IC(track).takePhoto();
-      if (photo && photo.size > 0) return photo; // camera's full-res still (usually JPEG)
-    } catch { /* fall through to the live-frame grab */ }
+      const bmp = await new IC(track).grabFrame(); // full-res current frame, lossless
+      const blob = await toPng(bmp, bmp.width, bmp.height);
+      bmp.close();
+      if (blob) return blob;
+    } catch { /* fall through to drawing the video element */ }
   }
   if (!video || video.videoWidth === 0) return null;
-  const canvas = document.createElement("canvas");
-  canvas.width = video.videoWidth;
-  canvas.height = video.videoHeight;
-  const ctx = canvas.getContext("2d");
-  if (!ctx) return null;
-  ctx.drawImage(video, 0, 0);
-  return await new Promise((resolve) => canvas.toBlob((b) => resolve(b), "image/png"));
+  return await toPng(video, video.videoWidth, video.videoHeight);
 }
 
 /** Headless client-side SCIENCE capture (the wrong-camera fix). During a recorded print it holds the
@@ -76,12 +85,9 @@ export function ScienceCaptureClient({ status }: { status: StatusPayload | null 
     return () => window.clearInterval(id);
   }, [active, status?.capture_request?.seq]);
 
-  // On each new "capture now" signal, grab a still and upload it (server re-encodes to lossless
-  // WebP). Prefers ImageCapture.takePhoto for the camera's FULL sensor resolution (up to ~20 MP on
-  // the science ELP) — capture marks fire at gantry-parked dwell points, so the photo latency is
-  // fine. Falls back to an instant, pixel-lossless grab of the live frame (≤4K) where takePhoto
-  // isn't supported. NOTE: takePhoto returns the camera's own (typically JPEG) encoding, so the
-  // full-res path trades pixel-exactness for resolution; the fallback stays lossless. Dedup on seq.
+  // On each new "capture now" signal, grab a LOSSLESS still and upload it (server re-encodes to
+  // lossless WebP → pixel-exact end to end, for CAD comparison). Resolution = the science camera's
+  // streamed resolution (set it to the max, up to 20 MP, in Setup). Dedup on seq.
   useEffect(() => {
     const cr = status?.capture_request;
     if (!active || !cr || cr.seq <= lastSeq.current) return;

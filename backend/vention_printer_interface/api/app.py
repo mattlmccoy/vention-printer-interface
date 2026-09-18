@@ -1421,6 +1421,28 @@ def create_app(
         app.state.job = None
         return {"job": None}
 
+    @app.post("/api/jobs/archive")
+    def archive_job_route(body: dict[str, Any]) -> dict[str, Any]:
+        """Move a completed job's folder into the hot folder's ``_archive/`` from the Jobs page.
+        Refuses the job currently printing. The job stays listed (flagged ``archived``), out of the
+        active print path."""
+        folder = body.get("folder")
+        if not isinstance(folder, str) or not folder:
+            raise HTTPException(400, "folder required")
+        if printer().state in (PrintState.RUNNING, PrintState.PAUSED):
+            cur = app.state.job
+            if cur is not None and cur.dir.name == folder:
+                raise HTTPException(409, "cannot archive the job that is currently printing")
+        try:
+            dest = jobs.archive_job(folder)
+        except FileNotFoundError as exc:
+            raise HTTPException(404, str(exc)) from exc
+        except ValueError as exc:
+            raise HTTPException(400, str(exc)) from exc
+        if app.state.job is not None and app.state.job.dir.name == folder:
+            app.state.job = None  # the selected job just moved; clear the stale selection
+        return {"folder": folder, "archived_to": str(dest)}
+
     @app.get("/api/jobs/current/layers/{layer}.png")
     def job_layer_png(layer: int) -> Response:
         job: JobInfo | None = app.state.job

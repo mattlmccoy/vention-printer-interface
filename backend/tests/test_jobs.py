@@ -260,3 +260,46 @@ def test_load_job_multipass_ignores_junk(tmp_path: Path) -> None:
 
 def test_load_job_multipass_in_to_dict(tmp_path: Path) -> None:
     assert load_job(_mk_single_layer(tmp_path, {"multipass": 4})).to_dict()["slicer_multipass"] == 4
+
+
+def test_jobinfo_archived_flag(tmp_path: Path) -> None:
+    active = load_job(make_job(tmp_path, name="active_job"))
+    assert active.archived is False and active.to_dict()["archived"] is False
+    # A job under _archive/ reads as archived.
+    arch = load_job(make_job(tmp_path / "_archive", name="old_job"))
+    assert arch.archived is True and arch.to_dict()["archived"] is True
+
+
+def test_archive_job_moves_a_top_level_job_into_archive(tmp_path: Path) -> None:
+    make_job(tmp_path, name="done_job")
+    store = JobStore([tmp_path])
+    assert [j.name for j in store.scan()]  # listed while active
+    dest = store.archive_job("done_job")
+    assert dest == tmp_path / "_archive" / "done_job"
+    assert dest.is_dir() and not (tmp_path / "done_job").exists()
+    # still listed, now flagged archived
+    j = next(j for j in store.scan() if j.dir.name == "done_job")
+    assert j.archived is True
+
+
+def test_archive_job_rejects_bad_missing_and_already_archived(tmp_path: Path) -> None:
+    store = JobStore([tmp_path])
+    for bad in ("", "..", "a/b", "a\\b"):
+        try:
+            store.archive_job(bad)
+            raise AssertionError(f"expected ValueError for {bad!r}")
+        except ValueError:
+            pass
+    try:
+        store.archive_job("nope")
+        raise AssertionError("expected FileNotFoundError")
+    except FileNotFoundError:
+        pass
+    make_job(tmp_path, name="dup")
+    store.archive_job("dup")
+    make_job(tmp_path, name="dup")  # a new active job with the same name
+    try:
+        store.archive_job("dup")  # destination already exists in _archive
+        raise AssertionError("expected ValueError for already-archived")
+    except ValueError:
+        pass

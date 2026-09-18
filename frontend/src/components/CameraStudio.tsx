@@ -49,21 +49,20 @@ function CameraPane({ role, deviceId, run }: { role: CameraRole; deviceId: strin
     };
   }, [deviceId, role]);
 
-  // Full-resolution still: prefer ImageCapture.takePhoto (the camera's FULL sensor size — up to
-  // ~20 MP on the science ELP), independent of the ≤4K preview stream. Falls back to grabbing the
-  // live video frame where ImageCapture/takePhoto isn't supported. Either source is drawn to a
-  // canvas so the date/time/metadata overlay is burned into the exported PNG.
+  // LOSSLESS still at the streamed resolution (set the camera to its max — up to 20 MP — in Setup).
+  // Uses ImageCapture.grabFrame (full-res current frame, lossless) when available, else the live
+  // <video> frame; NOT takePhoto, whose JPEG encoding is lossy and unfit for CAD-grade analysis.
+  // The source is drawn to a canvas so the date/time/metadata overlay is burned into the PNG.
   const snapshot = async () => {
     const now = new Date();
     let source: CanvasImageSource | null = null;
     let w = 0, h = 0;
     let bmp: ImageBitmap | null = null;
     const track = streamRef.current?.getVideoTracks?.()[0] ?? null;
-    const IC = (window as unknown as { ImageCapture?: new (t: MediaStreamTrack) => { takePhoto: () => Promise<Blob> } }).ImageCapture;
+    const IC = (window as unknown as { ImageCapture?: new (t: MediaStreamTrack) => { grabFrame: () => Promise<ImageBitmap> } }).ImageCapture;
     if (track && IC) {
       try {
-        const blob = await new IC(track).takePhoto();
-        bmp = await createImageBitmap(blob);
+        bmp = await new IC(track).grabFrame();
         source = bmp; w = bmp.width; h = bmp.height;
       } catch { source = null; }
     }
@@ -116,7 +115,7 @@ function CameraPane({ role, deviceId, run }: { role: CameraRole; deviceId: strin
           : <video ref={videoRef} autoPlay playsInline muted style={{ width: "100%", height: "100%", objectFit: "contain" }} />}
       </div>
       <div className="row" style={{ gap: 8 }}>
-        <button className="cta sm" disabled={!!error} title="Full-resolution still (uses the camera's full sensor, up to 20 MP, where supported) with date/time + metadata burned in." onClick={snapshot}>snapshot</button>
+        <button className="cta sm" disabled={!!error} title="Lossless PNG still at the streamed resolution (set the camera to its max, up to 20 MP, in Setup) with date/time + metadata burned in." onClick={snapshot}>snapshot</button>
         <button className={`cta sm${recording ? " danger" : ""}`} disabled={!!error} onClick={toggleRecord}>{recording ? "stop recording" : "record"}</button>
       </div>
     </div>
