@@ -33,7 +33,12 @@ async function req<T>(method: string, path: string, body?: unknown): Promise<T> 
   return data as T;
 }
 
-export interface Health { version: string; api_version: string; backend: string; platform: string }
+export interface PathsInfo {
+  jobs_root: string; jobs_root_source: string; jobs_root_is_fallback: boolean;
+  experiments_root: string; experiments_root_source: string; experiments_root_is_fallback: boolean;
+  config_path: string;
+}
+export interface Health { version: string; api_version: string; backend: string; platform: string; paths?: PathsInfo | null }
 export interface Discovery { candidates: Array<{ backend: string; ip: string | null; label?: string; reachable: boolean }>; connected: { backend: string } }
 export interface MeteorStatus { backend: string; available: boolean; ready: boolean; job_name: string | null; layers_ready: number; layers_expected: number; detail: string }
 export interface PrintSettingsPayload { plan: Record<string, unknown>; validation: string[]; n_steps: number; estimated_duration_s: number; min_wait_s: number; total_layers: number; total_thickness_mm: number; bounds: Record<string, unknown>; limits: Record<string, unknown>; exposure: { energy_j: number; time_s: number; sweep_speed_mm_s: number } }
@@ -224,6 +229,9 @@ export const api = {
     `${base}/api/recordings/${encodeURIComponent(run)}/timelapse.gif?fps=${fps}${stage ? `&stage=${encodeURIComponent(stage)}` : ""}`,
   // AVFoundation cameras with stable unique ids + the science-camera binding for the unattended
   // (no-tab-open) server capture path (#/Phase 2). Empty `cameras` on non-macOS.
+  // Data locations (jobs + runs) — persisted install-independently so a reinstall can't lose them.
+  getConfigPaths: () => req<PathsInfo | Record<string, never>>("GET", "/api/config/paths"),
+  setConfigPaths: (body: { jobs_root?: string | null; experiments_root?: string | null }) => req<PathsInfo & { restart_required: boolean }>("PUT", "/api/config/paths", body),
   avfCameras: () => req<{ cameras: Array<{ index: number; name: string; unique_id: string }>; science_uid: string | null }>("GET", "/api/vision/avf-cameras"),
   setScienceUid: (unique_id: string | null) => req<{ unique_id: string | null }>("PUT", "/api/vision/science-uid", { unique_id }),
   macro: (name: string) => req<StatusPayload["print"]>("POST", `/api/macro/${name}`),

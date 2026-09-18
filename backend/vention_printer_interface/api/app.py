@@ -75,6 +75,16 @@ from vention_printer_interface.jobs.store import (
     load_job,
     preview_png,
 )
+from vention_printer_interface.paths_config import (
+    APP_DIR_NAME,
+    PathsConfig,
+    ResolvedRoot,
+    config_path,
+    load_persistent_paths,
+    resolve_experiments_root,
+    resolve_jobs_root,
+    save_persistent_paths,
+)
 from vention_printer_interface.protocol import routes as r
 from vention_printer_interface.recording.recorder import Recorder
 from vention_printer_interface.vision.avfoundation import list_avf_cameras
@@ -551,21 +561,39 @@ def choose_jobs_root(
     )
 
 
-def default_jobs_root() -> Path:
-    """The sliced-jobs folder to use when no ``--jobs-root`` is given.
+def resolve_default_jobs_root() -> ResolvedRoot:
+    """Resolve the sliced-jobs folder when no ``--jobs-root`` is given, reporting its source.
 
-    Wraps :func:`choose_jobs_root` with the real env var, the script-relative shared Dropbox Hot
-    Folder (binderjet/code/rfam-web/Hot Folder — what Meteor RIP writes to and the Mac service
-    points at), and a backend/jobs fallback. Logs the warning when it can't find a real folder.
+    Priority: ``VPI_JOBS_ROOT`` env -> the PERSISTENT config (``~/.config/.../paths.json`` — the
+    install-independent durable fix, survives reinstalls to a new clone) -> the script-relative
+    shared Dropbox Hot Folder when it exists here -> a backend/jobs fallback that is FLAGGED loudly
+    (``is_fallback``) and logged, never silently trusted (that fallback is the recurring
+    wrong-directory bug — an empty local folder after a reinstall).
     """
     shared = Path(__file__).resolve().parents[5] / "code" / "rfam-web" / "Hot Folder"
     fallback = Path(__file__).resolve().parents[2] / "jobs"  # backend/jobs
-    path, warning = choose_jobs_root(
-        os.environ.get("VPI_JOBS_ROOT"), shared, shared.is_dir(), fallback
+    resolved = resolve_jobs_root(
+        cli=None,
+        env=os.environ.get("VPI_JOBS_ROOT"),
+        config=load_persistent_paths().jobs_root,
+        shared=shared,
+        shared_exists=shared.is_dir(),
+        fallback=fallback,
     )
-    if warning:
-        log.warning(warning)
-    return path
+    if resolved.is_fallback:
+        log.warning(
+            "No sliced-jobs folder configured: falling back to %s (an install-local folder that is "
+            "empty after a reinstall). Set it in the UI (Setup -> data locations), pass "
+            "--jobs-root, "
+            "set VPI_JOBS_ROOT, or write ~/.config/%s/paths.json.",
+            fallback, APP_DIR_NAME,
+        )
+    return resolved
+
+
+def default_jobs_root() -> Path:
+    """The sliced-jobs folder when no ``--jobs-root`` is given (see resolve_default_jobs_root)."""
+    return resolve_default_jobs_root().path
 
 
 def create_app(
@@ -589,8 +617,22 @@ def create_app(
     overview_source: FrameSource | None = None,
     device_enumerator: Callable[[], list[dict[str, Any]]] | None = None,
 ) -> FastAPI:
-    root = experiments_root or Path.cwd() / "experiments"
-    jobs = JobStore(jobs_roots or [default_jobs_root()])
+    # Experiments (runs) root: explicit arg -> VPI_EXPERIMENTS_ROOT env -> persistent config ->
+    # CWD/experiments (install-local fallback, flagged loudly). Mirrors the jobs-root logic so a
+    # reinstall to a new clone can't silently point runs at an empty local folder.
+    _exp = resolve_experiments_root(
+        cli=experiments_root,
+        env=os.environ.get("VPI_EXPERIMENTS_ROOT"),
+        config=load_persistent_paths().experiments_root,
+        default=Path.cwd() / "experiments",
+    )
+    root = _exp.path
+    _jobs_resolved = (
+        ResolvedRoot(jobs_roots[0], "cli", False)
+        if jobs_roots
+        else resolve_default_jobs_root()
+    )
+    jobs = JobStore(jobs_roots or [_jobs_resolved.path])
     vision_calibration_path = root / ".vision_calibration.json"
     vision_roles_path = root / ".vision_roles.json"
     vision_settings_path = root / ".vision_settings.json"
@@ -835,6 +877,18 @@ def create_app(
         app.state.priming = load_priming(root, controller.limits)
         app.state.primed = load_primed(root)
         app.state.experiments_root = root
+        app.state.jobs = jobs  # the live JobStore, so /api/config/paths can re-point it
+        # Surface how jobs/runs roots were resolved so the UI can shout when either fell back to an
+        # empty install-local folder (the recurring wrong-directory bug), not fail silently.
+        app.state.paths_info = {
+            "jobs_root": str(_jobs_resolved.path),
+            "jobs_root_source": _jobs_resolved.source,
+            "jobs_root_is_fallback": _jobs_resolved.is_fallback,
+            "experiments_root": str(root),
+            "experiments_root_source": _exp.source,
+            "experiments_root_is_fallback": _exp.is_fallback,
+            "config_path": str(config_path()),
+        }
         app.state.reference_restored = False
         app.state.job = None
         # Guided calibration-capture session (A6b): the active board + accumulated detections.
@@ -981,7 +1035,43 @@ def create_app(
             "api_version": API_VERSION,
             "backend": app.state.backend,
             "platform": platform.platform(),
+            # Where jobs + runs are resolved from, and whether either fell back to an empty
+            # install-local folder — the UI shows a loud banner when a fallback is in effect.
+            "paths": getattr(app.state, "paths_info", None),
         }
+
+    @app.get("/api/config/paths")
+    def get_config_paths() -> dict[str, Any]:
+        return getattr(app.state, "paths_info", None) or {}
+
+    @app.put("/api/config/paths")
+    def put_config_paths(body: dict[str, Any]) -> dict[str, Any]:
+        """Persist the jobs/experiments roots to the install-independent config
+        (~/.config/.../paths.json) so they survive reinstalls. Jobs re-point live; the experiments
+        (runs) root needs an operator restart to take effect (reported in ``restart_required``)."""
+        jr = body.get("jobs_root")
+        er = body.get("experiments_root")
+        for label, val in (("jobs_root", jr), ("experiments_root", er)):
+            if val is not None and (not isinstance(val, str) or not val.strip()):
+                raise HTTPException(400, f"{label} must be a non-empty string or null")
+            if isinstance(val, str) and val.strip() and not Path(val).is_dir():
+                raise HTTPException(400, f"{label} does not exist or is not a directory: {val}")
+        cfg = PathsConfig(
+            jobs_root=Path(jr) if isinstance(jr, str) and jr.strip() else None,
+            experiments_root=Path(er) if isinstance(er, str) and er.strip() else None,
+        )
+        save_persistent_paths(cfg)
+        restart_required = False
+        if cfg.jobs_root is not None:  # re-point the live JobStore so jobs appear without a restart
+            jobs.roots = [cfg.jobs_root]
+            info = getattr(app.state, "paths_info", {}) or {}
+            info.update({"jobs_root": str(cfg.jobs_root), "jobs_root_source": "config",
+                         "jobs_root_is_fallback": False})
+            app.state.paths_info = info
+        if cfg.experiments_root is not None and cfg.experiments_root != app.state.experiments_root:
+            restart_required = True
+        info = getattr(app.state, "paths_info", {}) or {}
+        return {**info, "restart_required": restart_required}
 
     @app.get("/api/status")
     def status() -> dict[str, Any]:
