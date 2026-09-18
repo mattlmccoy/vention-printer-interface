@@ -22,12 +22,25 @@ def test_write_capture_lays_out_files(tmp_path):
     meta = {"run_id": "r1", "job": {"id": "j1"}}
     paths = write_capture(tmp_path, layer=3, stage="post_jet", raw=raw, registered=reg, meta=meta)
 
+    # Stills are stored as LOSSLESS WebP (much smaller than PNG, pixel-exact for metrology).
     d = capture_dir(tmp_path, 3)
-    assert (d / "post_jet.png").exists()
-    assert (d / "post_jet.raw.png").exists()
-    assert paths["registered"].endswith("post_jet.png")
-    assert paths["raw"].endswith("post_jet.raw.png")
+    assert (d / "post_jet.webp").exists()
+    assert (d / "post_jet.raw.webp").exists()
+    assert paths["registered"].endswith("post_jet.webp")
+    assert paths["raw"].endswith("post_jet.raw.webp")
     assert paths["sidecar"].endswith("post_jet.json")
+
+
+def test_write_capture_is_lossless(tmp_path):
+    import cv2
+
+    # A non-trivial image (gradient + noise) so a lossy codec would change pixels.
+    rng = np.random.default_rng(0)
+    reg = rng.integers(0, 256, size=(64, 96, 3), dtype=np.uint8)
+    write_capture(tmp_path, layer=2, stage="post_jet", raw=reg, registered=reg, meta={})
+    back = cv2.imread(str(capture_dir(tmp_path, 2) / "post_jet.webp"))
+    assert back is not None, "WebP was not written/decoded — is OpenCV built with WebP?"
+    assert np.array_equal(back, reg), "WebP capture must be bit-exact (lossless)"
 
 
 def test_write_capture_sidecar_matches_data_model_shape(tmp_path):
@@ -74,9 +87,9 @@ def test_write_capture_sidecar_matches_data_model_shape(tmp_path):
     assert sidecar["controls"]["exposure"] is None
     assert sidecar["lens_notes"].startswith("5-50mm")
     assert sidecar["calibration"] is None
-    assert sidecar["images"] == {"raw": "post_jet.raw.png", "registered": "post_jet.png"}
+    assert sidecar["images"] == {"raw": "post_jet.raw.webp", "registered": "post_jet.webp"}
     assert sidecar["registered_space"] is None  # not provided in meta
-    expected_checksum = hashlib.sha256((d / "post_jet.png").read_bytes()).hexdigest()
+    expected_checksum = hashlib.sha256((d / "post_jet.webp").read_bytes()).hexdigest()
     assert sidecar["checksum_sha256"] == expected_checksum
 
 
