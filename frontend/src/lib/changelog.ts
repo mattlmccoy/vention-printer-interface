@@ -11,6 +11,20 @@ export interface Release {
 
 export const CHANGELOG: Release[] = [
   {
+    version: "0.10.0",
+    date: "2026-09-18",
+    changes: [
+      "Controls page: axes laid out as a 2×2 board — printhead / recoater on top, feed / build piston below.",
+      "Camera Studio enlarged to show both feeds much larger; its snapshot is now a lossless frame grab.",
+      "Camera Settings restored: per-camera pixel format (YUY2 = uncompressed/lossless, or MJPG), resolution, fps, and exposure, with the camera model shown.",
+      "Science stills captured losslessly for layerwise CAD comparison; a unique-id-bound server capture path keeps the correct camera shooting.",
+      "Timelapse from the overview (streaming) camera, in addition to the science camera.",
+      "Archive a completed print from the Jobs page; a note explains the RIP's automatic _archive copy.",
+      "Jobs and Runs resolve to the real hot-folder data durably across reinstalls; a loud banner warns when a fallback path is in use.",
+      "Print-parameter explainers now pop up instantly as a styled tooltip (no slow native hover bubble).",
+    ],
+  },
+  {
     version: "0.9.0",
     date: "2026-09-17",
     changes: [
