@@ -128,12 +128,12 @@ export function PrintConfigurator({ status, gates, call, onStarted }: {
             <div className="card">
               <h3>job → motion</h3>
               <div className="job-map" style={{ marginTop: 0 }}>
-                <span>layers</span><span className={mismatch ? "warnv" : ""}>{job.layer_count}{mismatch ? " ≠ print" : ""}</span>
-                <span>slicer layer height</span><span>{job.layer_height_mm} mm</span>
-                <span>part height</span><span>{job.height_mm} mm</span>
-                <span>footprint</span><span>{job.bbox_mm.x} × {job.bbox_mm.y} mm</span>
-                <span>print_settings</span><span className={mismatch ? "warnv" : ""}>{plan.printing.n_layers} × {plan.printing.layer_thickness_mm} mm{mismatch ? " ≠ job" : ""}</span>
-                <span>MetPrint firing</span>{meteor
+                <span title="Number of printed layers in the selected slicer job. Flagged if it doesn't match the print's layer count.">layers</span><span className={mismatch ? "warnv" : ""}>{job.layer_count}{mismatch ? " ≠ print" : ""}</span>
+                <span title="Per-layer thickness the slicer used (informational — the print uses the layer height you set above).">slicer layer height</span><span>{job.layer_height_mm} mm</span>
+                <span title="Total part height from the slicer (layers × slicer layer height).">part height</span><span>{job.height_mm} mm</span>
+                <span title="Part bounding-box footprint on the bed (X × Y, mm).">footprint</span><span>{job.bbox_mm.x} × {job.bbox_mm.y} mm</span>
+                <span title="What THIS print is set to run: printing layers × layer height. Flagged if it differs from the job.">print_settings</span><span className={mismatch ? "warnv" : ""}>{plan.printing.n_layers} × {plan.printing.layer_thickness_mm} mm{mismatch ? " ≠ job" : ""}</span>
+                <span title="Whether MetPrint (the printhead RIP) has this job's layers staged in the hot folder and is ready to fire.">MetPrint firing</span>{meteor
                   ? <span className={meteor.ready ? "okv" : "warnv"} title={meteor.detail}>{meteor.ready
                       ? `ready · ${meteor.layers_expected} layers in the hot folder`
                       : `not ready · ${meteor.detail}`}</span>
