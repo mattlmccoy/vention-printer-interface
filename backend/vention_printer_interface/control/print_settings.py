@@ -23,6 +23,17 @@ PHASES = ("thin_precoat", "printing", "postcoat")
 MAX_LAYERS = 500
 MAX_HEATER_PASSES = 10
 PURGE_MODES = ("every_pass", "per_layer", "every_n_layers")
+# The three per-layer capture stages, in the order compile_print emits them. capture_stages_enabled
+# is a subset of these (#2 per-stage selection); canonical order is always preserved on output.
+CAPTURE_STAGE_ORDER = ("pre_jet", "post_jet", "post_heat")
+
+
+def canonical_capture_stages(value: Any) -> tuple[str, ...]:
+    """Filter untrusted input to the valid capture stages, deduped, in canonical order."""
+    if not isinstance(value, list | tuple):
+        return CAPTURE_STAGE_ORDER
+    picked = {v for v in value if v in CAPTURE_STAGE_ORDER}
+    return tuple(s for s in CAPTURE_STAGE_ORDER if s in picked)
 
 
 def _clamp(v: float, lo: float, hi: float) -> float:
@@ -170,6 +181,10 @@ class PrintSettings:
     # off of. Purely additive: NO motion is added in either state (the camera rides the recoater
     # gantry, so no printhead park is needed). OFF by default — no cameras are installed yet.
     capture_stages: bool = False
+    # Which of the three stage marks compile_print emits when capture_stages is on (#2 per-stage
+    # selection). Default = all three (so enabling captures behaves exactly as before). An operator
+    # can trim this to capture just 1 or 2 stages and save disk. Canonical stage order is preserved.
+    capture_stages_enabled: tuple[str, ...] = CAPTURE_STAGE_ORDER
     # Overhead science camera rides the recoater gantry. When >0 (and capture_stages on), the
     # per-layer capture drives the recoater to this ABSOLUTE pose (centred over the bed), dwells
     # capture_settle_s to let vibration settle, then shoots — imaging the freshly printed layer at
@@ -238,6 +253,8 @@ class PrintSettings:
     def from_dict(cls, data: dict[str, Any]) -> PrintSettings:
         d = dict(data)
         base = cls()
+        if "capture_stages_enabled" in d:  # asdict() emits a list; keep the field a tuple
+            d["capture_stages_enabled"] = tuple(d["capture_stages_enabled"])
         thin = PhasePlan(**d.pop("thin_precoat")) if "thin_precoat" in d else base.thin_precoat
         printing = PhasePlan(**d.pop("printing")) if "printing" in d else base.printing
         postcoat = PhasePlan(**d.pop("postcoat")) if "postcoat" in d else base.postcoat
@@ -338,6 +355,11 @@ class PrintSettings:
                 num("heater_section_power_w", base.heater_section_power_w), 1e-6, 1e5
             ),
             capture_stages=bool(d.get("capture_stages", base.capture_stages)),
+            capture_stages_enabled=(
+                canonical_capture_stages(d["capture_stages_enabled"])
+                if "capture_stages_enabled" in d
+                else base.capture_stages_enabled
+            ),
             capture_recoater_mm=_clamp(
                 num("capture_recoater_mm", base.capture_recoater_mm), 0.0, base.recoater_end_mm
             ),
@@ -494,7 +516,8 @@ def compile_print(plan: PrintSettings) -> tuple[Step, ...]:
 
             # ---- printing ----
             print_layer += 1
-            if plan.capture_stages:
+            cap_stages = plan.capture_stages_enabled if plan.capture_stages else ()
+            if "pre_jet" in cap_stages:
                 # Capture mark only — NO printhead motion. The camera rides the recoater gantry, so
                 # the printhead stays home; the freshly-coated layer is imaged where it lies.
                 add(name, layer_no, "mark", label="capture:pre_jet", print_layer=print_layer)
@@ -535,7 +558,7 @@ def compile_print(plan: PrintSettings) -> tuple[Step, ...]:
                 back = plan.printhead_home_mm if last else plan.printhead_multipass_return_mm
                 add(name, layer_no, "move_abs", PRINTHEAD, back)
                 add(name, layer_no, "wait")
-            if plan.capture_stages:
+            if "post_jet" in cap_stages:
                 if plan.capture_recoater_mm > 0:
                     # Overhead science cam rides the recoater: drive it to the capture pose (centred
                     # over the bed), let it settle, then shoot the freshly printed layer — it sits
@@ -570,7 +593,7 @@ def compile_print(plan: PrintSettings) -> tuple[Step, ...]:
             # layer's START -- AFTER that layer's anti-backlash feed preload. Parking it at 950 here
             # made the next layer's preload land too late (recoater already at 950); the feed must
             # drop BEFORE the recoater moves out. (Precoat layers return to 350 above.)
-            if plan.capture_stages:
+            if "post_heat" in cap_stages:
                 add(name, layer_no, "mark", label="capture:post_heat", print_layer=print_layer)
             add(name, layer_no, "mark", label="layer_end")
         if exhausted:

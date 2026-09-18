@@ -61,8 +61,24 @@ export interface PrintSettings {
   feed_fast_speed: number;
   feed_fast_accel: number;
   capture_stages: boolean; // emit layerwise vision capture marks (OFF by default; no cameras yet)
+  capture_stages_enabled: string[]; // which stages to capture when capture_stages is on (subset of CAPTURE_STAGES)
   capture_recoater_mm: number; // overhead science cam: recoater pose to centre it over the bed (0 = fixed cam)
   capture_settle_s: number; // dwell after moving to the capture pose before the shot
+}
+
+/** The three per-layer capture stages, in the canonical order the backend emits them. */
+export const CAPTURE_STAGES = ["pre_jet", "post_jet", "post_heat"] as const;
+export const CAPTURE_STAGE_LABEL: Record<string, string> = {
+  pre_jet: "pre-jet", post_jet: "post-jet", post_heat: "post-heat",
+};
+
+/** Toggle one stage in the enabled list, always returning the valid stages in canonical order.
+ *  Pure so it can be unit-tested; the backend re-canonicalizes untrusted input regardless. */
+export function toggleCaptureStage(enabled: readonly string[], stage: string): string[] {
+  const has = enabled.includes(stage);
+  const next = new Set(enabled.filter((s) => (CAPTURE_STAGES as readonly string[]).includes(s)));
+  if (has) next.delete(stage); else if ((CAPTURE_STAGES as readonly string[]).includes(stage)) next.add(stage);
+  return CAPTURE_STAGES.filter((s) => next.has(s));
 }
 
 const basePhase: PhasePlan = {
@@ -82,7 +98,8 @@ export const DEFAULT_PLAN: PrintSettings = {
   purge_dwell_s: 0, purge_mode: "per_layer", purge_every_n_layers: 5, purge_position_mm: null,
   heater_speed: 50, heater_accel: 250, n_heater_passes: 1,
   heater_enabled: false, settle_s: 1, feed_backlash_mm: 0, feed_fast_speed: 5, feed_fast_accel: 30,
-  capture_stages: false, capture_recoater_mm: 0, capture_settle_s: 0.5,
+  capture_stages: false, capture_stages_enabled: ["pre_jet", "post_jet", "post_heat"],
+  capture_recoater_mm: 0, capture_settle_s: 0.5,
 };
 
 export type StepKind = "home" | "set_speed" | "set_accel" | "move_abs" | "move_rel" | "wait" | "dwell" | "heater" | "mark";

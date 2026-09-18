@@ -749,6 +749,46 @@ def test_capture_marks_emitted_without_added_motion() -> None:
     assert labels.index("capture:post_heat") < labels.index("layer_end")
 
 
+def test_capture_stages_enabled_defaults_to_all_three() -> None:
+    # Per-stage capture selection (#2): the default keeps every stage on, so enabling captures
+    # behaves exactly as before (all of pre_jet / post_jet / post_heat).
+    assert PrintSettings().capture_stages_enabled == ("pre_jet", "post_jet", "post_heat")
+
+
+def test_compile_emits_only_the_enabled_capture_stages() -> None:
+    # With capture_stages on but only post_jet selected, compile must emit ONLY the post_jet mark
+    # — no pre_jet, no post_heat. This lets an operator capture just one (or two) stages to save disk.
+    plan = dataclasses.replace(
+        one_layer(), capture_stages=True, capture_stages_enabled=("post_jet",)
+    )
+    labels = [s.label for s in compile_print(plan) if s.kind == "mark"]
+    assert labels.count("capture:post_jet") == 1
+    assert labels.count("capture:pre_jet") == 0
+    assert labels.count("capture:post_heat") == 0
+
+
+def test_compile_emits_no_capture_marks_when_enabled_set_empty() -> None:
+    # Master on but nothing selected = no stage captures (belt-and-suspenders; the UI won't allow it).
+    plan = dataclasses.replace(one_layer(), capture_stages=True, capture_stages_enabled=())
+    labels = [s.label for s in compile_print(plan) if s.kind == "mark"]
+    assert not any(lbl.startswith("capture:") for lbl in labels)
+
+
+def test_bounded_filters_capture_stages_enabled_to_valid_canonical_order() -> None:
+    # Untrusted input: keep only real stage names, dedupe, and force canonical order regardless of
+    # the order/junk supplied. An absent key keeps the default (all three).
+    lim = SafetyLimits()
+    p = PrintSettings.bounded(
+        {"capture_stages_enabled": ["post_heat", "bogus", "pre_jet", "pre_jet"]}, lim
+    )
+    assert p.capture_stages_enabled == ("pre_jet", "post_heat")
+    assert PrintSettings.bounded({}, lim).capture_stages_enabled == (
+        "pre_jet",
+        "post_jet",
+        "post_heat",
+    )
+
+
 def test_captures_add_no_motion() -> None:
     # Enabling captures must add ONLY marks — never any axis motion. The motion choreography must be
     # byte-identical whether captures are on or off (no cameras are installed yet).

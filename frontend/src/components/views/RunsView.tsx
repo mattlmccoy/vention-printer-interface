@@ -2,7 +2,7 @@ import { useEffect, useState, type MouseEvent as ReactMouseEvent } from "react";
 import { api, type RunMeta } from "../../lib/api.ts";
 import type { Gates } from "../../lib/format.ts";
 import type { EventItem, StatusPayload } from "../../lib/telemetry.ts";
-import { captureLayerFull, captureLayerShort, parseCaptures, type Capture } from "../../lib/vision.ts";
+import { captureLayerFull, captureLayerShort, parseCaptures, visibleCaptures, type Capture } from "../../lib/vision.ts";
 import {
   hasNativeSpeed,
   layerAccuracySummary,
@@ -16,6 +16,7 @@ import { runStatusChip } from "../../lib/runs.ts";
 import type { Call } from "./types.ts";
 
 const STAGE_LABEL: Record<string, string> = { pre_jet: "pre-jet", post_jet: "post-jet", post_heat: "post-heat" };
+const STAGE_ORDER = ["pre_jet", "post_jet", "post_heat"] as const;
 // Pure run-card label helpers (shared by the list item and the detail header).
 const runLabel = (run: string) => `${run.slice(0, 8)} ${run.slice(9, 11)}:${run.slice(11, 13)}`;
 const runDispName = (r: RunMeta) => r.name || r.run.slice(16) || r.run;
@@ -267,6 +268,7 @@ export function RunsView({ status, gates, call, base }: { status: StatusPayload 
   const [notes, setNotes] = useState("");
   const [dirty, setDirty] = useState(false);
   const [revealMsg, setRevealMsg] = useState(""); // absolute on-disk path, shown after Reveal
+  const [stageSel, setStageSel] = useState<string[]>([...STAGE_ORDER]); // Runs stage filter (#1)
   const [viewIdx, setViewIdx] = useState(-1); // index into `caps` of the open lightbox still, or -1
   const [viewJobFolder, setViewJobFolder] = useState<string | null>(null); // for the CAD-slice compare
   const [viewCadErr, setViewCadErr] = useState(false); // CAD slice failed to load (e.g. archived job)
@@ -402,20 +404,39 @@ export function RunsView({ status, gates, call, base }: { status: StatusPayload 
 
               <div className="card">
                 <h3>science-cam stills<span className="hint" style={{ textTransform: "none", letterSpacing: 0, fontWeight: 400 }}>layer × stage</span></h3>
+                {caps.length > 0 && (
+                  <div className="seg" style={{ marginBottom: 8 }}>
+                    {STAGE_ORDER.map((s) => {
+                      const on = stageSel.includes(s);
+                      const n = caps.filter((c) => c.stage === s).length;
+                      return (
+                        <button key={s} type="button" className={`small${on ? " on" : ""}`} aria-pressed={on}
+                          title={`show / hide ${STAGE_LABEL[s]} stills`}
+                          onClick={() => setStageSel((cur) => cur.includes(s) ? cur.filter((x) => x !== s) : STAGE_ORDER.filter((o) => cur.includes(o) || o === s))}>
+                          {STAGE_LABEL[s]}{n ? ` (${n})` : ""}
+                        </button>
+                      );
+                    })}
+                  </div>
+                )}
                 <div className="stills-wrap">
-                  {caps.length === 0 ? <div className="chart-empty">no science-cam captures for this run</div> : (
-                    <div className="stills">
-                      {caps.slice(0, 24).map((c, i) => (
-                        <div key={`${c.layer}-${c.stage}`} className="still" role="button" tabIndex={0}
-                          title="open — compare with the CAD layer"
-                          onClick={() => setViewIdx(i)}
-                          onKeyDown={(e) => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); setViewIdx(i); } }}>
-                          <img src={`${base}${c.url}`} alt={captureLayerFull(c)} onError={(e) => { (e.currentTarget as HTMLImageElement).style.display = "none"; }} />
-                          <span className="ll" title={captureLayerFull(c)}>{captureLayerShort(c)}</span><span className="lb">{STAGE_LABEL[c.stage] ?? c.stage}</span>
-                        </div>
-                      ))}
-                    </div>
-                  )}
+                  {caps.length === 0 ? <div className="chart-empty">no science-cam captures for this run</div> : (() => {
+                    const shown = visibleCaptures(caps, stageSel);
+                    if (shown.length === 0) return <div className="chart-empty">no stills match the selected stages</div>;
+                    return (
+                      <div className="stills">
+                        {shown.slice(0, 24).map(({ cap: c, index }) => (
+                          <div key={`${c.layer}-${c.stage}`} className="still" role="button" tabIndex={0}
+                            title="open — compare with the CAD layer"
+                            onClick={() => setViewIdx(index)}
+                            onKeyDown={(e) => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); setViewIdx(index); } }}>
+                            <img src={`${base}${c.url}`} alt={captureLayerFull(c)} onError={(e) => { (e.currentTarget as HTMLImageElement).style.display = "none"; }} />
+                            <span className="ll" title={captureLayerFull(c)}>{captureLayerShort(c)}</span><span className="lb">{STAGE_LABEL[c.stage] ?? c.stage}</span>
+                          </div>
+                        ))}
+                      </div>
+                    );
+                  })()}
                 </div>
               </div>
 

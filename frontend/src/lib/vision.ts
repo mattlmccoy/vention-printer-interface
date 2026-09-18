@@ -177,3 +177,15 @@ export function formatValidation(result: ValidationResultLike, tolMm = 0.1): For
   const pass = maxMm <= tolMm && Math.abs(scaleBias - 1) <= tolMm;
   return { rmsMm, maxMm, scaleBias, pass };
 }
+
+export interface IndexedCapture { cap: Capture; index: number }
+
+/** Filter captures by stage for the Runs stills grid (#1) while preserving each capture's ORIGINAL
+ *  index in `caps` — the lightbox indexes into the full `caps` array, so the grid must hand it the
+ *  unfiltered index, not the post-filter position. `selectedStages` empty = nothing shown. Pure. */
+export function visibleCaptures(caps: readonly Capture[], selectedStages: readonly string[]): IndexedCapture[] {
+  const sel = new Set(selectedStages);
+  const out: IndexedCapture[] = [];
+  caps.forEach((cap, index) => { if (sel.has(cap.stage)) out.push({ cap, index }); });
+  return out;
+}

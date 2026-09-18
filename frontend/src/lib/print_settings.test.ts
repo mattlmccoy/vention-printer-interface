@@ -1,6 +1,23 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { DEFAULT_PLAN, compilePrint, describeStep, totalLayers, totalThickness, validate } from "./print_settings.ts";
+import { CAPTURE_STAGES, DEFAULT_PLAN, compilePrint, describeStep, toggleCaptureStage, totalLayers, totalThickness, validate } from "./print_settings.ts";
+
+test("toggleCaptureStage removes a present stage, keeping canonical order", () => {
+  assert.deepEqual(toggleCaptureStage(["pre_jet", "post_jet", "post_heat"], "post_jet"), ["pre_jet", "post_heat"]);
+});
+
+test("toggleCaptureStage adds a missing stage in canonical order (not append order)", () => {
+  assert.deepEqual(toggleCaptureStage(["post_heat"], "pre_jet"), ["pre_jet", "post_heat"]);
+});
+
+test("toggleCaptureStage drops unknown stages and can empty the set", () => {
+  assert.deepEqual(toggleCaptureStage(["post_jet", "bogus"], "post_jet"), []);
+  assert.deepEqual(toggleCaptureStage([], "nope"), []);
+});
+
+test("the default plan enables all three capture stages", () => {
+  assert.deepEqual(DEFAULT_PLAN.capture_stages_enabled, [...CAPTURE_STAGES]);
+});
 
 test("defaults match V1.py and the backend", () => {
   // thin 0.2*2 + printing 2*10 + postcoat 5*1 = 25.4 mm over 13 layers (thick precoats now prime)
