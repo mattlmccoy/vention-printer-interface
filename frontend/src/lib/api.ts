@@ -222,6 +222,10 @@ export const api = {
   // the one with the most frames. Usable as an <img src> (plays inline) or a download link.
   recordingTimelapseUrl: (run: string, stage?: string, fps = 6) =>
     `${base}/api/recordings/${encodeURIComponent(run)}/timelapse.gif?fps=${fps}${stage ? `&stage=${encodeURIComponent(stage)}` : ""}`,
+  // AVFoundation cameras with stable unique ids + the science-camera binding for the unattended
+  // (no-tab-open) server capture path (#/Phase 2). Empty `cameras` on non-macOS.
+  avfCameras: () => req<{ cameras: Array<{ index: number; name: string; unique_id: string }>; science_uid: string | null }>("GET", "/api/vision/avf-cameras"),
+  setScienceUid: (unique_id: string | null) => req<{ unique_id: string | null }>("PUT", "/api/vision/science-uid", { unique_id }),
   macro: (name: string) => req<StatusPayload["print"]>("POST", `/api/macro/${name}`),
   priming: () => req<PrimingPayload>("GET", "/api/priming"),
   setPriming: (patch: Record<string, number>) => req<PrimingPayload>("PUT", "/api/priming", patch),

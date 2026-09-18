@@ -158,6 +158,42 @@ function CaptureCalibration({ status, gates, call }: { status: StatusPayload | n
   );
 }
 
+/** Bind the SCIENCE camera to a stable macOS AVFoundation unique id, so the operator captures the
+ *  RIGHT camera unattended (no browser tab open). The client-side picker is still the primary way to
+ *  tell two identical ELPs apart; this is the robust server-side fallback for unattended prints. */
+function UnattendedSciencePanel() {
+  const [cams, setCams] = useState<Array<{ index: number; name: string; unique_id: string }>>([]);
+  const [uid, setUid] = useState<string | null>(null);
+  const [msg, setMsg] = useState("");
+  const load = () => api.avfCameras().then((r) => { setCams(r.cameras); setUid(r.science_uid); }).catch(() => setCams([]));
+  useEffect(() => { load(); }, []);
+  const set = (u: string | null) => api.setScienceUid(u).then((r) => { setUid(r.unique_id); setMsg(u ? "science camera bound" : "binding cleared"); }).catch(() => setMsg("failed"));
+  return (
+    <div className="body">
+      <div className="hint" style={{ marginTop: 0 }}>
+        Bind the science camera to a stable macOS unique id so the server grabs the correct camera even
+        with no browser tab open. Identify which is which with the live tiles in the camera quick-start;
+        confirm on the two-ELP rig before relying on it for a real print.
+      </div>
+      {cams.length === 0
+        ? <div className="hint">no macOS cameras enumerated (non-macOS, or none detected)</div>
+        : cams.map((c) => (
+            <div key={c.unique_id} className="row" style={{ justifyContent: "space-between", gap: 8, padding: "5px 0", borderTop: "1px solid var(--line)" }}>
+              <span>[{c.index}] {c.name || "camera"} <small className="hint">{c.unique_id}</small></span>
+              {uid === c.unique_id
+                ? <b className="okv">science ✓</b>
+                : <button className="small" onClick={() => set(c.unique_id)}>set as science</button>}
+            </div>
+          ))}
+      <div className="actions" style={{ marginTop: 8, gap: 8 }}>
+        <button className="small" onClick={load}>refresh</button>
+        {uid && <button className="small" onClick={() => set(null)}>clear binding</button>}
+        {msg && <span className="hint">{msg}</span>}
+      </div>
+    </div>
+  );
+}
+
 export function CamerasView({ status, gates, call, base, onOpenQuickStart }: {
   status: StatusPayload | null; gates: Gates; call: Call; base: string;
   /** A7: reopens the camera-role quick-start wizard any time (cameras swapped/replaced/re-cabled) */
@@ -258,6 +294,10 @@ export function CamerasView({ status, gates, call, base, onOpenQuickStart }: {
         <details className="rp-drawer">
           <summary>manual calibration (raw points)</summary>
           <div className="body"><CalibrationForm call={call} disabled={!gates.reachable} /></div>
+        </details>
+        <details className="rp-drawer">
+          <summary>unattended science capture (bind camera by unique id)</summary>
+          <UnattendedSciencePanel />
         </details>
       </div>
     </div>

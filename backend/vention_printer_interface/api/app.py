@@ -77,6 +77,7 @@ from vention_printer_interface.jobs.store import (
 )
 from vention_printer_interface.protocol import routes as r
 from vention_printer_interface.recording.recorder import Recorder
+from vention_printer_interface.vision.avfoundation import list_avf_cameras
 from vention_printer_interface.vision.board_gen import (
     generate_charuco_dxf,
     generate_charuco_svg,
@@ -96,7 +97,11 @@ from vention_printer_interface.vision.cameras import (
 )
 from vention_printer_interface.vision.capture import VisionService
 from vention_printer_interface.vision.events import label_to_stage
-from vention_printer_interface.vision.frame_source import FrameSource, UvcFrameSource
+from vention_printer_interface.vision.frame_source import (
+    AVFoundationFrameSource,
+    FrameSource,
+    UvcFrameSource,
+)
 from vention_printer_interface.vision.overview import OverviewStreamer, encode_jpeg
 from vention_printer_interface.vision.registration import (
     BoardDetection,
@@ -589,6 +594,17 @@ def create_app(
     vision_calibration_path = root / ".vision_calibration.json"
     vision_roles_path = root / ".vision_roles.json"
     vision_settings_path = root / ".vision_settings.json"
+    # Operator-set AVFoundation unique id for the science camera (Phase-2 unattended capture). When
+    # present, the server captures science by this STABLE per-camera id instead of a fragile index —
+    # so the RIGHT camera is grabbed even with no browser tab open. Unset => current behavior.
+    science_uid_path = root / ".vision_science_uid.json"
+
+    def load_science_uid() -> str | None:
+        try:
+            uid = json.loads(science_uid_path.read_text()).get("unique_id")
+            return uid if isinstance(uid, str) and uid else None
+        except (OSError, ValueError):
+            return None
 
     def build_camera_config() -> CameraConfig:
         """CameraConfig from env/defaults, merged with any persisted per-role setting overrides.
@@ -682,12 +698,21 @@ def create_app(
             # then — never fall back to a default index, which would open the built-in/first camera
             # (the 2026-09-16 "FaceTime streamed despite no cameras detected" bug). An injected test
             # source still opens.
-            if spec is None and vision_source is None:
+            science_uid = load_science_uid()
+            # A configured AVFoundation unique id IS a resolution — open by it even when no
+            # stable_id spec resolved (that is the whole point of the unattended-by-uid path).
+            if spec is None and vision_source is None and not science_uid:
                 app.state.vision = None
                 app.state.vision_source = None
                 return
             if vision_source is not None:
                 source: FrameSource = vision_source
+            elif science_uid:
+                source = AVFoundationFrameSource(
+                    science_uid,
+                    spec.width if spec else None,
+                    spec.height if spec else None,
+                )
             else:
                 assert spec is not None  # guaranteed by the early return above
                 source = UvcFrameSource(
@@ -1750,6 +1775,40 @@ def create_app(
 
         unresolved: list[str] = list(app.state.vision_unresolved_roles)
         return {"mapping": body.mapping, "roles_resolved": not unresolved, "unresolved": unresolved}
+
+    @app.get("/api/vision/avf-cameras")
+    def vision_avf_cameras() -> dict[str, Any]:
+        """macOS cameras with their STABLE AVFoundation unique ids (Phase-2 unattended capture).
+        The operator picks the science camera's unique id from this list; empty on non-macOS."""
+        cams = list_avf_cameras()
+        return {
+            "cameras": [
+                {"index": c.index, "name": c.name, "unique_id": c.unique_id} for c in cams
+            ],
+            "science_uid": load_science_uid(),
+        }
+
+    @app.get("/api/vision/science-uid")
+    def vision_get_science_uid() -> dict[str, str | None]:
+        return {"unique_id": load_science_uid()}
+
+    @app.put("/api/vision/science-uid")
+    def vision_put_science_uid(body: dict[str, Any]) -> dict[str, str | None]:
+        """Set (or clear, with null) the science camera's AVFoundation unique id and reopen the
+        science source so unattended server captures grab the RIGHT camera by that stable id."""
+        uid = body.get("unique_id")
+        if uid is not None and (not isinstance(uid, str) or not uid.strip()):
+            raise HTTPException(400, "unique_id must be a non-empty string or null")
+        science_uid_path.write_text(json.dumps({"unique_id": uid}))
+        vision = vision_service()
+        if vision is not None:
+            try:
+                vision.stop()
+            except Exception as exc:  # noqa: BLE001 - a stuck worker must not block the reopen
+                log.warning("vision stop before science-uid reopen failed (%s)", exc)
+        resolved = app.state.vision_refresh_role_resolution()
+        app.state.vision_open_science(resolved.get("science"))
+        return {"unique_id": load_science_uid()}
 
     @app.get("/api/vision/board")
     def vision_board(

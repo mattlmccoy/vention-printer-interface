@@ -215,3 +215,44 @@ class UvcFrameSource(FrameSource):
         for _ in range(discard):
             self._cap.read()
         return self.grab()
+
+
+class AVFoundationFrameSource(UvcFrameSource):
+    """macOS capture bound to a STABLE AVFoundation unique id — the robust, unattended science path.
+
+    Two identical ELP cameras can't be told apart by a fixed cv2 index, so this resolves the
+    camera's ``spcamera_unique-id`` to its CURRENT AVFoundation index at each open (re-plugging
+    other cameras can't shift which physical camera is opened), then captures via the normal UVC
+    path. Raises when the unique id isn't currently enumerated (unplugged) rather than silently
+    opening the wrong camera. cv2's default macOS backend is AVFoundation, so the resolved index
+    matches ``system_profiler``'s device order (confirm once on the two-ELP rig).
+    """
+
+    def __init__(
+        self,
+        unique_id: str,
+        width: int | None = None,
+        height: int | None = None,
+        fps: float | None = None,
+        pixel_format: str | None = None,
+    ) -> None:
+        super().__init__(
+            device_index=-1, width=width, height=height,
+            backend=None, pixel_format=pixel_format, fps=fps,
+        )
+        self.unique_id = unique_id
+
+    def _resolve_index(self) -> int:
+        from vention_printer_interface.vision.avfoundation import (
+            list_avf_cameras,
+            resolve_index_for_uid,
+        )
+
+        idx = resolve_index_for_uid(list_avf_cameras(), self.unique_id)
+        if idx is None:
+            raise RuntimeError(f"science camera {self.unique_id!r} not found (unplugged?)")
+        return idx
+
+    def open(self) -> None:
+        self.device_index = self._resolve_index()
+        super().open()
