@@ -56,6 +56,7 @@ _SIDECAR_TEMPLATE: dict[str, Any] = {
     },
     "images": None,
     "registered_space": None,
+    "source": None,  # "server" (cv2 grab) or "client" (browser upload)
     "checksum_sha256": None,
 }
 

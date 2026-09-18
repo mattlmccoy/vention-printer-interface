@@ -9,6 +9,7 @@ import type { StatusPayload } from "./lib/telemetry.ts";
 import { ErrorBoundary } from "./components/ErrorBoundary.tsx";
 import { StatusBar } from "./components/StatusBar.tsx";
 import { MachineDock } from "./components/MachineDock.tsx";
+import { ScienceCaptureClient } from "./components/ScienceCaptureClient.tsx";
 import { QuickStartVision } from "./components/QuickStartVision.tsx";
 import { PrintView } from "./components/views/PrintView.tsx";
 import { JobView } from "./components/views/JobView.tsx";
@@ -292,6 +293,8 @@ export function App() {
         <StatusBar state={c?.state ?? "disconnected"} backend={c?.backend ?? "none"} pollHz={pollHz} reachable={reachable}
           estop={c?.telemetry?.estop_triggered ?? null} drivesReady={c?.telemetry?.drives_ready ?? null} heaterOn={c?.heater.on ?? null} heaterOnS={c?.heater.on_s ?? 0} heaterMaxS={c?.heater.max_on_s ?? 0}
           recActive={status?.recording.active ?? false} recRun={status?.recording.run ?? null} printState={r?.state ?? "idle"} version={version} />
+        {/* Headless: captures the assigned science camera on the operator's per-layer signal. */}
+        <ScienceCaptureClient status={status} />
       </div>
     </ErrorBoundary>
   );

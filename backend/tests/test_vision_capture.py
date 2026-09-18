@@ -252,6 +252,41 @@ def test_capture_event_appends_manifest_record(tmp_path):
     assert record["host_timestamp_ns"] == 555
 
 
+def test_store_uploaded_writes_a_client_still_sidecar_and_manifest(tmp_path):
+    # The client-side capture path: the browser grabs the still from the ASSIGNED science camera and
+    # uploads it; the server stores it through the same write_capture path (registered + sidecar +
+    # manifest), tagged source="client", carrying cad_layer / axis / job.
+    import json
+
+    svc = _svc(tmp_path, camera_role="science")
+    img = np.zeros((6, 8, 3), np.uint8)
+    paths = svc.store_uploaded(
+        img,
+        layer=8,
+        stage="post_jet",
+        cad_layer=3,
+        axis_positions={"recoater": 454.5},
+        job={"folder": "F", "name": "part"},
+        host_timestamp_ns=123,
+    )
+    assert paths is not None
+    assert (tmp_path / "vision" / "layer_0008" / "post_jet.webp").exists()
+    sidecar = json.loads((tmp_path / "vision" / "layer_0008" / "post_jet.json").read_text())
+    assert sidecar["cad_layer"] == 3
+    assert sidecar["axis_positions_mm"] == {"recoater": 454.5}
+    assert sidecar["job"] == {"folder": "F", "name": "part"}
+    assert sidecar["camera"]["role"] == "science"
+    assert sidecar["source"] == "client"
+    rec = read_manifest(tmp_path)[-1]
+    assert rec["layer"] == 8 and rec["cad_layer"] == 3 and rec["stage"] == "post_jet"
+
+
+def test_store_uploaded_returns_none_with_no_active_run(tmp_path):
+    # No active run dir -> nothing stored (never invents a location).
+    svc = VisionService(source=SimulatedFrameSource(), run_dir_provider=lambda: None)
+    assert svc.store_uploaded(np.zeros((4, 4, 3), np.uint8), layer=1, stage="pre_jet") is None
+
+
 def test_capture_records_the_printing_cad_layer(tmp_path):
     # A printing capture carries print_layer (the CAD/printing index, excludes precoats). It must
     # land in BOTH the manifest record and the sidecar as cad_layer, so the Runs CAD slice + layer
