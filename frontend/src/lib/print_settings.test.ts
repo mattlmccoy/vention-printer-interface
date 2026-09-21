@@ -72,10 +72,12 @@ test("printability and travel reasons", () => {
   assert.match(validate({ ...DEFAULT_PLAN, recoater_end_mm: 5000 })[0], /recoater_end_mm/);
 });
 
-test("a build past the piston's usable travel is flagged", () => {
-  assert.deepEqual(validate(DEFAULT_PLAN), []); // default part_max 72 mm → within reach
-  const deep = { ...DEFAULT_PLAN, part_max_mm: 135 }; // past the ~130 mm wall
-  assert.ok(validate(deep).some((r) => /usable travel/.test(r)));
+test("a build past the piston's max travel is flagged, honoring the settable per-cylinder limit", () => {
+  assert.deepEqual(validate(DEFAULT_PLAN), []); // default part_max 72 = build_piston_max 72 → valid
+  const deep = { ...DEFAULT_PLAN, part_max_mm: 90 }; // past the 72 mm limit
+  assert.ok(validate(deep).some((r) => /max travel/.test(r)));
+  const raised = { ...deep, build_piston_max_mm: 100 }; // looser cylinder set to 100 mm
+  assert.ok(!validate(raised).some((r) => /max travel/.test(r)));
 });
 
 test("compile matches the backend order for one print layer (50 steps, heater on)", () => {

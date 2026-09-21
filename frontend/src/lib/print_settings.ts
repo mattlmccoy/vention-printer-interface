@@ -56,6 +56,8 @@ export interface PrintSettings {
   purge_every_n_layers: number;
   purge_position_mm: number | null;
   part_max_mm: number;
+  build_piston_max_mm: number; // per-cylinder usable max travel from home (operator-set)
+  feed_piston_max_mm: number;
   heater_speed: number;
   heater_accel: number;
   n_heater_passes: number;
@@ -107,7 +109,7 @@ export const DEFAULT_PLAN: PrintSettings = {
   n_jet_passes: 1, pre_heater_drop_mm: 0, postcoat_enabled: true,
   feed_end_mm: 145, recoater_home_mm: 5, recoater_return_mm: 350, recoater_end_mm: 950,
   heater_home_mm: 5, heater_start_mm: 425, heater_end_mm: 600,
-  printhead_home_mm: 5, printhead_end_mm: 900, printhead_multipass_return_mm: 250, printhead_start_mm: 250, part_max_mm: 72,
+  printhead_home_mm: 5, printhead_end_mm: 900, printhead_multipass_return_mm: 250, printhead_start_mm: 250, part_max_mm: 72, build_piston_max_mm: 72, feed_piston_max_mm: 72,
   purge_dwell_s: 0, purge_mode: "per_layer", purge_every_n_layers: 5, purge_position_mm: null,
   heater_speed: 50, heater_accel: 250, n_heater_passes: 1,
   heater_enabled: false, settle_s: 1, feed_backlash_mm: 0, build_backlash_mm: 0.15, feed_fast_speed: 5, feed_fast_accel: 30,
@@ -142,8 +144,8 @@ export function validate(p: PrintSettings, travelMax: Record<number, number> = {
   if (total > p.feed_end_mm)
     reasons.push(`total thickness ${total.toFixed(1)} mm exceeds feed travel ${p.feed_end_mm.toFixed(1)} mm (V1.py printability check)`);
   const deepestPart = Math.max(total, p.part_max_mm);
-  if (deepestPart > PART_USABLE_TRAVEL_MM)
-    reasons.push(`build reaches ${deepestPart.toFixed(1)} mm but the piston's usable travel is ${PART_USABLE_TRAVEL_MM.toFixed(0)} mm from home — it stops there, so the part would not finish (silent under-build)`);
+  if (deepestPart > p.build_piston_max_mm)
+    reasons.push(`build reaches ${deepestPart.toFixed(1)} mm but the build piston's max travel is ${p.build_piston_max_mm.toFixed(1)} mm from home — it stops there, so the part would not finish (silent under-build)`);
   for (const ph of PHASES) if (p[ph].n_layers > 0 && p[ph].layer_thickness_mm <= 0) reasons.push(`${ph}.layer_thickness_mm must be > 0 when n_layers > 0`);
   const positions: Array<[string, number, number]> = [
     ["feed_end_mm", FEED, p.feed_end_mm], ["recoater_home_mm", RECOATER, p.recoater_home_mm],
