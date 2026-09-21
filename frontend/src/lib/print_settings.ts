@@ -16,6 +16,11 @@ export type Phase = (typeof PHASES)[number];
 // part-drop phases drop the build piston one layer (grow the part height). Mirrors the backend.
 const PRECOAT_PHASES = new Set<string>(["thin_precoat", "postcoat"]);
 const PART_DROP_PHASES = new Set<string>(["thin_precoat", "printing"]);
+// Minimum build-piston up-seat for an imaged printing layer: mechanical slop couples piston
+// direction to the print-plane position (<1 mm), so an imaged layer must end its drop moving UP
+// (approach from below) — the same side the recoater/jet see — or the plane and image reference
+// shift between layers. Used only as a floor when build_backlash_mm is below it. Mirrors the backend.
+export const CAPTURE_SEAT_MM = 0.1;
 // The feed piston's hard floor (script FEED_HOME_POS): an advance to/below it cannot supply a layer.
 const FEED_FLOOR_MM = 0;
 
@@ -223,11 +228,17 @@ export function compilePrint(plan: PrintSettings): Step[] {
       // Anti-backlash: overshoot the drop DOWN by build_backlash_mm, then return UP to the target
       // (net descent = layer_thickness), so the drop is approached one-sided. Mirrors the backend.
       if (PART_DROP_PHASES.has(name)) {
-        const bl = plan.build_backlash_mm;
-        add(name, layerNo, "move_rel", PART, ph.layer_thickness_mm + bl);
+        // An imaged printing layer must end the drop on an UP move so the plane seats from the same
+        // side the recoater/jet see (capture plane == jetting plane). Force at least CAPTURE_SEAT_MM
+        // of up-seat for those layers even when backlash is 0. Net descent stays layer_thickness.
+        const capturesOn = plan.capture_stages && plan.capture_stages_enabled.length > 0;
+        const seat = name === "printing" && capturesOn
+          ? Math.max(plan.build_backlash_mm, CAPTURE_SEAT_MM)
+          : plan.build_backlash_mm;
+        add(name, layerNo, "move_rel", PART, ph.layer_thickness_mm + seat);
         add(name, layerNo, "wait");
-        if (bl > 0) {
-          add(name, layerNo, "move_rel", PART, -bl, "build backlash return");
+        if (seat > 0) {
+          add(name, layerNo, "move_rel", PART, -seat, "build backlash return");
           add(name, layerNo, "wait");
         }
       }

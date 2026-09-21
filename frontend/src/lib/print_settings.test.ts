@@ -1,6 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { CAPTURE_STAGES, DEFAULT_PLAN, compilePrint, describeStep, multipassMismatch, toggleCaptureStage, totalLayers, totalThickness, validate } from "./print_settings.ts";
+import { CAPTURE_SEAT_MM, CAPTURE_STAGES, DEFAULT_PLAN, compilePrint, describeStep, multipassMismatch, toggleCaptureStage, totalLayers, totalThickness, validate } from "./print_settings.ts";
 
 test("multipassMismatch warns only when the slicer declared a factor the print doesn't match", () => {
   assert.equal(multipassMismatch(3, 1), true);
@@ -116,6 +116,25 @@ test("printing layer: multi-pass jetting + pre-heater drop and return-up", () =>
   const iUp = ks.findIndex((k, i) =>
     k[0] === "move_rel" && k[1] === 1 && k[2] === -p.pre_heater_drop_mm && i > iHeaterOn);
   assert.ok(Math.max(...jet) < iDrop && iDrop < iHeaterOn && iHeaterOn < iUp);
+});
+
+test("imaged printing layer ends the drop on an up-seat even when build backlash is 0", () => {
+  const base = { ...DEFAULT_PLAN,
+    thin_precoat: { ...DEFAULT_PLAN.thin_precoat, n_layers: 0 },
+    printing: { ...DEFAULT_PLAN.printing, layer_thickness_mm: 0.2, n_layers: 1 },
+    postcoat: { ...DEFAULT_PLAN.postcoat, n_layers: 0 },
+    build_backlash_mm: 0 };
+  const partMoves = (p: typeof base) => compilePrint(p)
+    .filter((s) => s.kind === "move_rel" && s.axis === 1).map((s) => s.value);
+  // captures on: drop overshoots by CAPTURE_SEAT_MM then returns up (net = layer_thickness)
+  const on = { ...base, capture_stages: true, capture_stages_enabled: ["pre_jet"] };
+  assert.deepEqual(partMoves(on), [0.2 + CAPTURE_SEAT_MM, -CAPTURE_SEAT_MM]);
+  // captures off: unchanged single down move
+  const off = { ...base, capture_stages: false };
+  assert.deepEqual(partMoves(off), [0.2]);
+  // backlash already above the floor wins over it
+  const big = { ...on, build_backlash_mm: 0.15 };
+  assert.deepEqual(partMoves(big), [0.2 + 0.15, -0.15]);
 });
 
 test("heater off: printhead returns home, then layer_end with NO end-of-layer recoater reposition", () => {

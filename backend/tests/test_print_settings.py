@@ -279,6 +279,36 @@ def test_build_backlash_preload_overshoots_the_part_drop() -> None:
     )
 
 
+def test_captures_force_a_build_up_seat_even_when_backlash_is_zero() -> None:
+    from vention_printer_interface.control.print_settings import CAPTURE_SEAT_MM
+    # Mechanical slop couples build-piston direction to the print-plane position (<1 mm). The
+    # science cam must image the SAME plane the recoater/jet see, so an imaged layer's part drop
+    # must end on an UP move (approach from below) or the plane, and the image reference, shift
+    # between layers. When captures are on, force at least a CAPTURE_SEAT_MM up-seat even if
+    # backlash is 0. Net descent stays layer_thickness; the seat is BEFORE the recoat (no disturb).
+    assert CAPTURE_SEAT_MM == 0.1
+    cap = dataclasses.replace(one_layer(), capture_stages=True, build_backlash_mm=0.0)
+    parts = [k for k in kinds_of(cap) if k[0] == "move_rel" and k[1] == PART]
+    assert parts == [
+        ("move_rel", PART, 2.0 + CAPTURE_SEAT_MM), ("move_rel", PART, -CAPTURE_SEAT_MM)
+    ]
+    # the up-seat is emitted before the recoater spread (so the imaged surface is undisturbed)
+    kinds = [(s.kind, s.axis, s.value) for s in compile_print(cap)]
+    assert kinds.index(("move_rel", PART, -CAPTURE_SEAT_MM)) < kinds.index(
+        ("move_abs", RECOATER, cap.recoater_end_mm)
+    )
+    # captures OFF, backlash 0: unchanged single down move (no seat)
+    off = dataclasses.replace(one_layer(), capture_stages=False, build_backlash_mm=0.0)
+    assert [k for k in kinds_of(off) if k[0] == "move_rel" and k[1] == PART] == [
+        ("move_rel", PART, 2.0)
+    ]
+    # captures ON but backlash already exceeds the floor: use the backlash value, not the floor
+    big = dataclasses.replace(one_layer(), capture_stages=True, build_backlash_mm=0.15)
+    assert [k for k in kinds_of(big) if k[0] == "move_rel" and k[1] == PART] == [
+        ("move_rel", PART, 2.15), ("move_rel", PART, -0.15)
+    ]
+
+
 def test_validate_flags_a_build_beyond_the_pistons_usable_travel() -> None:
     from vention_printer_interface.control.print_settings import PART_USABLE_TRAVEL_MM
     assert PART_USABLE_TRAVEL_MM == 72.0  # attached-piston usable range (= default part_max_mm)
@@ -831,9 +861,13 @@ def test_fixed_camera_captures_add_no_axis_motion() -> None:
             if s.axis is not None or s.kind == "heater"
         ]
 
-    off = machine_actions(dataclasses.replace(one_layer(), capture_stages=False))
+    # Control for the capture up-seat: give both a non-zero build_backlash so the part-drop already
+    # ends on an up move whether or not captures are on. That isolates the CAPTURE's own effect,
+    # which for a fixed camera (zero pose) must be timing holds only — no axis or heater command.
+    seated = dataclasses.replace(one_layer(), build_backlash_mm=0.1)
+    off = machine_actions(dataclasses.replace(seated, capture_stages=False))
     on = machine_actions(
-        dataclasses.replace(one_layer(), capture_stages=True, capture_recoater_mm=0.0)
+        dataclasses.replace(seated, capture_stages=True, capture_recoater_mm=0.0)
     )
     assert on == off
 
