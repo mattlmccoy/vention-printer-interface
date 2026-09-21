@@ -264,8 +264,11 @@ def test_build_backlash_preload_overshoots_the_part_drop() -> None:
     # mm overshoot-and-return takes 0.1-0.3 mm layer steps from ~55-67% on-target to ~100% (backlash
     # < 0.1 mm). The drop overshoots DOWN past the layer target by build_backlash_mm, then returns
     # UP to it: net descent = layer_thickness, approached one-sided so slop is taken up. Default 0.
-    assert PrintSettings().build_backlash_mm == 0.0
-    parts0 = [k for k in kinds_of(one_layer()) if k[0] == "move_rel" and k[1] == PART]
+    # Default is ON at 0.15 mm: the 2026-09-18 sweep (4056 pts) confirmed 0.15 mm cuts mean step
+    # error 0.046 -> 0.007 mm (6.5x). Explicitly request 0 to get the V1.py-faithful single move.
+    assert PrintSettings().build_backlash_mm == 0.15
+    off = dataclasses.replace(one_layer(), build_backlash_mm=0.0)
+    parts0 = [k for k in kinds_of(off) if k[0] == "move_rel" and k[1] == PART]
     assert parts0 == [("move_rel", PART, 2.0)]  # off: single down move (layer_thickness 2.0)
     p = dataclasses.replace(one_layer(), build_backlash_mm=0.15)
     parts = [k for k in kinds_of(p) if k[0] == "move_rel" and k[1] == PART]
@@ -369,7 +372,9 @@ def test_print_first_phase_is_thin_precoat_no_thick_steps() -> None:
 
 
 def test_thin_precoat_layer_spreads_feeds_drops_part_and_returns() -> None:
-    all_steps = [s for s in compile_print(thin_only()) if s.phase == "thin_precoat"]
+    # V1.py-faithful baseline: no build backlash (default is now 0.15 — see the backlash test).
+    plan = dataclasses.replace(thin_only(), build_backlash_mm=0.0)
+    all_steps = [s for s in compile_print(plan) if s.phase == "thin_precoat"]
     steps = [s for s in all_steps if s.kind not in ("set_speed", "set_accel")]
     ks = [(s.kind, s.axis, s.value) for s in steps]
     body = [
@@ -394,7 +399,8 @@ def test_thin_precoat_layer_spreads_feeds_drops_part_and_returns() -> None:
 
 
 def test_compile_one_printing_layer_full_sequence() -> None:
-    steps = compile_print(one_layer())
+    # V1.py-faithful baseline: no build backlash (default is now 0.15 — see the backlash test).
+    steps = compile_print(dataclasses.replace(one_layer(), build_backlash_mm=0.0))
     kinds = [(s.kind, s.axis, s.value) for s in steps]
 
     # (a) setup — gantry homes + profiles ONLY, no printhead park (4 home/wait + 8 set_* = 12)
@@ -848,7 +854,7 @@ def test_estimate_duration_is_deterministic_and_pins_frontend_parity() -> None:
     # #6: the estimate is a deterministic constant-velocity model. This golden pins BOTH that the
     # backend value is stable AND the exact number the frontend estimateDurationS must reproduce for
     # the default plan at the default operator wait floor (0.25) — they diverged when UI used 0.5.
-    assert estimate_duration_s(PrintSettings(), 0.25) == 391.4
+    assert estimate_duration_s(PrintSettings(), 0.25) == 395.0  # default has 0.15 mm build backlash
     # Same plan is byte-identical run to run (pure function of the plan + wait floor).
     assert estimate_duration_s(PrintSettings(), 0.25) == estimate_duration_s(PrintSettings(), 0.25)
     # A larger wait floor only ever raises the estimate (waits take max(pending, floor)).

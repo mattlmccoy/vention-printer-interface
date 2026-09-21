@@ -73,7 +73,7 @@ test("printability and travel reasons", () => {
 });
 
 test("compile matches the backend order for one print layer (50 steps, heater on)", () => {
-  const one = { ...DEFAULT_PLAN,
+  const one = { ...DEFAULT_PLAN, build_backlash_mm: 0, // V1.py-faithful baseline (default is now 0.15)
     thin_precoat: { ...DEFAULT_PLAN.thin_precoat, n_layers: 0 },
     printing: { ...DEFAULT_PLAN.printing, n_layers: 1 }, postcoat: { ...DEFAULT_PLAN.postcoat, n_layers: 0 }, heater_enabled: true };
   const steps = compilePrint(one);
