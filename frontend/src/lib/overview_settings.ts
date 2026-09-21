@@ -77,6 +77,19 @@ export function streamableRes(key: string): string {
   return `${width}x${height}`;
 }
 
+/** A hub-safe, low-res live preview for a settings/tuning view. Two identical 20 MP ELP cameras on
+ *  one USB hub can't both stream high-res — the second blanks — so the tuning preview (which only has
+ *  to be recognisable; the real capture is full-res server-side) opens at the same low resolution the
+ *  identify tiles use. Decoupled from the snapshot resolution, which the dropdown sets independently. */
+export function previewConstraints(deviceId: string): MediaTrackConstraints {
+  return {
+    deviceId: { exact: deviceId },
+    width: { ideal: 640 },
+    height: { ideal: 480 },
+    frameRate: { ideal: 15 },
+  };
+}
+
 /** getUserMedia video constraints for a device at these settings (ideal, so the browser negotiates
  *  down when the camera/hub can't do it). The preview is capped to a streamable size so the camera
  *  opens even when the chosen snapshot resolution is a still-only 20 MP. */

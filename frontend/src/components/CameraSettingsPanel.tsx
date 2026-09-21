@@ -3,10 +3,10 @@ import { loadOverviewCameraId } from "../lib/webcam.ts";
 import { loadRoleMap } from "../lib/camera_roles.ts";
 import {
   loadCameraSettings,
+  previewConstraints,
   resolutionsFor,
   resolutionWH,
   saveCameraSettings,
-  videoConstraints,
   type OverviewSettings,
   type SettingsRole,
 } from "../lib/overview_settings.ts";
@@ -37,7 +37,6 @@ export function CameraSettingsPanel({ role }: { role: SettingsRole }) {
   const [settings, setSettings] = useState<OverviewSettings>(() => loadCameraSettings(storage, role));
   const [controls, setControls] = useState<NumericControl[]>([]);
   const [status, setStatus] = useState<"idle" | "live" | "none" | "denied">("idle");
-  const [reloadNonce, setReloadNonce] = useState(0);
   const [format, setFormat] = useState<string>(""); // "" = auto, else YUY2 / MJPG (server-side)
   const [model, setModel] = useState<string | null>(null);
   const videoRef = useRef<HTMLVideoElement | null>(null);
@@ -108,7 +107,9 @@ export function CameraSettingsPanel({ role }: { role: SettingsRole }) {
     (async () => {
       try {
         stop();
-        const stream = await md.getUserMedia({ video: videoConstraints(deviceId, settings) });
+        // A hub-safe low-res preview so two identical ELP cameras coexist on one USB bus without the
+        // second (science) blanking. Independent of the snapshot resolution the dropdown sets.
+        const stream = await md.getUserMedia({ video: previewConstraints(deviceId) });
         if (cancelled) { stream.getTracks().forEach((t) => t.stop()); return; }
         streamRef.current = stream;
         if (videoRef.current) videoRef.current.srcObject = stream;
@@ -131,7 +132,7 @@ export function CameraSettingsPanel({ role }: { role: SettingsRole }) {
     })();
     return () => { cancelled = true; };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [deviceId, settings.resolution, settings.frameRate, reloadNonce]);
+  }, [deviceId]);
 
   useEffect(() => stop, []);
 
@@ -147,7 +148,7 @@ export function CameraSettingsPanel({ role }: { role: SettingsRole }) {
       saveCameraSettings(storage, role, next);
       return next;
     });
-    setReloadNonce((n) => n + 1);
+    // No stream reopen: the preview is a fixed low-res feed; only the recorded-still size changes.
     pushServer();
   };
   const setFrameRate = (value: number) => {
@@ -179,13 +180,7 @@ export function CameraSettingsPanel({ role }: { role: SettingsRole }) {
     if (key === "exposureTime") pushServer({ exposure: value });
   };
 
-  // Above ~4K the camera usually can't stream (only shoot a still), so a failed open is expected.
-  const captureOnly = px.width * px.height > 8_300_000; // > 4K (e.g. 20 MP)
-  const notLiveMsg = status === "denied"
-    ? (captureOnly
-        ? "This resolution is a still-capture size — the live preview may not run this large."
-        : "camera blocked — allow it in the browser")
-    : "starting camera…";
+  const notLiveMsg = status === "denied" ? "camera busy or blocked — allow it / free the other view" : "starting camera…";
   const fmtNote = format === "YUY2" ? "uncompressed / lossless — best for CAD"
     : format === "MJPG" ? "compressed — higher fps/resolution"
     : "driver picks the format";
@@ -209,7 +204,7 @@ export function CameraSettingsPanel({ role }: { role: SettingsRole }) {
             <select value={settings.resolution} onChange={(e) => setResolution(e.target.value)}>
               {resolutionsFor(role).map((rr) => <option key={rr.key} value={rr.key}>{rr.label}</option>)}
             </select>
-            <span className="hint" style={{ marginTop: 0 }}>{captureOnly ? "stills capture at full res · live preview runs at 4K" : "reopens the stream"}</span>
+            <span className="hint" style={{ marginTop: 0 }}>sets the recorded-still size · preview is a low-res framing view</span>
           </label>
 
           <label className="row" style={{ gap: 8, alignItems: "center", flexWrap: "wrap" }}>

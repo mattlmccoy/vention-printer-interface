@@ -5,6 +5,7 @@ import {
   defaultSettingsFor,
   loadCameraSettings,
   loadOverviewSettings,
+  previewConstraints,
   resolutionsFor,
   resolutionWH,
   RESOLUTIONS,
@@ -78,6 +79,19 @@ test("videoConstraints builds an exact-device, ideal-res/fps request", () => {
     width: { ideal: 1920 },
     height: { ideal: 1080 },
     frameRate: { ideal: 24 },
+  });
+});
+
+test("previewConstraints requests a hub-safe low-res stream (two identical cams coexist)", () => {
+  // Two identical 20 MP ELP cameras on one USB hub can't both stream high-res — the second blanks.
+  // The tuning preview only has to be recognisable (capture is full-res server-side), so it opens at
+  // the same low resolution the identify tiles use.
+  const c = previewConstraints("devB");
+  assert.deepEqual(c, {
+    deviceId: { exact: "devB" },
+    width: { ideal: 640 },
+    height: { ideal: 480 },
+    frameRate: { ideal: 15 },
   });
 });
 
