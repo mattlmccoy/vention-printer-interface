@@ -50,6 +50,23 @@ def test_settle_update_keeps_waiting_while_still_travelling() -> None:
     assert done is None
 
 
+def test_wall_reached_trips_only_when_advance_stops() -> None:
+    wr = piston_sweep.wall_reached
+    assert wr([], 0.2) is False
+    assert wr([0.2], 0.2) is False                 # need two samples
+    assert wr([0.2, 0.2], 0.2) is False            # tracking cleanly
+    assert wr([0.2, 0.1], 0.2) is False            # still advancing (sum 0.3 >= 0.1)
+    assert wr([0.1, 0.0], 0.2) is True             # last two sum 0.1 < half a step → wall
+    assert wr([0.0, 0.0], 0.2) is True             # dead against the stop
+
+
+def test_backlash_from_pair_is_the_bidirectional_gap() -> None:
+    bp = piston_sweep.backlash_from_pair
+    # target reached descending settles 0.15 mm deeper than reached ascending → 0.15 mm lash
+    assert bp(132.0, 131.85) == 0.15
+    assert bp(70.0, 70.0) == 0.0
+
+
 def test_build_targets_down_and_up_cover_the_span() -> None:
     down = piston_sweep.build_targets(5.0, 1.0, 0.2, "down")
     assert down == [5.2, 5.4, 5.6, 5.8, 6.0]           # descends away from start
