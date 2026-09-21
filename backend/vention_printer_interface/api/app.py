@@ -2262,12 +2262,28 @@ def create_app(
     def vision_calibrate_session_get() -> dict[str, Any]:
         return _calib_session_state()
 
+    def _accumulate_calibration_view(image: np.ndarray, spec: BoardSpec) -> dict[str, Any]:
+        """Detect the session board in one frame and, if found, accumulate it. Shared by the
+        server-grab and browser-upload capture endpoints so both feed calibration identically.
+        Never raises on a blank/board-less frame: reports ``{captured: false, reason}``."""
+        detection = detect_board(image, spec)
+        if detection is None:
+            return {"captured": False, "reason": "no board detected in frame"}
+        views: list[BoardDetection] = app.state.calib_session_views
+        views.append(detection)
+        app.state.calib_session_image_size = (int(image.shape[1]), int(image.shape[0]))
+        return {
+            "captured": True,
+            "count": len(views),
+            "corners_found": int(len(detection.image_points)),
+        }
+
     @app.post("/api/vision/calibrate/capture")
     def vision_calibrate_capture() -> dict[str, Any]:
-        """Grab one fresh frame, detect the session board, and (if found) accumulate it.
-
-        Never raises on a blank/board-less frame: it reports ``{captured: false, reason}``.
-        """
+        """Grab one fresh frame from the SERVER science camera and accumulate it. Kept for setups
+        with a resolvable server camera; the UI uses ``/capture-upload`` (browser frame) so
+        calibration shares the same source as the print-time captures. Never raises on a board-less
+        frame: reports ``{captured: false, reason}``."""
         spec: BoardSpec | None = app.state.calib_session_spec
         if spec is None:
             raise HTTPException(400, "no active calibration session; start one first")
@@ -2278,20 +2294,27 @@ def create_app(
             frame = vision.grab_once()  # on-demand: open -> grab -> close, never held open
         except Exception as exc:  # noqa: BLE001 - a grab failure must not 500 the capture flow
             return {"captured": False, "reason": f"frame grab failed: {exc}"}
-        detection = detect_board(frame.image, spec)
-        if detection is None:
-            return {"captured": False, "reason": "no board detected in frame"}
-        views: list[BoardDetection] = app.state.calib_session_views
-        views.append(detection)
-        app.state.calib_session_image_size = (
-            int(frame.image.shape[1]),
-            int(frame.image.shape[0]),
-        )
-        return {
-            "captured": True,
-            "count": len(views),
-            "corners_found": int(len(detection.image_points)),
-        }
+        return _accumulate_calibration_view(frame.image, spec)
+
+    @app.post("/api/vision/calibrate/capture-upload")
+    async def vision_calibrate_capture_upload(request: Request) -> dict[str, Any]:
+        """Browser-side calibration capture: the operator grabs the science still from its ASSIGNED
+        deviceId (reliable on macOS, unlike the server's cv2 index) and POSTs the encoded image as
+        the raw body. Detection + accumulation run on the UPLOADED frame, so the intrinsics/bed
+        homography are fit from the SAME getUserMedia source the print-time science captures use —
+        and no server camera is needed (removes the macOS "no science camera" 503)."""
+        spec: BoardSpec | None = app.state.calib_session_spec
+        if spec is None:
+            raise HTTPException(400, "no active calibration session; start one first")
+        body = await request.body()
+        if not body:
+            raise HTTPException(400, "empty image body")
+        import cv2
+
+        arr = cv2.imdecode(np.frombuffer(body, dtype=np.uint8), cv2.IMREAD_COLOR)
+        if arr is None:
+            raise HTTPException(400, "could not decode uploaded image")
+        return _accumulate_calibration_view(arr, spec)
 
     @app.post("/api/vision/calibrate/finalize")
     def vision_calibrate_finalize(body: CalibFinalizeBody) -> dict[str, Any]:

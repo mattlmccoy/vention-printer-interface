@@ -295,6 +295,17 @@ export const api = {
   visionCalibrateSessionStart: (spec?: VisionBoardSpecBody) => req<VisionCalibSession>("POST", "/api/vision/calibrate/session", { spec: spec ?? null }),
   visionCalibrateSessionGet: () => req<VisionCalibSession>("GET", "/api/vision/calibrate/session"),
   visionCalibrateCapture: () => req<VisionCalibCaptureResult>("POST", "/api/vision/calibrate/capture"),
+  // Browser-side calibration capture: POST a science still (raw body). Calibration then uses the
+  // SAME getUserMedia source as the print-time captures — and needs no server camera.
+  visionCalibrateCaptureUpload: async (blob: Blob): Promise<VisionCalibCaptureResult> => {
+    const res = await fetch(apiUrl(base, "/api/vision/calibrate/capture-upload"), {
+      method: "POST",
+      headers: { [CLIENT_HEADER]: "1", "Content-Type": blob.type || "image/png" },
+      body: blob,
+    });
+    if (!res.ok) throw new ApiError(res.status, `${res.status} calibration capture`);
+    return res.json() as Promise<VisionCalibCaptureResult>;
+  },
   visionCalibrateFinalize: (body: VisionCalibFinalizeBody) => req<VisionCalibFinalizeResult>("POST", "/api/vision/calibrate/finalize", body),
   visionValidate: (spec: VisionBoardSpecBody, square_size_mm: number) => req<VisionValidateResult>("POST", "/api/vision/validate", { spec, square_size_mm }),
   // `url` is a backend-provided path (a record's sidecar_url from visionCaptures), already

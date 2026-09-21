@@ -1457,6 +1457,72 @@ def test_calibrate_finalize_uses_last_capture_as_bed_and_reaches_runtime(
         assert app.state.vision.calibration.version == out["calibration_version"]
 
 
+def _charuco_png_bytes(seed: int = 3) -> bytes:
+    import cv2
+    frame = _warped_charuco_frames(1, seed=seed)[0]
+    ok, buf = cv2.imencode(".png", frame)
+    assert ok
+    return bytes(buf.tobytes())
+
+
+def test_calibrate_capture_upload_accumulates_without_a_server_camera(tmp_path: Path) -> None:
+    # The browser grabs the science frame (reliable device id) and POSTs it: calibration must
+    # accumulate from the UPLOADED image, using NO server camera. This is the frame-source fix —
+    # calibration now shares the exact browser getUserMedia source the print captures use — and it
+    # also removes the macOS "no science camera" 503 (there is no vision_source here).
+    app = create_app(backend="none", experiments_root=tmp_path, poll_interval_s=0.05,
+                     print_min_wait_s=0.1, print_step_timeout_s=5.0)  # no vision_source
+    with TestClient(app) as c:
+        assert app.state.vision is None  # genuinely no server science camera
+        c.post("/api/vision/calibrate/session", json={"spec": _SESSION_CHARUCO})
+        r = c.post("/api/vision/calibrate/capture-upload", content=_charuco_png_bytes())
+        assert r.status_code == 200, r.text
+        body = r.json()
+        assert body["captured"] is True
+        assert body["count"] == 1 and body["corners_found"] > 0
+        assert c.get("/api/vision/calibrate/session").json()["n_views"] == 1
+
+
+def test_calibrate_capture_upload_finalizes_to_a_real_calibration(tmp_path: Path) -> None:
+    app = create_app(backend="none", experiments_root=tmp_path, poll_interval_s=0.05,
+                     print_min_wait_s=0.1, print_step_timeout_s=5.0)
+    with TestClient(app) as c:
+        c.post("/api/vision/calibrate/session", json={"spec": _SESSION_CHARUCO})
+        for i in range(8):
+            c.post("/api/vision/calibrate/capture-upload", content=_charuco_png_bytes(seed=i))
+        r = c.post("/api/vision/calibrate/finalize",
+                   json={"mm_per_px": 0.5, "bed_extent_mm": [0.0, 0.0, 120.0, 80.0],
+                         "use_last_capture_as_bed": True})
+        assert r.status_code == 200, r.text
+        assert r.json()["corrected"] is True and r.json()["intrinsics_rms"] is not None
+
+
+def test_calibrate_capture_upload_blank_reports_not_captured(tmp_path: Path) -> None:
+    import cv2
+    app = create_app(backend="none", experiments_root=tmp_path, poll_interval_s=0.05,
+                     print_min_wait_s=0.1, print_step_timeout_s=5.0)
+    with TestClient(app) as c:
+        c.post("/api/vision/calibrate/session", json={"spec": _SESSION_CHARUCO})
+        ok, buf = cv2.imencode(".png", np.full((500, 700, 3), 255, np.uint8))
+        r = c.post("/api/vision/calibrate/capture-upload", content=bytes(buf.tobytes()))
+        assert r.status_code == 200
+        assert r.json()["captured"] is False and r.json()["reason"]
+        assert c.get("/api/vision/calibrate/session").json()["n_views"] == 0
+
+
+def test_calibrate_capture_upload_guards_empty_body_and_no_session(tmp_path: Path) -> None:
+    app = create_app(backend="none", experiments_root=tmp_path, poll_interval_s=0.05,
+                     print_min_wait_s=0.1, print_step_timeout_s=5.0)
+    with TestClient(app) as c:
+        # no session yet
+        assert c.post("/api/vision/calibrate/capture-upload",
+                      content=_charuco_png_bytes()).status_code == 400
+        c.post("/api/vision/calibrate/session", json={"spec": _SESSION_CHARUCO})
+        assert c.post("/api/vision/calibrate/capture-upload", content=b"").status_code == 400
+        assert c.post("/api/vision/calibrate/capture-upload",
+                      content=b"not an image").status_code == 400
+
+
 def test_calibrate_finalize_with_zero_views_returns_400(tmp_path: Path) -> None:
     app = _calib_app(tmp_path, _CharucoPoseSource())
     with TestClient(app) as c:
