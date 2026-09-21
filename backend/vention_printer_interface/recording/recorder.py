@@ -390,12 +390,20 @@ def _sha256(path: Path) -> str:
 
 class Recorder:
     def __init__(
-        self, root: Path, on_active_change: Callable[[bool], None] | None = None
+        self,
+        root: Path,
+        on_active_change: Callable[[bool], None] | None = None,
+        clock: Callable[[], datetime] | None = None,
     ) -> None:
         self.root = root
         # Fired True when a run starts recording and False when it stops -- lets the controller poll
         # telemetry faster during a run (finer motion profiles) without the recorder knowing it.
         self._on_active_change = on_active_change
+        # Source of the run's start instant (timestamp for the dir name and started_utc).
+        # Injectable so tests can pin it: the dir name is second-resolution, so the _N collision
+        # suffix only appears when two runs share a second -- with the live clock that made
+        # same-second-collision assertions flaky. Defaults to the live UTC clock.
+        self._clock: Callable[[], datetime] = clock or (lambda: datetime.now(UTC))
         self.active: Path | None = None
         self._csv: Any = None
         self._file: Any = None
@@ -419,7 +427,8 @@ class Recorder:
             if self.active is not None:
                 raise RuntimeError("already recording")
             self.root.mkdir(parents=True, exist_ok=True)
-            stamp = datetime.now(UTC).strftime("%Y%m%d_%H%M%S")
+            now = self._clock()
+            stamp = now.strftime("%Y%m%d_%H%M%S")
             base = f"{stamp}_{_slug(name)}"
             run, n = self.root / base, 2
             while run.exists():
@@ -427,7 +436,7 @@ class Recorder:
             run.mkdir()
             meta = {
                 "format_version": FORMAT_VERSION,
-                "started_utc": datetime.now(UTC).isoformat(),
+                "started_utc": now.isoformat(),
                 "experiment": {"name": name, "notes": notes, **(metadata or {})},
                 "software": {
                     "name": "vention-printer-interface",
