@@ -112,7 +112,7 @@ export const DEFAULT_PLAN: PrintSettings = {
   printhead_home_mm: 5, printhead_end_mm: 900, printhead_multipass_return_mm: 250, printhead_start_mm: 250, part_max_mm: 72, build_piston_max_mm: 72, feed_piston_max_mm: 72,
   purge_dwell_s: 0, purge_mode: "per_layer", purge_every_n_layers: 5, purge_position_mm: null,
   heater_speed: 50, heater_accel: 250, n_heater_passes: 1,
-  heater_enabled: false, settle_s: 1, feed_backlash_mm: 0, build_backlash_mm: 0.15, feed_fast_speed: 5, feed_fast_accel: 30,
+  heater_enabled: false, settle_s: 1, feed_backlash_mm: 0, build_backlash_mm: 0, feed_fast_speed: 5, feed_fast_accel: 30,
   capture_stages: false, capture_stages_enabled: ["pre_jet", "post_jet", "post_heat"],
   capture_recoater_mm: 0, capture_settle_s: 0.5, capture_hold_s: 2,
 };
