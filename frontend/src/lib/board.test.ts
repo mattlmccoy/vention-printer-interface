@@ -2,6 +2,12 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import { DEFAULT_BOARD, boardConfigError, boardQuery, type BoardConfig } from "./board.ts";
 
+test("boardQuery sends the cut-outline flag (on by default, off when disabled)", () => {
+  assert.equal(new URLSearchParams(boardQuery(DEFAULT_BOARD)).get("cut_outline"), "true");
+  const off = boardQuery({ ...DEFAULT_BOARD, cutOutline: false });
+  assert.equal(new URLSearchParams(off).get("cut_outline"), "false");
+});
+
 test("boardQuery uses preset name and omits explicit geometry for a named preset", () => {
   const q = new URLSearchParams(boardQuery({ ...DEFAULT_BOARD, preset: "large_6x9" }));
   assert.equal(q.get("preset"), "large_6x9");

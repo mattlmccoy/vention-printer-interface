@@ -47,6 +47,11 @@ export function CalibrationBoardPanel({ base }: { base: string }) {
           <input type="checkbox" checked={cfg.engraveBlack} onChange={(e) => set({ engraveBlack: e.target.checked })} />
           {" "}engrave black squares/markers (invert if your top ABS layer is the light color)
         </label>
+        <span data-tip="Adds a red CUT-layer rectangle around the board so the laser cuts it free from the stock. Turn off if you're engraving onto pre-cut pieces.">cut outline</span>
+        <label className="row">
+          <input type="checkbox" checked={cfg.cutOutline} onChange={(e) => set({ cutOutline: e.target.checked })} />
+          {" "}cut the board out (red CUT layer at the perimeter)
+        </label>
       </div>
       {err && <div className="errline">{err}</div>}
       <div className="actions one tight" style={{ gap: 8 }}>
