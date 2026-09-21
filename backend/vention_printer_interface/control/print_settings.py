@@ -424,6 +424,11 @@ FEED_FLOOR_MM = 0.0
 _PRECOAT_PHASES = ("thin_precoat", "postcoat")
 # Phases that drop the build piston one layer (grow the part height).
 _PART_DROP_PHASES = ("thin_precoat", "printing")
+# Minimum build-piston up-seat when a printing layer is imaged. Mechanical slop couples the
+# piston's direction of travel to the print-plane position (<1 mm), so an imaged layer must end its
+# build move going UP (approach from below) — the same side the recoater/jet see — or the plane,
+# and the image reference, shift between layers. A floor only when build_backlash_mm is below it.
+CAPTURE_SEAT_MM = 0.1
 
 
 def compile_print(plan: PrintSettings) -> tuple[Step, ...]:
@@ -511,11 +516,17 @@ def compile_print(plan: PrintSettings) -> tuple[Step, ...]:
             # the piston sweep proved this removes the drop/double interlayer scatter). Net descent
             # stays layer_thickness. build_backlash_mm = 0 keeps the single V1.py move.
             if name in _PART_DROP_PHASES:
-                bl = plan.build_backlash_mm
-                add(name, layer_no, "move_rel", PART, ph.layer_thickness_mm + bl)  # build down
+                # A printing layer that will be imaged must end the drop on an UP move so the plane
+                # seats from the same side the recoater/jet see (capture plane == jetting plane).
+                # Force at least CAPTURE_SEAT_MM of up-seat for those layers even if backlash is 0.
+                captures_on = bool(plan.capture_stages and plan.capture_stages_enabled)
+                seat = plan.build_backlash_mm
+                if name == "printing" and captures_on:
+                    seat = max(seat, CAPTURE_SEAT_MM)
+                add(name, layer_no, "move_rel", PART, ph.layer_thickness_mm + seat)  # build down
                 add(name, layer_no, "wait")
-                if bl > 0:
-                    add(name, layer_no, "move_rel", PART, -bl, "build backlash return")
+                if seat > 0:
+                    add(name, layer_no, "move_rel", PART, -seat, "build backlash return")
                     add(name, layer_no, "wait")
 
             # 2) REPOSITION — recoater past the feed piston out to the far end, so it can spread on
