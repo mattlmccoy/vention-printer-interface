@@ -21,6 +21,35 @@ def _row(step_size: float, direction: str, prev_cmd: float, target: float, actua
     }
 
 
+def test_settle_update_latches_on_a_steady_at_rest_position() -> None:
+    su = piston_sweep.settle_update
+    # not complete → never settled; the window resets so a pre-completion reading can't count.
+    w, done = su([131.9], 132.0, complete=False, need=3)
+    assert done is None and w == []
+    w, done = [], None
+    for pos in (132.0, 132.0, 132.0):
+        w, done = su(w, pos, complete=True, need=3)
+    assert done == 132.0
+
+
+def test_settle_update_tolerates_a_one_count_dither_at_rest() -> None:
+    # A ±0.1 mm (one readout count) flicker at rest MUST latch — the old exact-equality (1e-4 mm)
+    # check never would, so it spun until the 30 s timeout on a boundary-parked position.
+    su = piston_sweep.settle_update
+    w, done = [], None
+    for pos in (132.1, 132.0, 132.1):
+        w, done = su(w, pos, complete=True, need=3)
+    assert done is not None
+
+
+def test_settle_update_keeps_waiting_while_still_travelling() -> None:
+    su = piston_sweep.settle_update
+    w, done = [], None
+    for pos in (130.0, 131.0, 132.0):  # >1 count between samples: still moving
+        w, done = su(w, pos, complete=True, need=3)
+    assert done is None
+
+
 def test_build_targets_down_and_up_cover_the_span() -> None:
     down = piston_sweep.build_targets(5.0, 1.0, 0.2, "down")
     assert down == [5.2, 5.4, 5.6, 5.8, 6.0]           # descends away from start

@@ -37,6 +37,28 @@ from typing import Any
 PART_AXIS = 1
 SAFE_MAX_MM = 140.0  # keep clear of the 145 mm hard travel
 SAFE_MIN_MM = 0.0
+READOUT_MM = 0.1  # MM2 build-piston encoder readout resolution: positions land on a 0.1 mm grid
+
+
+# ---- pure analysis (unit-tested) ----------------------------------------------------------------
+def settle_update(
+    window: list[float], pos: float, *, complete: bool, tol: float = READOUT_MM, need: int = 3
+) -> tuple[list[float], float | None]:
+    """Fold one telemetry sample into the settle window and decide if the axis is at rest.
+
+    The axis is settled once motion is complete AND the last ``need`` positions span no more than
+    ``tol`` (default one encoder count). That lets a position which flickers by a single 0.1 mm
+    readout count at rest still latch — the previous exact-equality test (``abs(pos-last) < 1e-4``,
+    1000x finer than the 0.1 mm readout) could never latch on a boundary-parked position and so
+    spun until the 30 s timeout. Returns the updated window and the settled position (``None`` until
+    settled). While motion is incomplete the window resets, so a pre-completion reading can't count.
+    """
+    if not complete:
+        return [], None
+    window = (window + [pos])[-need:]
+    if len(window) >= need and (max(window) - min(window)) <= tol + 1e-9:
+        return window, window[-1]
+    return window, None
 
 
 # ---- pure analysis (unit-tested) ----------------------------------------------------------------
@@ -121,26 +143,32 @@ class Operator:
         return self._req("POST", "/api/motion/move", {"axis": axis, "mode": "abs", "mm": mm})
 
     def settle(self, axis: int, poll_s: float = 0.05, stable_needed: int = 3,
-               timeout_s: float = 30.0) -> float:
-        """Wait until the axis reports motion complete and its position is stable across a few
-        polls; return the settled position."""
-        last: float | None = None
-        stable = 0
+               timeout_s: float = 30.0, tol: float = READOUT_MM) -> float:
+        """Wait until the axis reports motion complete and its position is at rest (stable to within
+        one encoder count across a few polls); return the settled position. On timeout the error
+        says whether motion_complete was ever seen — distinguishing a physical stall (never
+        complete) from a position that kept dithering (complete but never quiet)."""
+        window: list[float] = []
+        complete_ever = False
+        seen: list[float] = []
         end = time.monotonic() + timeout_s
         while time.monotonic() < end:
             tel = (self.status().get("controller") or {}).get("telemetry") or {}
-            complete = (tel.get("motion_complete") or {}).get(str(axis))
+            complete = bool((tel.get("motion_complete") or {}).get(str(axis)))
             pos = (tel.get("positions") or {}).get(str(axis))
-            if complete and pos is not None:
-                if last is not None and abs(pos - last) < 1e-4:
-                    stable += 1
-                    if stable >= stable_needed:
-                        return float(pos)
-                else:
-                    stable = 0
-                last = float(pos)
+            complete_ever = complete_ever or complete
+            if pos is not None:
+                seen = (seen + [float(pos)])[-8:]
+                window, settled = settle_update(
+                    window, float(pos), complete=complete, tol=tol, need=stable_needed
+                )
+                if settled is not None:
+                    return settled
             time.sleep(poll_s)
-        raise TimeoutError(f"axis {axis} did not settle within {timeout_s}s")
+        raise TimeoutError(
+            f"axis {axis} did not settle within {timeout_s}s "
+            f"(motion_complete seen: {complete_ever}; last positions: {seen})"
+        )
 
 
 def preflight(op: Operator) -> float:
