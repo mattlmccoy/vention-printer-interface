@@ -20,12 +20,13 @@ PRINTHEAD = 3
 RECOATER = 4  # the recoater gantry also carries the IR heater (V1.py HEATER_* use recoater_axis)
 
 PHASES = ("thin_precoat", "printing", "postcoat")
-# Usable build-piston (PART) travel FROM HOME. The 145 mm axis travel_max in safety.py is the hard
-# mechanical limit; the piston stops well short of it — the enclosed lead-screw actuator is 360 mm
-# long minus a 230 mm dead length = 130 mm usable stroke (Vention spec), matching the 2026-09-18
-# sweep which lost motion ~1:1 above ~134 mm. A build deeper than this silently under-builds (piston
-# hits the end and stops), so print validation flags it. Refine if the confirm sweep moves it.
-PART_USABLE_TRAVEL_MM = 130.0
+# Usable build-piston (PART) travel FROM HOME, WITH THE BUILD PISTON ATTACHED (the normal case):
+# ~72 mm — matching the default part_max_mm below. The bare actuator does ~130 mm (360 mm long − a
+# 230 mm dead length; the 2026-09-18 sweep, run without the piston, lost motion ~1:1 above ~134 mm),
+# but the attached piston bottoms out at ~72 mm. The 145 mm axis travel_max in safety.py is the hard
+# actuator limit; neither reflects the attached range. A build deeper than this silently
+# under-builds (the piston hits its stop), so print validation flags it.
+PART_USABLE_TRAVEL_MM = 72.0
 MAX_LAYERS = 500
 MAX_HEATER_PASSES = 10
 PURGE_MODES = ("every_pass", "per_layer", "every_n_layers")
