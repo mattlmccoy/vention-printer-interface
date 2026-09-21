@@ -61,6 +61,22 @@ def settle_update(
     return window, None
 
 
+def wall_reached(actual_steps: list[float], step_mm: float) -> bool:
+    """True once the piston stops advancing against its mechanical end: the last two up-steps
+    together advance less than half of ONE commanded step (motion is being lost). Requires two
+    samples so a single quantization-zero mid-travel can't false-trip it."""
+    if len(actual_steps) < 2:
+        return False
+    return (actual_steps[-1] + actual_steps[-2]) <= step_mm * 0.5 + 1e-9
+
+
+def backlash_from_pair(approached_descending: float, approached_ascending: float) -> float:
+    """Bidirectional backlash at a target = the gap between the settled position reached moving
+    DOWN (descending, position increasing) and moving UP (ascending) to the SAME commanded target.
+    Positive = lost motion (lash)."""
+    return round(approached_descending - approached_ascending, 4)
+
+
 # ---- pure analysis (unit-tested) ----------------------------------------------------------------
 def analyze_sweep(rows: list[dict[str, Any]]) -> dict[str, Any]:
     """Summarize a sweep: per step-size accuracy, direction (backlash) asymmetry, and whether the
@@ -240,20 +256,142 @@ def run_sweep(op: Operator, start: float, span: float, step_sizes: list[float],
     return rows
 
 
+# ---- targeted confirmation: find the travel wall + measure backlash (--mode confirm) -------------
+def probe_wall(op: Operator, start_mm: float, step_mm: float, max_mm: float,
+               ) -> tuple[float | None, list[dict[str, Any]]]:
+    """Fine-step the piston DOWN toward its mechanical end (position increasing) from ``start_mm``,
+    stopping the instant motion is lost (``wall_reached``). Never commands past ``max_mm``. Returns
+    ``(wall_mm | None, rows)`` where ``wall_mm`` is the last position that still tracked."""
+    op.move_abs(PART_AXIS, start_mm)
+    prev = op.settle(PART_AXIS)
+    rows: list[dict[str, Any]] = []
+    steps: list[float] = []
+    wall: float | None = None
+    pos = start_mm
+    while round(pos + step_mm, 4) <= max_mm + 1e-9:
+        target = round(pos + step_mm, 4)
+        op.move_abs(PART_AXIS, target)
+        actual = op.settle(PART_AXIS)
+        adv = round(actual - prev, 4)
+        steps.append(adv)
+        rows.append({"mode": "wall", "ref_mm": None, "rep": None, "commanded_mm": target,
+                     "actual_mm": round(actual, 4), "deviation_mm": round(actual - target, 4),
+                     "step_actual_mm": adv, "backlash_mm": None})
+        if wall_reached(steps, step_mm):
+            wall = round(prev, 4)
+            break
+        prev, pos = actual, target
+    return wall, rows
+
+
+def probe_backlash(op: Operator, positions: list[float], d_mm: float, reps: int,
+                   ) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
+    """At each position, reach the target from BOTH directions (down then up) ``reps`` times and
+    record the bidirectional gap = backlash. Returns ``(rows, per-position summary)``."""
+    rows: list[dict[str, Any]] = []
+    summary: list[dict[str, Any]] = []
+    for p in positions:
+        vals: list[float] = []
+        for r in range(1, reps + 1):
+            op.move_abs(PART_AXIS, round(p - d_mm, 4))
+            op.settle(PART_AXIS)
+            op.move_abs(PART_AXIS, p)
+            a_desc = op.settle(PART_AXIS)   # target reached descending (position increasing)
+            op.move_abs(PART_AXIS, round(p + d_mm, 4))
+            op.settle(PART_AXIS)
+            op.move_abs(PART_AXIS, p)
+            a_asc = op.settle(PART_AXIS)    # target reached ascending (position decreasing)
+            bl = backlash_from_pair(a_desc, a_asc)
+            vals.append(bl)
+            rows.append({"mode": "backlash", "ref_mm": p, "rep": r, "commanded_mm": p,
+                         "actual_mm": round(a_asc, 4), "deviation_mm": None,
+                         "step_actual_mm": None, "backlash_mm": bl})
+        summary.append({"ref_mm": p, "backlash_mean_mm": round(sum(vals) / len(vals), 4),
+                        "reps": vals})
+    return rows, summary
+
+
+def run_confirm(op: Operator, start: float, args: argparse.Namespace,
+                ) -> tuple[float | None, list[dict[str, Any]], list[dict[str, Any]]]:
+    """Short targeted characterization: locate the travel wall, then measure backlash below it."""
+    wall_from = args.wall_from
+    print(f"Wall probe: fine {args.wall_step:g} mm steps from {wall_from:.1f} up to "
+          f"<= {args.wall_max:.1f} mm; stops the instant motion is lost.")
+    wall, wall_rows = probe_wall(op, wall_from, args.wall_step, args.wall_max)
+    if wall is None:
+        print(f"  no wall up to {args.wall_max:.1f} mm — piston tracked the whole way.")
+    else:
+        print(f"  WALL ~{wall:.1f} mm (commands above this are not reached).")
+    ceiling = wall if wall is not None else args.wall_max
+    op.move_abs(PART_AXIS, round(ceiling - 5.0, 4))  # back off the end
+    op.settle(PART_AXIS)
+    positions = [p for p in args.backlash_at if p < ceiling - 2.0]
+    print(f"Backlash probe: {args.backlash_reps}x +/-{args.backlash_d:g} mm reversal at "
+          f"{positions} mm.")
+    bl_rows, bl_summary = probe_backlash(op, positions, args.backlash_d, args.backlash_reps)
+    op.move_abs(PART_AXIS, start)  # return to where we started
+    op.settle(PART_AXIS)
+    return wall, bl_summary, wall_rows + bl_rows
+
+
 def main(argv: list[str] | None = None) -> int:
     ap = argparse.ArgumentParser(prog="piston-sweep", description=__doc__,
                                  formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("--url", default="http://127.0.0.1:8020", help="operator base URL")
+    ap.add_argument("--mode", choices=("sweep", "confirm"), default="sweep",
+                    help="'sweep' = span accuracy sweep; 'confirm' = travel wall + backlash")
     ap.add_argument("--span", type=float, default=20.0, help="distance (mm) the piston travels")
     ap.add_argument("--step-sizes", type=float, nargs="+", default=[0.1, 0.2, 0.5, 1.0])
     ap.add_argument("--passes", type=int, default=3)
     ap.add_argument("--dwell", type=float, default=0.1, help="extra dwell after settle (s)")
+    # --mode confirm: HOME the piston in the UI first so positions are from home. Fine-steps up from
+    # --wall-from and STOPS the instant motion is lost (never rams the end); caps at --wall-max.
+    ap.add_argument("--wall-from", type=float, default=120.0, help="confirm: wall-probe start (mm)")
+    ap.add_argument("--wall-step", type=float, default=0.2, help="confirm: wall-probe step (mm)")
+    ap.add_argument("--wall-max", type=float, default=138.0, help="confirm: hard cap (mm)")
+    ap.add_argument("--backlash-at", type=float, nargs="+", default=[30.0, 70.0, 110.0],
+                    help="confirm: positions to measure backlash (mm, kept below the wall)")
+    ap.add_argument("--backlash-d", type=float, default=0.5, help="confirm: reversal distance (mm)")
+    ap.add_argument("--backlash-reps", type=int, default=5, help="confirm: reversals per position")
     ap.add_argument("--yes", action="store_true", help="skip the confirmation prompt")
     ap.add_argument("--out", type=Path, default=None)
     args = ap.parse_args(argv)
+    if args.wall_max > SAFE_MAX_MM:
+        sys.exit(f"--wall-max {args.wall_max} exceeds the safe ceiling {SAFE_MAX_MM} mm.")
 
     op = Operator(args.url)
     start = preflight(op)
+
+    if args.mode == "confirm":
+        print(f"Build-piston CONFIRM: start={start:.3f} mm. Wall probe "
+              f"{args.wall_from:.0f}->{args.wall_max:.0f} mm @ {args.wall_step:g} mm (stops on "
+              f"lost motion, never rams the end); backlash {args.backlash_reps}x "
+              f"+/-{args.backlash_d:g} mm at {args.backlash_at} mm.")
+        print("EMPTY BED ONLY. HOME the piston in the UI first so positions are from home. "
+              f"Returns to {start:.3f} mm when done.")
+        if not args.yes and input("Proceed? [y/N] ").strip().lower() not in ("y", "yes"):
+            return 1
+        try:
+            wall, bl_summary, rows = run_confirm(op, start, args)
+        except KeyboardInterrupt:
+            print("\ninterrupted — returning piston to start")
+            try:
+                op.move_abs(PART_AXIS, start)
+            except urllib.error.URLError:
+                pass
+            return 130
+        ts = datetime.now(UTC).strftime("%Y%m%d_%H%M%S")
+        out = args.out or Path(f"piston_confirm_{ts}.csv")
+        with out.open("w", newline="") as f:
+            w = csv.DictWriter(f, fieldnames=list(rows[0].keys()))
+            w.writeheader()
+            w.writerows(rows)
+        print(f"\nwrote {len(rows)} rows -> {out}")
+        print(json.dumps({"wall_mm": wall,
+                          "usable_ceiling_mm": None if wall is None else round(wall, 1),
+                          "backlash": bl_summary}, indent=2))
+        return 0
+
     n_targets = sum(max(1, round(args.span / s)) for s in args.step_sizes) * args.passes * 2
     print(f"Build-piston sweep: start={start:.3f} mm, span={args.span} mm, "
           f"step sizes {args.step_sizes} mm, {args.passes} passes, both directions.")
