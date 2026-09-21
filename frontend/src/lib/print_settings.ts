@@ -58,6 +58,7 @@ export interface PrintSettings {
   heater_enabled: boolean;
   settle_s: number;
   feed_backlash_mm: number;
+  build_backlash_mm: number; // build-piston anti-backlash: overshoot the drop, return to target
   feed_fast_speed: number;
   feed_fast_accel: number;
   capture_stages: boolean; // emit layerwise vision capture marks (OFF by default; no cameras yet)
@@ -105,7 +106,7 @@ export const DEFAULT_PLAN: PrintSettings = {
   printhead_home_mm: 5, printhead_end_mm: 900, printhead_multipass_return_mm: 250, printhead_start_mm: 250, part_max_mm: 72,
   purge_dwell_s: 0, purge_mode: "per_layer", purge_every_n_layers: 5, purge_position_mm: null,
   heater_speed: 50, heater_accel: 250, n_heater_passes: 1,
-  heater_enabled: false, settle_s: 1, feed_backlash_mm: 0, feed_fast_speed: 5, feed_fast_accel: 30,
+  heater_enabled: false, settle_s: 1, feed_backlash_mm: 0, build_backlash_mm: 0.15, feed_fast_speed: 5, feed_fast_accel: 30,
   capture_stages: false, capture_stages_enabled: ["pre_jet", "post_jet", "post_heat"],
   capture_recoater_mm: 0, capture_settle_s: 0.5, capture_hold_s: 2,
 };
@@ -210,9 +211,16 @@ export function compilePrint(plan: PrintSettings): Step[] {
       add(name, layerNo, "mark", null, null, "layer_start");
       // 1) PART DROP — thin_precoat & printing only (postcoat holds the part fixed). V1.py drops the
       // build piston FIRST, before the recoater repositions or the feed supplies powder.
+      // Anti-backlash: overshoot the drop DOWN by build_backlash_mm, then return UP to the target
+      // (net descent = layer_thickness), so the drop is approached one-sided. Mirrors the backend.
       if (PART_DROP_PHASES.has(name)) {
-        add(name, layerNo, "move_rel", PART, ph.layer_thickness_mm);
+        const bl = plan.build_backlash_mm;
+        add(name, layerNo, "move_rel", PART, ph.layer_thickness_mm + bl);
         add(name, layerNo, "wait");
+        if (bl > 0) {
+          add(name, layerNo, "move_rel", PART, -bl, "build backlash return");
+          add(name, layerNo, "wait");
+        }
       }
 
       // 2) REPOSITION — recoater past the feed piston out to the far end, so it can spread on the way

@@ -14,9 +14,10 @@ test("estimate scales with layers and is in a sane range", () => {
 });
 
 test("estimate matches the backend golden for the default plan (#6 FE/backend determinism)", () => {
-  // Pinned to backend estimate_duration_s(PrintSettings(), 0.25) == 391.4. The two implementations
+  // Pinned to backend estimate_duration_s(PrintSettings(), 0.25) == 395.0 (default now includes the
+  // 0.15 mm build backlash overshoot+return). The two implementations
   // must agree at the SAME wait floor, so the displayed estimate equals what the print actually runs.
-  assert.equal(estimateDurationS(DEFAULT_PLAN, 0.25), 391.4);
+  assert.equal(estimateDurationS(DEFAULT_PLAN, 0.25), 395.0);
   // Deterministic: identical inputs → identical output, always.
   assert.equal(estimateDurationS(DEFAULT_PLAN, 0.25), estimateDurationS(DEFAULT_PLAN, 0.25));
 });

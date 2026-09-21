@@ -162,11 +162,12 @@ class PrintSettings:
     settle_s: float = 1.0  # V1.py's time.sleep(1) after the feed piston move
     feed_backlash_mm: float = 0.0  # opt-in: drop the feed this much BEFORE the spread; the
     # post-spread feed-up covers it too (net advance unchanged, approached from below to take slop)
-    # Opt-in anti-backlash on the BUILD-piston layer drop: overshoot DOWN past the layer target by
-    # this much, then return UP to it (net descent = layer_thickness). The piston sweep (2026-09-16)
-    # showed ~0.15 mm takes 0.1-0.3 mm layer steps from ~55-67% on-target to ~100% (backlash
-    # <0.1 mm, so the drop/double "interlayer scatter" is real, compensable lost-motion). 0 = off.
-    build_backlash_mm: float = 0.0
+    # Anti-backlash on the BUILD-piston layer drop: overshoot DOWN past the layer target by this
+    # much, then return UP to it (net descent = layer_thickness), so the drop is always approached
+    # from one side and lost-motion is taken up. ON by default at 0.15 mm: the 2026-09-16 sweep took
+    # 0.1-0.3 mm steps from ~55-67% on-target to ~100%, and the 2026-09-18 sweep (4056 pts) showed
+    # 0.15 mm cuts mean step error 0.046 -> 0.007 mm (6.5x). Set 0 for the V1.py-faithful move.
+    build_backlash_mm: float = 0.15
     feed_fast_speed: float = 5.0  # V1.py:95 used 1000 mm/s; bounded to the feed limit
     feed_fast_accel: float = 30.0  # V1.py:96 used 500
     # Heater-exposure model inputs (spec §8; consumed by heater_model.exposure).
