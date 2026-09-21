@@ -385,6 +385,37 @@ def test_part_height_measured_from_piston_zero() -> None:
         c.stop()
 
 
+def test_absolute_layer_seat_reaches_datum_plus_cumulative_no_drift() -> None:
+    # With absolute_layer_seat ON, seat_part -> move_absolute(part_zero + cumulative), so the
+    # piston reaches datum + total commanded descent EXACTLY, regardless of the hand-placed
+    # and the pre-heater clearance drop. Proves the runtime datum offset + no accumulation.
+    rc, c, _ = make()
+    heights: list[float] = []
+    rc.on_event = lambda label, data: (
+        heights.append(rc.snapshot()["part_height_measured_mm"])
+        if label == "layer_completed" else None
+    )
+    try:
+        c.arm()
+        c.home_all()
+        assert wait(lambda: (c.snapshot()["telemetry"] or {}).get("positions", {}).get("1") == 0)
+        c.move_absolute(1, 20)  # primed datum at 20 mm (not 0) — the offset must be applied
+        assert wait(lambda: (c.snapshot()["telemetry"] or {})["positions"]["1"] == 20)
+        plan = dataclasses.replace(
+            fast_plan(n_print=2, heater=True),
+            absolute_layer_seat=True, pre_heater_drop_mm=0.5, build_backlash_mm=0.1,
+        )
+        rc.start(plan)
+        assert rc.snapshot()["part_zero_mm"] == 20.0
+        assert wait(lambda: rc.snapshot()["state"] == "done", timeout=60)
+        # measured build height at each layer completion tracks the ABSOLUTE cumulative (1.0, 2.0),
+        # not a drifting relative sum, independent of the 20 mm datum and the 0.5 mm heat drop.
+        assert heights and heights[-1] == pytest.approx(2.0, abs=0.05)
+        assert heights == [pytest.approx(1.0, abs=0.05), pytest.approx(2.0, abs=0.05)]
+    finally:
+        c.stop()
+
+
 def test_capture_marks_pass_through_to_events() -> None:
     """Defect A: a ``capture:*`` mark must reach the EventLog with its own label, NOT remapped
     to ``layer_completed``. This is the controller -> on_event -> EventLog path that VisionService

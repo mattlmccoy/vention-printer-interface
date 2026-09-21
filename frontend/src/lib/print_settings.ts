@@ -70,6 +70,7 @@ export interface PrintSettings {
   settle_s: number;
   feed_backlash_mm: number;
   build_backlash_mm: number; // build-piston anti-backlash: overshoot the drop, return to target
+  absolute_layer_seat: boolean; // opt-in: position the build piston by ABSOLUTE seat (no drift); false = relative
   feed_fast_speed: number;
   feed_fast_accel: number;
   capture_stages: boolean; // emit layerwise vision capture marks (OFF by default; no cameras yet)
@@ -117,12 +118,12 @@ export const DEFAULT_PLAN: PrintSettings = {
   printhead_home_mm: 5, printhead_end_mm: 900, printhead_multipass_return_mm: 250, printhead_start_mm: 250, part_max_mm: 72, build_piston_max_mm: 72, feed_piston_max_mm: 72,
   purge_dwell_s: 0, purge_mode: "per_layer", purge_every_n_layers: 5, purge_position_mm: null,
   heater_speed: 50, heater_accel: 250, n_heater_passes: 1,
-  heater_enabled: false, settle_s: 1, feed_backlash_mm: 0, build_backlash_mm: 0, feed_fast_speed: 5, feed_fast_accel: 30,
+  heater_enabled: false, settle_s: 1, feed_backlash_mm: 0, build_backlash_mm: 0, absolute_layer_seat: false, feed_fast_speed: 5, feed_fast_accel: 30,
   capture_stages: false, capture_stages_enabled: ["pre_jet", "post_jet", "post_heat"],
   capture_recoater_mm: 0, capture_settle_s: 0.5, capture_hold_s: 2,
 };
 
-export type StepKind = "home" | "set_speed" | "set_accel" | "move_abs" | "move_rel" | "wait" | "dwell" | "heater" | "mark";
+export type StepKind = "home" | "set_speed" | "set_accel" | "move_abs" | "move_rel" | "seat_part" | "wait" | "dwell" | "heater" | "mark";
 export interface Step {
   index: number;
   phase: string;
@@ -235,11 +236,20 @@ export function compilePrint(plan: PrintSettings): Step[] {
         const seat = name === "printing" && capturesOn
           ? Math.max(plan.build_backlash_mm, CAPTURE_SEAT_MM)
           : plan.build_backlash_mm;
-        add(name, layerNo, "move_rel", PART, ph.layer_thickness_mm + seat);
-        add(name, layerNo, "wait");
-        if (seat > 0) {
-          add(name, layerNo, "move_rel", PART, -seat, "build backlash return");
+        if (plan.absolute_layer_seat) {
+          // ABSOLUTE: seat_part carries the cumulative commanded height; the controller moves to
+          // (primed datum + height). Overshoot to height+seat (down), return to height (up). Mirrors backend.
+          add(name, layerNo, "seat_part", PART, height + seat);
           add(name, layerNo, "wait");
+          add(name, layerNo, "seat_part", PART, height, "build seat");
+          add(name, layerNo, "wait");
+        } else {
+          add(name, layerNo, "move_rel", PART, ph.layer_thickness_mm + seat);
+          add(name, layerNo, "wait");
+          if (seat > 0) {
+            add(name, layerNo, "move_rel", PART, -seat, "build backlash return");
+            add(name, layerNo, "wait");
+          }
         }
       }
 
@@ -326,7 +336,11 @@ export function compilePrint(plan: PrintSettings): Step[] {
         add(name, layerNo, "set_speed", RECOATER, ph.recoater_speed);
         add(name, layerNo, "set_accel", RECOATER, ph.recoater_accel);
       }
-      if (plan.pre_heater_drop_mm > 0) {
+      if (plan.absolute_layer_seat && PART_DROP_PHASES.has(name) && plan.pre_heater_drop_mm > 0) {
+        // Absolute re-seat to the layer plane after the clearance drop/heat (from below). Mirrors backend.
+        add(name, layerNo, "seat_part", PART, height, "raise to layer (re-seat)");
+        add(name, layerNo, "wait");
+      } else if (plan.pre_heater_drop_mm > 0) {
         add(name, layerNo, "move_rel", PART, -plan.pre_heater_drop_mm, "raise to layer");
         add(name, layerNo, "wait");
       }
@@ -361,6 +375,7 @@ export function describeStep(s: Step | null | undefined): string {
     case "set_accel": return `${ax} accel ${s.value} mm/s²`;
     case "move_abs": return `${ax} → ${s.value} mm`;
     case "move_rel": return `${ax} ${s.value! >= 0 ? "+" : ""}${s.value} mm`;
+    case "seat_part": return `${ax} seat → ${s.value} mm (abs)`;
     case "wait": return "wait for motion";
     case "dwell": return `dwell ${s.value}s`;
     case "heater": return s.value ? "heater ON" : "heater off";

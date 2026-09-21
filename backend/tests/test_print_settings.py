@@ -279,6 +279,51 @@ def test_build_backlash_preload_overshoots_the_part_drop() -> None:
     )
 
 
+def _two_printing_layers_heated() -> PrintSettings:
+    p = PrintSettings()
+    return dataclasses.replace(
+        p,
+        thin_precoat=dataclasses.replace(p.thin_precoat, n_layers=0),
+        printing=dataclasses.replace(p.printing, n_layers=2, layer_thickness_mm=0.2),
+        postcoat=dataclasses.replace(p.postcoat, n_layers=0),
+        heater_enabled=True, pre_heater_drop_mm=1.0, build_backlash_mm=0.1,
+        capture_stages=False,
+    )
+
+
+def test_absolute_layer_seat_defaults_off() -> None:
+    # Opt-in: the default stays the well-tested V1.py-faithful RELATIVE motion, so enabling the fix
+    # is a deliberate, instantly-revertible choice (toggle off -> known-good behavior).
+    assert PrintSettings().absolute_layer_seat is False
+
+
+def test_absolute_seat_emits_absolute_cumulative_targets_no_accumulation() -> None:
+    # With the flag ON, the build piston is positioned by ABSOLUTE seat_part steps carrying the
+    # cumulative commanded height (from the primed datum), so per-layer error can't accumulate. The
+    # descent seats from below (overshoot to h+seat, return to h); the post-heater raise re-seats to
+    # the SAME absolute h (fixing both drift and the post_heat plane).
+    p = dataclasses.replace(_two_printing_layers_heated(), absolute_layer_seat=True)  # seat=0.1
+    seats = [(s.layer, round(s.value, 4)) for s in compile_print(p)
+             if s.kind == "seat_part" and s.axis == PART]
+    # layer 1 target cumulative = 0.2; layer 2 = 0.4 (ABSOLUTE, not relative 0.2 each)
+    assert seats == [
+        (1, 0.3), (1, 0.2),   # descent: overshoot to 0.2+0.1, return to 0.2
+        (1, 0.2),             # post-heater re-seat to absolute 0.2
+        (2, 0.5), (2, 0.4),   # descent: overshoot to 0.4+0.1, return to 0.4
+        (2, 0.4),             # post-heater re-seat to absolute 0.4
+    ]
+    # no relative build move_rel remains for the drop when the flag is on
+    assert not any(s.kind == "move_rel" and s.axis == PART and (s.label or "").startswith("build")
+                   for s in compile_print(p))
+
+
+def test_absolute_seat_off_keeps_relative_behavior() -> None:
+    p = _two_printing_layers_heated()  # default: absolute_layer_seat False
+    # flag OFF (default): the relative drop is used and there are no seat_part steps
+    assert any(s.kind == "move_rel" and s.axis == PART for s in compile_print(p))
+    assert not any(s.kind == "seat_part" for s in compile_print(p))
+
+
 def test_captures_force_a_build_up_seat_even_when_backlash_is_zero() -> None:
     from vention_printer_interface.control.print_settings import CAPTURE_SEAT_MM
     # Mechanical slop couples build-piston direction to the print-plane position (<1 mm). The
