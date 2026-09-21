@@ -1,6 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { calibrationReady, cameraAccessMessage, captureLayerFull, captureLayerShort, defaultStage, dismissQuickStart, formatCaptureMetaValue, formatValidation, overviewStreamUrl, panelVisible, parseCaptures, setPanelVisible, shouldShowQuickStart, visibleCaptures, type Capture } from "./vision.ts";
+import { calibrationReady, cameraAccessMessage, captureLayerFull, captureLayerShort, defaultStage, dismissQuickStart, formatCaptureMetaValue, formatValidation, overviewStreamUrl, panelVisible, parseCaptures, setPanelVisible, shouldShowQuickStart, stageComparableToCad, stepWithinStage, visibleCaptures, type Capture } from "./vision.ts";
 
 const _caps: Capture[] = [
   { layer: 3, stage: "pre_jet", url: "/a" },
@@ -8,6 +8,22 @@ const _caps: Capture[] = [
   { layer: 3, stage: "post_heat", url: "/c" },
   { layer: 4, stage: "post_jet", url: "/d" },
 ];
+
+test("stepWithinStage navigates only within the opened still's stage, clamped at ends", () => {
+  // _caps: [0 pre_jet L3, 1 post_jet L3, 2 post_heat L3, 3 post_jet L4]
+  // from post_jet@1, next post_jet is index 3 (skips post_heat@2); prev clamps to 1.
+  assert.equal(stepWithinStage(_caps, 1, 1), 3);
+  assert.equal(stepWithinStage(_caps, 3, 1), 3);   // last post_jet -> stays
+  assert.equal(stepWithinStage(_caps, 3, -1), 1);  // back to the first post_jet
+  assert.equal(stepWithinStage(_caps, 1, -1), 1);  // first post_jet -> stays
+  assert.equal(stepWithinStage(_caps, 2, 1), 2);   // lone post_heat -> stays
+});
+
+test("stageComparableToCad: only post_jet and post_heat compare to CAD (never pre_jet)", () => {
+  assert.equal(stageComparableToCad("post_jet"), true);
+  assert.equal(stageComparableToCad("post_heat"), true);
+  assert.equal(stageComparableToCad("pre_jet"), false);
+});
 
 test("visibleCaptures keeps only selected stages and preserves original indices", () => {
   const shown = visibleCaptures(_caps, ["post_jet"]);

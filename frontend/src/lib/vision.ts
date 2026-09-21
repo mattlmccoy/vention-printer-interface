@@ -190,6 +190,25 @@ export function visibleCaptures(caps: readonly Capture[], selectedStages: readon
   return out;
 }
 
+// Stages worth comparing to the CAD slice: the printed geometry exists only AFTER jetting, so a
+// pre-jet still (bare powder) has nothing to compare. Only post-jet and post-heat map to the CAD.
+export function stageComparableToCad(stage: string): boolean {
+  return stage === "post_jet" || stage === "post_heat";
+}
+
+// Next/prev capture WITHIN the same stage as caps[currentIndex] (so the lightbox stays on the stage
+// the operator selected, not cycling through every stage). Returns a global caps index; clamps at
+// the ends and returns currentIndex when there is no neighbor in that stage.
+export function stepWithinStage(caps: readonly Capture[], currentIndex: number, dir: 1 | -1): number {
+  const cur = caps[currentIndex];
+  if (!cur) return currentIndex;
+  const sameStage = visibleCaptures(caps, [cur.stage]).map((x) => x.index);
+  const pos = sameStage.indexOf(currentIndex);
+  if (pos < 0) return currentIndex;
+  const next = pos + dir;
+  return next >= 0 && next < sameStage.length ? sameStage[next] : currentIndex;
+}
+
 /** The stage the Runs stills grid should show by default: the first stage in `order` that actually
  *  has captures for this run (so the single-select filter always opens on a populated stage), or the
  *  first stage in `order` when nothing was captured. Pure. */
