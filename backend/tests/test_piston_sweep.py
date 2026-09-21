@@ -60,6 +60,14 @@ def test_wall_reached_trips_only_when_advance_stops() -> None:
     assert wr([0.0, 0.0], 0.2) is True             # dead against the stop
 
 
+def test_median_is_robust_to_an_outlier_rep() -> None:
+    md = piston_sweep.median
+    assert md([-0.4, -0.6, -0.7, 0.2, -0.1]) == -0.4   # the +0.2 outlier doesn't move the middle
+    assert md([-0.6]) == -0.6
+    assert md([-0.6, -0.4]) == -0.5                     # even count → mean of the two middles
+    assert md([]) == 0.0
+
+
 def test_backlash_from_pair_is_the_bidirectional_gap() -> None:
     bp = piston_sweep.backlash_from_pair
     # target reached descending settles 0.15 mm deeper than reached ascending → 0.15 mm lash

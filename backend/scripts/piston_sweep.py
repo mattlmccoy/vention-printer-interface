@@ -70,6 +70,17 @@ def wall_reached(actual_steps: list[float], step_mm: float) -> bool:
     return (actual_steps[-1] + actual_steps[-2]) <= step_mm * 0.5 + 1e-9
 
 
+def median(values: list[float]) -> float:
+    """Median of the values (mean of the two middles for an even count); 0.0 for an empty list.
+    Used to summarize the per-rep backlash robustly — one sticky rep can't skew it like a mean."""
+    if not values:
+        return 0.0
+    s = sorted(values)
+    n = len(s)
+    mid = n // 2
+    return s[mid] if n % 2 else round((s[mid - 1] + s[mid]) / 2, 4)
+
+
 def backlash_from_pair(approached_descending: float, approached_ascending: float) -> float:
     """Bidirectional backlash at a target = the gap between the settled position reached moving
     DOWN (descending, position increasing) and moving UP (ascending) to the SAME commanded target.
@@ -157,6 +168,9 @@ class Operator:
 
     def move_abs(self, axis: int, mm: float) -> dict[str, Any]:
         return self._req("POST", "/api/motion/move", {"axis": axis, "mode": "abs", "mm": mm})
+
+    def set_print_settings(self, patch: dict[str, Any]) -> dict[str, Any]:
+        return self._req("PUT", "/api/print-settings", patch)
 
     def settle(self, axis: int, poll_s: float = 0.05, stable_needed: int = 3,
                timeout_s: float = 30.0, tol: float = READOUT_MM) -> float:
@@ -306,14 +320,23 @@ def probe_backlash(op: Operator, positions: list[float], d_mm: float, reps: int,
             rows.append({"mode": "backlash", "ref_mm": p, "rep": r, "commanded_mm": p,
                          "actual_mm": round(a_asc, 4), "deviation_mm": None,
                          "step_actual_mm": None, "backlash_mm": bl})
-        summary.append({"ref_mm": p, "backlash_mean_mm": round(sum(vals) / len(vals), 4),
-                        "reps": vals})
+        mags = [abs(v) for v in vals]
+        summary.append({
+            "ref_mm": p,
+            "backlash_median_mm": median(vals),
+            "backlash_mag_median_mm": median(mags),  # recommended comp magnitude at this position
+            "backlash_min_mm": min(vals),
+            "backlash_max_mm": max(vals),
+            "reps": vals,
+        })
     return rows, summary
 
 
 def run_confirm(op: Operator, start: float, args: argparse.Namespace,
-                ) -> tuple[float | None, list[dict[str, Any]], list[dict[str, Any]]]:
-    """Short targeted characterization: locate the travel wall, then measure backlash below it."""
+                ) -> tuple[float | None, float, list[dict[str, Any]], list[dict[str, Any]]]:
+    """Short targeted characterization: locate the travel wall, then measure backlash below it.
+    Returns ``(wall_mm, recommended_comp_mm, per-position summary, rows)`` where the recommended
+    comp is the median backlash magnitude across positions (snapped to the 0.1 mm readout)."""
     wall_from = args.wall_from
     print(f"Wall probe: fine {args.wall_step:g} mm steps from {wall_from:.1f} up to "
           f"<= {args.wall_max:.1f} mm; stops the instant motion is lost.")
@@ -331,7 +354,16 @@ def run_confirm(op: Operator, start: float, args: argparse.Namespace,
     bl_rows, bl_summary = probe_backlash(op, positions, args.backlash_d, args.backlash_reps)
     op.move_abs(PART_AXIS, start)  # return to where we started
     op.settle(PART_AXIS)
-    return wall, bl_summary, wall_rows + bl_rows
+    # Recommended anti-backlash comp = median across positions of each position's median |backlash|,
+    # snapped to the 0.1 mm readout (never below one count when any lash was seen).
+    per_pos = [float(s["backlash_mag_median_mm"]) for s in bl_summary]
+    recommended = round(median(per_pos) / READOUT_MM) * READOUT_MM if per_pos else 0.0
+    if per_pos and recommended < READOUT_MM and max(per_pos) > 0:
+        recommended = READOUT_MM
+    recommended = round(recommended, 4)
+    print(f"  recommended build_backlash_mm ~ {recommended:g} mm "
+          f"(median |lash| across {len(per_pos)} positions).")
+    return wall, recommended, bl_summary, wall_rows + bl_rows
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -348,13 +380,17 @@ def main(argv: list[str] | None = None) -> int:
     # --wall-from and STOPS the instant motion is lost (never rams the end); caps at --wall-max.
     # DEFAULTS ASSUME THE BUILD PISTON IS ATTACHED (usable range ~72 mm — the normal case). For the
     # BARE actuator (~130 mm stroke) pass --wall-from 120 --wall-max 138 --backlash-at 30 70 110.
-    ap.add_argument("--wall-from", type=float, default=60.0, help="confirm: wall-probe start (mm)")
+    ap.add_argument("--wall-from", type=float, default=55.0, help="confirm: wall-probe start (mm)")
     ap.add_argument("--wall-step", type=float, default=0.2, help="confirm: wall-probe step (mm)")
-    ap.add_argument("--wall-max", type=float, default=78.0, help="confirm: hard cap (mm)")
-    ap.add_argument("--backlash-at", type=float, nargs="+", default=[20.0, 40.0, 60.0],
+    ap.add_argument("--wall-max", type=float, default=74.0, help="confirm: hard cap (mm)")
+    ap.add_argument("--backlash-at", type=float, nargs="+", default=[15.0, 30.0, 45.0, 55.0],
                     help="confirm: positions to measure backlash (mm, kept below the wall)")
-    ap.add_argument("--backlash-d", type=float, default=0.5, help="confirm: reversal distance (mm)")
-    ap.add_argument("--backlash-reps", type=int, default=5, help="confirm: reversals per position")
+    # A 2 mm reversal fully develops the ~0.5 mm attached-piston lash (0.5 mm barely cleared it);
+    # 8 reps + a median summary reject the occasional sticky rep.
+    ap.add_argument("--backlash-d", type=float, default=2.0, help="confirm: reversal distance (mm)")
+    ap.add_argument("--backlash-reps", type=int, default=8, help="confirm: reversals per position")
+    ap.add_argument("--apply", action="store_true",
+                    help="confirm: write the recommended build_backlash_mm into the print settings")
     ap.add_argument("--yes", action="store_true", help="skip the confirmation prompt")
     ap.add_argument("--out", type=Path, default=None)
     args = ap.parse_args(argv)
@@ -374,7 +410,7 @@ def main(argv: list[str] | None = None) -> int:
         if not args.yes and input("Proceed? [y/N] ").strip().lower() not in ("y", "yes"):
             return 1
         try:
-            wall, bl_summary, rows = run_confirm(op, start, args)
+            wall, recommended, bl_summary, rows = run_confirm(op, start, args)
         except KeyboardInterrupt:
             print("\ninterrupted — returning piston to start")
             try:
@@ -382,6 +418,12 @@ def main(argv: list[str] | None = None) -> int:
             except urllib.error.URLError:
                 pass
             return 130
+        if args.apply:
+            try:
+                op.set_print_settings({"build_backlash_mm": recommended})
+                print(f"applied build_backlash_mm={recommended:g} mm to the print settings.")
+            except urllib.error.URLError as exc:
+                print(f"could not apply build_backlash_mm ({exc}); set it manually.")
         ts = datetime.now(UTC).strftime("%Y%m%d_%H%M%S")
         out = args.out or Path(f"piston_confirm_{ts}.csv")
         with out.open("w", newline="") as f:
@@ -391,6 +433,7 @@ def main(argv: list[str] | None = None) -> int:
         print(f"\nwrote {len(rows)} rows -> {out}")
         print(json.dumps({"wall_mm": wall,
                           "usable_ceiling_mm": None if wall is None else round(wall, 1),
+                          "recommended_build_backlash_mm": recommended,
                           "backlash": bl_summary}, indent=2))
         return 0
 
