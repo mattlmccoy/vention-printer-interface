@@ -61,6 +61,15 @@ def settle_update(
     return window, None
 
 
+def settle_ready(saw_incomplete: bool, elapsed_s: float, start_grace_s: float) -> bool:
+    """Whether settle() may start ACCEPTING a completed+stable reading. Guards against the V1.py
+    race where motion_complete is still True from the PREVIOUS move for a few polls after a new move
+    is issued — accepting then would return the stale pre-move position. Ready once we've seen the
+    move register (motion_complete went False) OR the start grace elapsed (a no-op move already at
+    target never goes incomplete, so don't wait forever)."""
+    return saw_incomplete or elapsed_s >= start_grace_s
+
+
 def wall_reached(actual_steps: list[float], step_mm: float) -> bool:
     """True once the piston stops advancing against its mechanical end: the last two up-steps
     together advance less than half of ONE commanded step (motion is being lost). Requires two
@@ -173,27 +182,36 @@ class Operator:
         return self._req("PUT", "/api/print-settings", patch)
 
     def settle(self, axis: int, poll_s: float = 0.05, stable_needed: int = 3,
-               timeout_s: float = 30.0, tol: float = READOUT_MM) -> float:
+               timeout_s: float = 30.0, tol: float = READOUT_MM,
+               start_grace_s: float = 0.4) -> float:
         """Wait until the axis reports motion complete and its position is at rest (stable to within
-        one encoder count across a few polls); return the settled position. On timeout the error
-        says whether motion_complete was ever seen — distinguishing a physical stall (never
-        complete) from a position that kept dithering (complete but never quiet)."""
+        one encoder count across a few polls); return the settled position. First waits for the move
+        to REGISTER (motion_complete going False, or the start grace for a no-op move) so a stale
+        'still complete from the last move' reading can't return the pre-move position. On timeout
+        the error says whether motion_complete was ever seen (physical stall vs a dithering pos)."""
         window: list[float] = []
         complete_ever = False
+        saw_incomplete = False
         seen: list[float] = []
-        end = time.monotonic() + timeout_s
+        t0 = time.monotonic()
+        end = t0 + timeout_s
         while time.monotonic() < end:
             tel = (self.status().get("controller") or {}).get("telemetry") or {}
             complete = bool((tel.get("motion_complete") or {}).get(str(axis)))
             pos = (tel.get("positions") or {}).get(str(axis))
             complete_ever = complete_ever or complete
-            if pos is not None:
+            if not complete:
+                saw_incomplete = True
+            ready = settle_ready(saw_incomplete, time.monotonic() - t0, start_grace_s)
+            if ready and pos is not None:
                 seen = (seen + [float(pos)])[-8:]
                 window, settled = settle_update(
                     window, float(pos), complete=complete, tol=tol, need=stable_needed
                 )
                 if settled is not None:
                     return settled
+            elif pos is not None:
+                window = []  # move not registered yet — drop pre-move samples (no false "stable")
             time.sleep(poll_s)
         raise TimeoutError(
             f"axis {axis} did not settle within {timeout_s}s "
