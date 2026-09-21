@@ -45,6 +45,9 @@ export interface PrintSettingsPayload { plan: Record<string, unknown>; validatio
 export interface AxisMotion { max_speed: number | null; max_accel: number | null; bounds: { max_speed: [number, number]; max_accel: [number, number] }; limit_speed: number; limit_accel: number }
 export interface PrimingPayload { settings: Record<string, number>; validation: string[]; n_steps: number; n_thick_precoats: number; limits: Record<string, unknown> }
 export interface PrimedPayload { primed: { part_mm: number; feed_mm: number; captured_at: number } | null }
+export interface BacklashPositionResult { ref_mm: number; backlash_median_mm: number; backlash_mag_median_mm: number; reps_mm: number[] }
+export interface BacklashResult { axis: number; recommended_mm: number; cancelled: boolean; positions: BacklashPositionResult[] }
+export interface BacklashSession { state: "idle" | "running" | "done" | "cancelled" | "error"; axis: number | null; progress: { done: number; total: number }; current_ref_mm: number | null; result: BacklashResult | null; error: string | null }
 export interface VisionStatus { cameras: string[]; calibration: string | null; queue: { drops: number }; active: boolean; roles_resolved: boolean; unresolved: string[] }
 export interface VisionCameraSpec { role: string; index: number; path: string | null; backend: number | null; width: number | null; height: number | null }
 export interface VisionCameras { overview: VisionCameraSpec; science: VisionCameraSpec }
@@ -178,6 +181,10 @@ export const api = {
   operatorRestart: () => req<{ ok: boolean; restarting_in_s: number }>("POST", "/api/operator/restart"),
   move: (axis: number, mode: "abs" | "rel", mm: number) => req<{ applied_mm: number }>("POST", "/api/motion/move", { axis, mode, mm }),
   stop: () => req<StatusPayload>("POST", "/api/motion/stop", {}),
+  backlashStart: (body: { axis: number; positions?: number[]; d_mm?: number; reps?: number }) => req<BacklashSession>("POST", "/api/motion/backlash/session", body),
+  backlashStatus: () => req<BacklashSession>("GET", "/api/motion/backlash/session"),
+  backlashCancel: () => req<BacklashSession>("POST", "/api/motion/backlash/cancel"),
+  backlashApply: (axis: number) => req<PrintSettingsPayload>("POST", "/api/motion/backlash/apply", { axis }),
   axisMotion: (n: number) => req<AxisMotion>("GET", `/api/axes/${n}/motion`),
   setAxisMotion: (n: number, body: { max_speed?: number; max_accel?: number }) => req<AxisMotion>("PUT", `/api/axes/${n}/motion`, body),
   limits: () => req<Record<string, unknown>>("GET", "/api/safety-limits"),

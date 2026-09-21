@@ -44,6 +44,12 @@ from vention_printer_interface.analysis.dimensional import (
     load_report,
 )
 from vention_printer_interface.analysis.lane_b import analyze_lane_b_from_pngs
+from vention_printer_interface.control.backlash_cal import (
+    default_positions,
+    preflight_problems,
+    validate_probe,
+)
+from vention_printer_interface.control.backlash_routine import BacklashRoutine
 from vention_printer_interface.control.controller import REFERENCE_MATCH_TOL_MM, Controller
 from vention_printer_interface.control.events import EventLog
 from vention_printer_interface.control.heater_model import exposure
@@ -65,6 +71,7 @@ from vention_printer_interface.control.print_settings_store import (
 )
 from vention_printer_interface.control.reference_store import load_reference, save_reference
 from vention_printer_interface.control.safety import HARD_BOUNDS, SafetyLimits
+from vention_printer_interface.control.settle import settle
 from vention_printer_interface.device import create_transport, registered_transports
 from vention_printer_interface.device.printer import PrinterDevice
 from vention_printer_interface.jobs.store import (
@@ -269,6 +276,32 @@ class MoveBody(BaseModel):
 
 class StopBody(BaseModel):
     axes: list[int] = Field(default_factory=list)
+
+
+class ControllerMover:
+    """Adapts the live controller to the backlash routine's ``Mover`` protocol: absolute moves plus
+    an in-process settle that polls the controller snapshot (same settle logic as the sweep)."""
+
+    def __init__(self, controller: Any, settle_timeout_s: float = 30.0) -> None:
+        self._ctrl = controller
+        self._timeout_s = settle_timeout_s
+
+    def move_abs(self, axis: int, mm: float) -> None:
+        self._ctrl.move_absolute(axis, mm)
+
+    def settle(self, axis: int) -> float:
+        return settle(self._ctrl.snapshot, axis, timeout_s=self._timeout_s)
+
+
+class BacklashStartBody(BaseModel):
+    axis: int = Field(ge=1, le=2)  # 1 = build piston, 2 = feed piston
+    positions: list[float] | None = None  # None -> safe defaults from the piston's max travel
+    d_mm: float = Field(default=2.0, gt=0)
+    reps: int = Field(default=8, ge=1, le=50)
+
+
+class BacklashApplyBody(BaseModel):
+    axis: int = Field(ge=1, le=2)
 
 
 class AxisMotionBody(BaseModel):
@@ -1226,6 +1259,77 @@ def create_app(
         ev("stop", {"axes": body.axes or "all"})
         return status_payload()
 
+    # ---- piston backlash calibration --------------------------------------------------------
+    def backlash_routine() -> BacklashRoutine | None:
+        return getattr(app.state, "backlash_routine", None)
+
+    def piston_max_mm(axis: int) -> float:
+        plan: PrintSettings = app.state.print_settings
+        return plan.build_piston_max_mm if axis == 1 else plan.feed_piston_max_mm
+
+    @app.post("/api/motion/backlash/session")
+    def backlash_start(body: BacklashStartBody) -> dict[str, Any]:
+        running = backlash_routine()
+        if running is not None and running.snapshot()["state"] == "running":
+            raise HTTPException(409, "a backlash calibration is already running")
+        print_running = printer().state in (PrintState.RUNNING, PrintState.PAUSED)
+        snap = ctrl().snapshot()
+        problems = preflight_problems(snap, body.axis, print_running)
+        if problems:
+            raise HTTPException(409, "cannot calibrate backlash: " + "; ".join(problems))
+        max_mm = piston_max_mm(body.axis)
+        positions = body.positions or default_positions(max_mm)
+        try:
+            validate_probe(max_mm, positions, body.d_mm)
+        except ValueError as exc:
+            raise HTTPException(400, str(exc)) from exc
+        pos = ((snap.get("telemetry") or {}).get("positions") or {}).get(str(body.axis))
+        if pos is None:
+            raise HTTPException(409, f"no position reported for axis {body.axis} yet")
+        start_mm = float(pos)
+        routine = BacklashRoutine(
+            ControllerMover(ctrl()), body.axis, positions, body.d_mm, body.reps,
+            return_to_mm=start_mm,
+        )
+        app.state.backlash_routine = routine
+        routine.start_thread()
+        ev("backlash_cal_start", {"axis": body.axis, "positions": positions, "d_mm": body.d_mm})
+        return routine.snapshot()
+
+    @app.get("/api/motion/backlash/session")
+    def backlash_status() -> dict[str, Any]:
+        routine = backlash_routine()
+        if routine is None:
+            return {"state": "idle", "axis": None, "progress": {"done": 0, "total": 0},
+                    "current_ref_mm": None, "result": None, "error": None}
+        return routine.snapshot()
+
+    @app.post("/api/motion/backlash/cancel")
+    def backlash_cancel() -> dict[str, Any]:
+        routine = backlash_routine()
+        if routine is None:
+            raise HTTPException(409, "no backlash calibration to cancel")
+        routine.cancel()
+        ev("backlash_cal_cancel", {})
+        return routine.snapshot()
+
+    @app.post("/api/motion/backlash/apply")
+    def backlash_apply(body: BacklashApplyBody) -> dict[str, Any]:
+        routine = backlash_routine()
+        snap = routine.snapshot() if routine is not None else None
+        if snap is None or snap["state"] != "done" or snap["result"] is None:
+            raise HTTPException(409, "no completed backlash measurement to apply")
+        if snap["result"]["axis"] != body.axis:
+            raise HTTPException(409, f"last measurement was for axis {snap['result']['axis']}")
+        field = "build_backlash_mm" if body.axis == 1 else "feed_backlash_mm"
+        recommended = float(snap["result"]["recommended_mm"])
+        current = app.state.print_settings.to_dict()
+        current[field] = recommended
+        app.state.print_settings = PrintSettings.bounded(current, ctrl().limits)
+        save_print_settings(root, app.state.print_settings)
+        ev("backlash_cal_apply", {"axis": body.axis, field: recommended})
+        return print_settings_payload()
+
     @app.get("/api/axes/{axis}/motion")
     def axis_motion(axis: int) -> dict[str, Any]:
         check_axis(axis)
@@ -1305,6 +1409,9 @@ def create_app(
 
     @app.post("/api/print/start")
     def print_start(body: PrintStartBody) -> dict[str, Any]:
+        cal = backlash_routine()
+        if cal is not None and cal.snapshot()["state"] == "running":
+            raise HTTPException(409, "a backlash calibration is running; cancel it before printing")
         if getattr(app.state, "primed", None) is None:
             raise HTTPException(
                 409,

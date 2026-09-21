@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from "react";
-import { api, type VisionCalibrateResult } from "../../lib/api.ts";
+import { api, type BacklashSession, type VisionCalibrateResult } from "../../lib/api.ts";
 import type { Gates } from "../../lib/format.ts";
 import type { StatusPayload } from "../../lib/telemetry.ts";
 import { loadRoleMap } from "../../lib/camera_roles.ts";
@@ -13,6 +13,89 @@ import { pistonMaxPatch, type PistonField } from "../../lib/pistons.ts";
 import type { Call } from "./types.ts";
 
 const PISTON_STEPS = [0.1, 1, 5, 10] as const;
+
+/** Server-side backlash calibration for one piston: drives ±d reversals at several depths, measures
+ *  the bidirectional lost motion, and (on Apply) writes build/feed_backlash_mm. One runs at a time;
+ *  the status is global so this card only reacts to sessions for its own axis. */
+function BacklashCal({ axis, name, ok, unref, call, onPlan }: {
+  axis: 1 | 2; name: string; ok: boolean; unref: boolean;
+  call: Call; onPlan: (p: Record<string, unknown>) => void;
+}) {
+  const [sess, setSess] = useState<BacklashSession | null>(null);
+  const [hideDone, setHideDone] = useState(false);
+
+  useEffect(() => {
+    let live = true;
+    const tick = async () => {
+      try { const s = await api.backlashStatus(); if (live) setSess(s); } catch { /* transient */ }
+    };
+    tick();
+    const id = window.setInterval(tick, 800);
+    return () => { live = false; window.clearInterval(id); };
+  }, []);
+
+  const running = sess?.state === "running";
+  const runningMine = running && sess?.axis === axis;
+  const runningOther = running && sess?.axis !== axis;
+  const doneMine = sess?.state === "done" && sess.result?.axis === axis && !hideDone;
+  const errMine = sess?.state === "error" && sess.axis === axis;
+  const rec = sess?.result?.recommended_mm ?? null;
+
+  const start = () => {
+    if (!window.confirm(`Calibrate the ${name} piston's backlash? It jogs the piston through several ±2 mm reversals at a few depths, then returns to the current position. Keep clear of the piston.`)) return;
+    setHideDone(false);
+    call(`calibrate ${name} backlash`, () => api.backlashStart({ axis }).then(setSess));
+  };
+  const cancel = () => call(`cancel ${name} backlash`, () => api.backlashCancel().then(setSess));
+  const apply = () => {
+    setHideDone(true);
+    call(`apply ${name} backlash`, () => api.backlashApply(axis).then((r) => onPlan(r.plan as Record<string, unknown>)));
+  };
+
+  return (
+    <div className="backlash-cal" style={{ marginTop: 10 }}>
+      <div className="actions" style={{ marginTop: 0 }}>
+        <button className="cta" disabled={!ok || unref || running} onClick={start}
+          data-tip="Measure the piston's mechanical lost-motion (backlash) by reversing into each depth from both sides.">
+          Calibrate backlash
+        </button>
+      </div>
+      {runningOther && <div className="hint" style={{ marginTop: 8 }}>calibrating the other piston…</div>}
+      {runningMine && (
+        <div className="cal-run" style={{ marginTop: 8 }}>
+          <div className="hint" style={{ marginTop: 0 }}>
+            measuring… {sess!.progress.done}/{sess!.progress.total}
+            {typeof sess!.current_ref_mm === "number" ? ` · at ${sess!.current_ref_mm.toFixed(1)} mm` : ""}
+          </div>
+          <div className="bar" style={{ marginTop: 6, height: 6, background: "var(--track, #2a2f3a)", borderRadius: 3, overflow: "hidden" }}>
+            <div style={{ height: "100%", width: `${sess!.progress.total ? (100 * sess!.progress.done) / sess!.progress.total : 0}%`, background: "var(--accent, #d9a441)" }} />
+          </div>
+          <div className="actions" style={{ marginTop: 8 }}><button className="cta" onClick={cancel}>Cancel</button></div>
+        </div>
+      )}
+      {doneMine && (
+        <div className="cal-result" style={{ marginTop: 8 }}>
+          <div className="kv" style={{ marginTop: 0 }}>
+            <span>measured backlash</span>
+            <span className="v">{rec !== null ? `${rec.toFixed(2)} mm` : "—"}</span>
+          </div>
+          {rec === 0
+            ? <div className="hint" style={{ marginTop: 6 }}>no lash detected on this cylinder — nothing to compensate. Applying sets it to 0.</div>
+            : <div className="hint" style={{ marginTop: 6 }}>Apply to write this as the {name}-piston anti-backlash compensation.</div>}
+          <div className="actions" style={{ marginTop: 8, display: "flex", gap: 8 }}>
+            <button className="cta primary" disabled={!ok} onClick={apply}>Apply {rec !== null ? `(${rec.toFixed(2)} mm)` : ""}</button>
+            <button className="cta" onClick={() => setHideDone(true)}>Discard</button>
+          </div>
+        </div>
+      )}
+      {errMine && (
+        <div className="cal-result" style={{ marginTop: 8 }}>
+          <div className="errline">calibration failed: {sess!.error}</div>
+        </div>
+      )}
+    </div>
+  );
+}
 
 /** One piston's jog + set-max control. Jog to the physical stop, then "Set current as max" records
  *  the position as this piston's usable travel (per cylinder); the build max bounds build depth. */
@@ -58,6 +141,7 @@ function Piston({ axis, name, field, status, ok, call, plan, onPlan }: {
         </button>
       </div>
       <div className="hint" style={{ marginTop: 10 }}>Jog <b>DOWN</b> to the physical stop, then set it — this is the piston's usable range for the current cylinder. A build deeper than the <b>build</b> max is blocked.</div>
+      <BacklashCal axis={axis} name={name} ok={ok} unref={unref} call={call} onPlan={onPlan} />
     </div>
   );
 }
