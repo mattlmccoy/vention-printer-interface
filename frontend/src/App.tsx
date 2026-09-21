@@ -19,6 +19,7 @@ import { ControlView } from "./components/views/ControlView.tsx";
 import { PrimingView } from "./components/views/PrimingView.tsx";
 import { RunsView } from "./components/views/RunsView.tsx";
 import { CamerasView } from "./components/views/CamerasView.tsx";
+import { SettingsView } from "./components/views/SettingsView.tsx";
 import { AnalysisView } from "./components/views/AnalysisView.tsx";
 
 const storage = typeof localStorage === "undefined" ? null : localStorage;
@@ -69,7 +70,7 @@ export function App() {
 
   // Deep-link the active view via URL hash (#control, #print, …) — also lets tooling target a page.
   useEffect(() => {
-    const names = ["control", "job", "priming", "print", "runs", "analysis", "cameras"];
+    const names = ["control", "job", "priming", "print", "runs", "analysis", "cameras", "settings"];
     const apply = () => { const h = location.hash.slice(1); if (names.includes(h)) setUi((u) => (u.view === h ? u : { ...u, view: h as View })); };
     apply();
     window.addEventListener("hashchange", apply);
@@ -170,7 +171,7 @@ export function App() {
               {(["job", "priming", "print"] as View[]).map((v) => <button key={v} className={`bt${ui.view === v ? " active" : ""}`} onClick={() => setView(v)}>{v}</button>)}
             </div>
             <div className="tabgroup">
-              {(["control", "runs", "analysis", "cameras"] as View[]).map((v) => <button key={v} className={`bt${ui.view === v ? " active" : ""}`} onClick={() => setView(v)}>{v === "cameras" ? "setup" : v}</button>)}
+              {(["control", "runs", "analysis", "cameras", "settings"] as View[]).map((v) => <button key={v} className={`bt${ui.view === v ? " active" : ""}`} onClick={() => setView(v)}>{v === "cameras" ? "setup" : v}</button>)}
             </div>
           </nav>
           <button className={`pill${g.faulted ? " err" : ""}`} onClick={() => setShowConnect((s) => !s)} title="connection">
@@ -289,6 +290,7 @@ export function App() {
               {ui.view === "runs" && <RunsView status={status} gates={g} call={call} base={base} />}
               {ui.view === "analysis" && <AnalysisView gates={g} call={call} base={base} />}
               {ui.view === "cameras" && <CamerasView status={status} gates={g} call={call} base={base} onOpenQuickStart={() => setQuickStartOpen(true)} />}
+              {ui.view === "settings" && <SettingsView status={status} gates={g} call={call} />}
             </div>
             <aside className={`dock${dock.open ? "" : " collapsed"}`} style={{ "--dock-w": `${dock.w}px` } as CSSProperties}>
               <div className="dock-resize" onPointerDown={dockDrag} title="drag to resize · snaps" />
