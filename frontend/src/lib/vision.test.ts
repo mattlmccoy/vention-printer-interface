@@ -1,6 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { calibrationReady, cameraAccessMessage, captureLayerFull, captureLayerShort, dismissQuickStart, formatCaptureMetaValue, formatValidation, overviewStreamUrl, panelVisible, parseCaptures, setPanelVisible, shouldShowQuickStart, visibleCaptures, type Capture } from "./vision.ts";
+import { calibrationReady, cameraAccessMessage, captureLayerFull, captureLayerShort, defaultStage, dismissQuickStart, formatCaptureMetaValue, formatValidation, overviewStreamUrl, panelVisible, parseCaptures, setPanelVisible, shouldShowQuickStart, visibleCaptures, type Capture } from "./vision.ts";
 
 const _caps: Capture[] = [
   { layer: 3, stage: "pre_jet", url: "/a" },
@@ -22,6 +22,15 @@ test("visibleCaptures with all stages returns every capture in order", () => {
 
 test("visibleCaptures with no stages selected shows nothing", () => {
   assert.deepEqual(visibleCaptures(_caps, []), []);
+});
+
+test("defaultStage picks the first stage in order that actually has captures", () => {
+  const order = ["pre_jet", "post_jet", "post_heat"];
+  assert.equal(defaultStage(_caps, order), "pre_jet"); // pre_jet present → first wins
+  // only post_heat present → skip the empty earlier stages
+  assert.equal(defaultStage([{ layer: 1, stage: "post_heat", url: "/x" }], order), "post_heat");
+  // nothing captured → fall back to the first stage in order
+  assert.equal(defaultStage([], order), "pre_jet");
 });
 
 class Mem implements Storage {

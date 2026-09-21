@@ -189,3 +189,11 @@ export function visibleCaptures(caps: readonly Capture[], selectedStages: readon
   caps.forEach((cap, index) => { if (sel.has(cap.stage)) out.push({ cap, index }); });
   return out;
 }
+
+/** The stage the Runs stills grid should show by default: the first stage in `order` that actually
+ *  has captures for this run (so the single-select filter always opens on a populated stage), or the
+ *  first stage in `order` when nothing was captured. Pure. */
+export function defaultStage(caps: readonly Capture[], order: readonly string[]): string {
+  for (const s of order) if (caps.some((c) => c.stage === s)) return s;
+  return order[0];
+}
