@@ -142,6 +142,12 @@ class PrintSettings:
     n_jet_passes: int = 1
     pre_heater_drop_mm: float = 0.0
     postcoat_enabled: bool = True
+    # Opt-in build-height fix. When True the build piston is positioned by ABSOLUTE seat_part steps
+    # (move_absolute to primed datum + cumulative height, anti-backlash from below) for both the
+    # layer descent and the post-heater re-seat, so per-layer error can't accumulate and post-heat
+    # rides the corrected plane. False = V1.py-faithful RELATIVE motion (default; instant revert).
+    # See the print controller's seat_part handling for the runtime datum offset.
+    absolute_layer_seat: bool = False
     feed_end_mm: float = 145.0  # V1.py:48 (pendant says ~151)
     recoater_home_mm: float = 5.0
     recoater_return_mm: float = 350.0  # V1.py precoat recoater return position
@@ -321,6 +327,7 @@ class PrintSettings:
                 num("pre_heater_drop_mm", base.pre_heater_drop_mm), 0.0, 50.0
             ),
             postcoat_enabled=bool(d.get("postcoat_enabled", base.postcoat_enabled)),
+            absolute_layer_seat=bool(d.get("absolute_layer_seat", base.absolute_layer_seat)),
             feed_end_mm=limits.clamp_position(FEED, num("feed_end_mm", base.feed_end_mm)),
             recoater_home_mm=limits.clamp_position(
                 RECOATER, num("recoater_home_mm", base.recoater_home_mm)
@@ -523,11 +530,20 @@ def compile_print(plan: PrintSettings) -> tuple[Step, ...]:
                 seat = plan.build_backlash_mm
                 if name == "printing" and captures_on:
                     seat = max(seat, CAPTURE_SEAT_MM)
-                add(name, layer_no, "move_rel", PART, ph.layer_thickness_mm + seat)  # build down
-                add(name, layer_no, "wait")
-                if seat > 0:
-                    add(name, layer_no, "move_rel", PART, -seat, "build backlash return")
+                if plan.absolute_layer_seat:
+                    # ABSOLUTE: seat_part carries the cumulative commanded height; the controller
+                    # moves the piston to (primed datum + height). Overshoot to height+seat (down),
+                    # then return to the exact height (up) so it seats from below. No accumulation.
+                    add(name, layer_no, "seat_part", PART, height + seat)  # overshoot, absolute
                     add(name, layer_no, "wait")
+                    add(name, layer_no, "seat_part", PART, height, "build seat")  # up to target
+                    add(name, layer_no, "wait")
+                else:
+                    add(name, layer_no, "move_rel", PART, ph.layer_thickness_mm + seat)  # down
+                    add(name, layer_no, "wait")
+                    if seat > 0:
+                        add(name, layer_no, "move_rel", PART, -seat, "build backlash return")
+                        add(name, layer_no, "wait")
 
             # 2) REPOSITION — recoater past the feed piston out to the far end, so it can spread on
             # the way back. Optional anti-backlash: drop the feed a little BEFORE this move (keeps
@@ -651,7 +667,16 @@ def compile_print(plan: PrintSettings) -> tuple[Step, ...]:
                 add(name, layer_no, "heater", value=0.0)
                 add(name, layer_no, "set_speed", RECOATER, ph.recoater_speed)  # restore
                 add(name, layer_no, "set_accel", RECOATER, ph.recoater_accel)
-            if plan.pre_heater_drop_mm > 0:  # raise back -> net descent is exactly one layer
+            reseat = (plan.absolute_layer_seat and name in _PART_DROP_PHASES
+                      and plan.pre_heater_drop_mm > 0)
+            if reseat:
+                # Absolute re-seat to the layer plane AFTER the clearance drop/heat, whatever the
+                # pre-heater drop did: the piston comes UP from the deeper drop to the exact
+                # abs height (from below), so height and post-heat plane are corrected each layer
+                # regardless of drop-cycle lash. Supersedes the relative raise.
+                add(name, layer_no, "seat_part", PART, height, "raise to layer (re-seat)")
+                add(name, layer_no, "wait")
+            elif plan.pre_heater_drop_mm > 0:  # raise back -> net descent is exactly one layer
                 add(
                     name, layer_no, "move_rel", PART, -plan.pre_heater_drop_mm, "raise to layer"
                 )

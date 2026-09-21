@@ -295,6 +295,11 @@ class PrintController:
                 self._c.move_absolute(step.axis or 0, float(step.value or 0.0))
             elif step.kind == "move_rel":
                 self._c.move_relative(step.axis or 0, float(step.value or 0.0))
+            elif step.kind == "seat_part":
+                # Absolute build-height seat: value is the cumulative commanded height from the
+                # primed datum; command move_absolute(datum + value). part_zero_mm set at start().
+                base = self.part_zero_mm if self.part_zero_mm is not None else 0.0
+                self._c.move_absolute(step.axis or PART, base + float(step.value or 0.0))
             elif step.kind == "heater":
                 if step.value:
                     self._c.heater_on()

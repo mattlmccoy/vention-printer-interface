@@ -118,6 +118,26 @@ test("printing layer: multi-pass jetting + pre-heater drop and return-up", () =>
   assert.ok(Math.max(...jet) < iDrop && iDrop < iHeaterOn && iHeaterOn < iUp);
 });
 
+test("absolute_layer_seat emits absolute cumulative seat_part targets (no accumulation)", () => {
+  const base = { ...DEFAULT_PLAN,
+    thin_precoat: { ...DEFAULT_PLAN.thin_precoat, n_layers: 0 },
+    printing: { ...DEFAULT_PLAN.printing, n_layers: 2, layer_thickness_mm: 0.2 },
+    postcoat: { ...DEFAULT_PLAN.postcoat, n_layers: 0 },
+    heater_enabled: true, pre_heater_drop_mm: 1.0, build_backlash_mm: 0.1 };
+  // default OFF: relative move_rel, no seat_part
+  assert.equal(DEFAULT_PLAN.absolute_layer_seat, false);
+  assert.ok(compilePrint(base).some((s) => s.kind === "move_rel" && s.axis === 1));
+  assert.ok(!compilePrint(base).some((s) => s.kind === "seat_part"));
+  // ON: absolute seat targets are cumulative (layer 1 -> 0.2, layer 2 -> 0.4), not relative
+  const on = { ...base, absolute_layer_seat: true };
+  const seats = compilePrint(on).filter((s) => s.kind === "seat_part" && s.axis === 1)
+    .map((s) => [s.layer, Number(s.value!.toFixed(4))] as const);
+  assert.deepEqual(seats, [
+    [1, 0.3], [1, 0.2], [1, 0.2],   // descent overshoot+return, then post-heat re-seat
+    [2, 0.5], [2, 0.4], [2, 0.4],
+  ]);
+});
+
 test("imaged printing layer ends the drop on an up-seat even when build backlash is 0", () => {
   const base = { ...DEFAULT_PLAN,
     thin_precoat: { ...DEFAULT_PLAN.thin_precoat, n_layers: 0 },
