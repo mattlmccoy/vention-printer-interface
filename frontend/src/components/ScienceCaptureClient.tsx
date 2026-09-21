@@ -21,7 +21,7 @@ const storage = typeof localStorage === "undefined" ? null : localStorage;
  *  can bypass that. So this is "as lossless as the stream allows", not truly lossless at 20 MP. For
  *  PIXEL-exact stills, pick a lower-resolution UNCOMPRESSED (YUY2) mode if the camera offers one.
  *  Every path rejects blank and near-uniform frames before they can be recorded as captures. */
-async function grabScienceStill(
+export async function grabScienceStill(
   stream: MediaStream | null,
   video: HTMLVideoElement | null,
   requested: { width: number; height: number },

@@ -1,7 +1,10 @@
 import { useState } from "react";
 import { api, type VisionCalibFinalizeResult, type VisionCalibSession } from "../lib/api.ts";
 import { calibrationReady } from "../lib/vision.ts";
+import { captureScienceStillOnce } from "../lib/science_still.ts";
 import type { Call } from "./views/types.ts";
+
+const storage = typeof localStorage === "undefined" ? null : localStorage;
 
 const DEFAULT_SPEC = { squares_x: 7, squares_y: 5, square_length_mm: 20, marker_length_mm: 15, aruco_dict: "DICT_4X4_50" };
 
@@ -10,10 +13,11 @@ const DEFAULT_SPEC = { squares_x: 7, squares_y: 5, square_length_mm: 20, marker_
  *  reprojection_error). Wired against `POST /api/vision/calibrate/session|capture|finalize`
  *  and `GET /api/vision/calibrate/session` (see backend vention_printer_interface/api/app.py).
  *
- *  There is no continuous live stream off the science camera (I1: only the overview MJPEG
- *  stream is safe to share across concurrent readers, see api.py's vision_devices docstring) --
- *  "live preview" here is per-capture feedback (board found / corner count) from the last
- *  `/calibrate/capture` call, not a video feed. */
+ *  Capture grabs one still from the ASSIGNED science camera in the BROWSER (by deviceId — reliable
+ *  on macOS) and POSTs it to `/calibrate/capture-upload`, so the intrinsics/bed homography are fit
+ *  from the SAME getUserMedia source the print-time science captures use (not a server cv2 grab,
+ *  which opens the wrong camera on macOS). Feedback is per-capture (board found / corner count);
+ *  there is no continuous live video feed here. */
 export function CalibrationWizard({ call, printing }: { call: Call; printing: boolean }) {
   const [squaresX, setSquaresX] = useState(DEFAULT_SPEC.squares_x);
   const [squaresY, setSquaresY] = useState(DEFAULT_SPEC.squares_y);
@@ -43,11 +47,12 @@ export function CalibrationWizard({ call, printing }: { call: Call; printing: bo
   };
 
   const captureView = () => {
-    call("capture calibration view", () =>
-      api.visionCalibrateCapture().then((r) => {
-        setCaptureNote(r.captured ? `board found — ${r.corners_found ?? 0} corners (view ${r.count ?? "?"})` : (r.reason ?? "no board detected"));
-        return api.visionCalibrateSessionGet().then(setSession);
-      }));
+    call("capture calibration view", async () => {
+      const blob = await captureScienceStillOnce(storage);  // browser grab: same source as prints
+      const r = await api.visionCalibrateCaptureUpload(blob);
+      setCaptureNote(r.captured ? `board found — ${r.corners_found ?? 0} corners (view ${r.count ?? "?"})` : (r.reason ?? "no board detected"));
+      return api.visionCalibrateSessionGet().then(setSession);
+    });
   };
 
   const finalize = () => {
