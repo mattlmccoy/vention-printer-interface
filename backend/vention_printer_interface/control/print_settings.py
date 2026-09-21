@@ -20,6 +20,12 @@ PRINTHEAD = 3
 RECOATER = 4  # the recoater gantry also carries the IR heater (V1.py HEATER_* use recoater_axis)
 
 PHASES = ("thin_precoat", "printing", "postcoat")
+# Usable build-piston (PART) travel FROM HOME. The 145 mm axis travel_max in safety.py is the hard
+# mechanical limit; the piston stops well short of it — the enclosed lead-screw actuator is 360 mm
+# long minus a 230 mm dead length = 130 mm usable stroke (Vention spec), matching the 2026-09-18
+# sweep which lost motion ~1:1 above ~134 mm. A build deeper than this silently under-builds (piston
+# hits the end and stops), so print validation flags it. Refine if the confirm sweep moves it.
+PART_USABLE_TRAVEL_MM = 130.0
 MAX_LAYERS = 500
 MAX_HEATER_PASSES = 10
 PURGE_MODES = ("every_pass", "per_layer", "every_n_layers")
@@ -221,6 +227,13 @@ class PrintSettings:
             reasons.append(
                 f"total thickness {self.total_thickness_mm:.1f} mm exceeds feed travel "
                 f"{self.feed_end_mm:.1f} mm (V1.py printability check)"
+            )
+        deepest_part_mm = max(self.total_thickness_mm, self.part_max_mm)
+        if deepest_part_mm > PART_USABLE_TRAVEL_MM:
+            reasons.append(
+                f"build reaches {deepest_part_mm:.1f} mm but the piston's usable travel is "
+                f"{PART_USABLE_TRAVEL_MM:.0f} mm from home — it stops there, so the part would not "
+                f"finish (silent under-build)"
             )
         for name in PHASES:
             # A disabled postcoat is dropped from the compiled plan and excluded from the totals,
