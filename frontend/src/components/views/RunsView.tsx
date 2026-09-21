@@ -2,7 +2,7 @@ import { useEffect, useState, type MouseEvent as ReactMouseEvent } from "react";
 import { api, type RunMeta } from "../../lib/api.ts";
 import type { Gates } from "../../lib/format.ts";
 import type { EventItem, StatusPayload } from "../../lib/telemetry.ts";
-import { captureLayerFull, captureLayerShort, parseCaptures, visibleCaptures, type Capture } from "../../lib/vision.ts";
+import { captureLayerFull, captureLayerShort, defaultStage, parseCaptures, visibleCaptures, type Capture } from "../../lib/vision.ts";
 import {
   hasNativeSpeed,
   layerAccuracySummary,
@@ -268,7 +268,7 @@ export function RunsView({ status, gates, call, base }: { status: StatusPayload 
   const [notes, setNotes] = useState("");
   const [dirty, setDirty] = useState(false);
   const [revealMsg, setRevealMsg] = useState(""); // absolute on-disk path, shown after Reveal
-  const [stageSel, setStageSel] = useState<string[]>([...STAGE_ORDER]); // Runs stage filter (#1)
+  const [stage, setStage] = useState<string>(STAGE_ORDER[0]); // Runs stills: ONE stage at a time
   const [showTl, setShowTl] = useState(false); // inline timelapse GIF (#4)
   const [tlSource, setTlSource] = useState<"science" | "overview">("science"); // timelapse source
   const [viewIdx, setViewIdx] = useState(-1); // index into `caps` of the open lightbox still, or -1
@@ -337,6 +337,12 @@ export function RunsView({ status, gates, call, base }: { status: StatusPayload 
     }).catch(() => { if (live) setRunEvents([]); });
     return () => { live = false; };
   }, [sel, base]);
+
+  // Keep the single-stage filter on a populated stage: when a run's captures load (or change), if the
+  // currently-selected stage has no stills, jump to the first stage that does.
+  useEffect(() => {
+    if (caps.length && !caps.some((c) => c.stage === stage)) setStage(defaultStage(caps, STAGE_ORDER));
+  }, [caps, stage]);
 
   const label = (run: string) => `${run.slice(0, 8)} ${run.slice(9, 11)}:${run.slice(11, 13)}`;
   const dispName = (r: RunMeta) => r.name || r.run.slice(16) || r.run;
@@ -407,14 +413,15 @@ export function RunsView({ status, gates, call, base }: { status: StatusPayload 
               <div className="card">
                 <h3>science-cam stills<span className="hint" style={{ textTransform: "none", letterSpacing: 0, fontWeight: 400 }}>layer × stage</span></h3>
                 {caps.length > 0 && (
-                  <div className="seg" style={{ marginBottom: 8 }}>
+                  <div className="seg" role="radiogroup" aria-label="stage" style={{ marginBottom: 8 }}>
                     {STAGE_ORDER.map((s) => {
-                      const on = stageSel.includes(s);
+                      const on = stage === s;
                       const n = caps.filter((c) => c.stage === s).length;
                       return (
-                        <button key={s} type="button" className={`small${on ? " on" : ""}`} aria-pressed={on}
-                          title={`show / hide ${STAGE_LABEL[s]} stills`}
-                          onClick={() => setStageSel((cur) => cur.includes(s) ? cur.filter((x) => x !== s) : STAGE_ORDER.filter((o) => cur.includes(o) || o === s))}>
+                        <button key={s} type="button" role="radio" className={`small${on ? " on" : ""}`} aria-checked={on}
+                          disabled={n === 0}
+                          title={n ? `show only ${STAGE_LABEL[s]} stills` : `no ${STAGE_LABEL[s]} stills for this run`}
+                          onClick={() => setStage(s)}>
                           {STAGE_LABEL[s]}{n ? ` (${n})` : ""}
                         </button>
                       );
@@ -422,7 +429,7 @@ export function RunsView({ status, gates, call, base }: { status: StatusPayload 
                   </div>
                 )}
                 {(() => {
-                  const tlStage = tlSource === "science" && stageSel.length === 1 ? stageSel[0] : undefined;
+                  const tlStage = tlSource === "science" ? stage : undefined;
                   const tlUrl = api.recordingTimelapseUrl(selRun.run, { source: tlSource, stage: tlStage });
                   return (
                     <div className="row" style={{ gap: 8, marginBottom: 8, flexWrap: "wrap", alignItems: "center" }}>
@@ -441,15 +448,15 @@ export function RunsView({ status, gates, call, base }: { status: StatusPayload 
                 })()}
                 {showTl && (
                   <div className="tl-wrap" style={{ marginBottom: 10, background: "#000", borderRadius: 8, overflow: "hidden", textAlign: "center" }}>
-                    <img src={api.recordingTimelapseUrl(selRun.run, { source: tlSource, stage: tlSource === "science" && stageSel.length === 1 ? stageSel[0] : undefined })}
+                    <img src={api.recordingTimelapseUrl(selRun.run, { source: tlSource, stage: tlSource === "science" ? stage : undefined })}
                       alt={`${tlSource} timelapse`} style={{ maxWidth: "100%", height: "auto", display: "block", margin: "0 auto" }}
                       onError={(e) => { (e.currentTarget as HTMLImageElement).style.display = "none"; }} />
                   </div>
                 )}
                 <div className="stills-wrap">
                   {caps.length === 0 ? <div className="chart-empty">no science-cam captures for this run</div> : (() => {
-                    const shown = visibleCaptures(caps, stageSel);
-                    if (shown.length === 0) return <div className="chart-empty">no stills match the selected stages</div>;
+                    const shown = visibleCaptures(caps, [stage]);
+                    if (shown.length === 0) return <div className="chart-empty">no {STAGE_LABEL[stage]} stills for this run</div>;
                     return (
                       <div className="stills">
                         {shown.slice(0, 24).map(({ cap: c, index }) => (
