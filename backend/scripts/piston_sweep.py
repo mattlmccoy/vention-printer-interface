@@ -346,10 +346,12 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument("--dwell", type=float, default=0.1, help="extra dwell after settle (s)")
     # --mode confirm: HOME the piston in the UI first so positions are from home. Fine-steps up from
     # --wall-from and STOPS the instant motion is lost (never rams the end); caps at --wall-max.
-    ap.add_argument("--wall-from", type=float, default=120.0, help="confirm: wall-probe start (mm)")
+    # DEFAULTS ASSUME THE BUILD PISTON IS ATTACHED (usable range ~72 mm — the normal case). For the
+    # BARE actuator (~130 mm stroke) pass --wall-from 120 --wall-max 138 --backlash-at 30 70 110.
+    ap.add_argument("--wall-from", type=float, default=60.0, help="confirm: wall-probe start (mm)")
     ap.add_argument("--wall-step", type=float, default=0.2, help="confirm: wall-probe step (mm)")
-    ap.add_argument("--wall-max", type=float, default=138.0, help="confirm: hard cap (mm)")
-    ap.add_argument("--backlash-at", type=float, nargs="+", default=[30.0, 70.0, 110.0],
+    ap.add_argument("--wall-max", type=float, default=78.0, help="confirm: hard cap (mm)")
+    ap.add_argument("--backlash-at", type=float, nargs="+", default=[20.0, 40.0, 60.0],
                     help="confirm: positions to measure backlash (mm, kept below the wall)")
     ap.add_argument("--backlash-d", type=float, default=0.5, help="confirm: reversal distance (mm)")
     ap.add_argument("--backlash-reps", type=int, default=5, help="confirm: reversals per position")

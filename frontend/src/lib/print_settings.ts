@@ -6,10 +6,10 @@ export const PART = 1, FEED = 2, PRINTHEAD = 3, RECOATER = 4;
 // The thick precoats now live in the priming routine (they fill the runway + part cavity with the
 // build piston fixed). The print begins at the thin precoats, where the build piston first drops.
 export const PHASES = ["thin_precoat", "printing", "postcoat"] as const;
-// Usable build-piston travel FROM HOME (Vention actuator 360 mm − 230 mm dead length = 130 mm;
-// sweep lost motion ~1:1 above ~134 mm). Below the 145 mm hard limit; a deeper build silently
-// under-builds. Mirrors backend print_settings.PART_USABLE_TRAVEL_MM.
-export const PART_USABLE_TRAVEL_MM = 130;
+// Usable build-piston travel FROM HOME with the piston ATTACHED (normal case) ~72 mm (= default
+// part_max_mm). Bare actuator does ~130 mm (360 − 230), but the attached piston bottoms out ~72 mm;
+// a deeper build silently under-builds. Mirrors backend print_settings.PART_USABLE_TRAVEL_MM.
+export const PART_USABLE_TRAVEL_MM = 72;
 export type Phase = (typeof PHASES)[number];
 
 // Precoat-style phases lay a cover layer only (spread -> feed advance -> recoater return to 350);
