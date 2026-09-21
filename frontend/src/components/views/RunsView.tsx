@@ -2,7 +2,7 @@ import { useEffect, useState, type MouseEvent as ReactMouseEvent } from "react";
 import { api, type RunMeta } from "../../lib/api.ts";
 import type { Gates } from "../../lib/format.ts";
 import type { EventItem, StatusPayload } from "../../lib/telemetry.ts";
-import { captureLayerFull, captureLayerShort, defaultStage, parseCaptures, visibleCaptures, type Capture } from "../../lib/vision.ts";
+import { captureLayerFull, captureLayerShort, defaultStage, parseCaptures, stageComparableToCad, stepWithinStage, visibleCaptures, type Capture } from "../../lib/vision.ts";
 import {
   hasNativeSpeed,
   layerAccuracySummary,
@@ -269,8 +269,8 @@ export function RunsView({ status, gates, call, base }: { status: StatusPayload 
   const [dirty, setDirty] = useState(false);
   const [revealMsg, setRevealMsg] = useState(""); // absolute on-disk path, shown after Reveal
   const [stage, setStage] = useState<string>(STAGE_ORDER[0]); // Runs stills: ONE stage at a time
-  const [showTl, setShowTl] = useState(false); // inline timelapse GIF (#4)
-  const [tlSource, setTlSource] = useState<"science" | "overview">("science"); // timelapse source
+  const [showTl, setShowTl] = useState(false); // inline SCIENCE timelapse GIF
+  const [showOv, setShowOv] = useState(false); // inline OVERVIEW timelapse GIF (its own card)
   const [viewIdx, setViewIdx] = useState(-1); // index into `caps` of the open lightbox still, or -1
   const [viewJobFolder, setViewJobFolder] = useState<string | null>(null); // for the CAD-slice compare
   const [viewCadErr, setViewCadErr] = useState(false); // CAD slice failed to load (e.g. archived job)
@@ -318,8 +318,8 @@ export function RunsView({ status, gates, call, base }: { status: StatusPayload 
     if (viewIdx < 0) return;
     const onKey = (e: KeyboardEvent) => {
       if (e.key === "Escape") setViewIdx(-1);
-      else if (e.key === "ArrowRight") setViewIdx((i) => Math.min(caps.length - 1, i + 1));
-      else if (e.key === "ArrowLeft") setViewIdx((i) => Math.max(0, i - 1));
+      else if (e.key === "ArrowRight") setViewIdx((i) => stepWithinStage(caps, i, 1));
+      else if (e.key === "ArrowLeft") setViewIdx((i) => stepWithinStage(caps, i, -1));
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
@@ -428,28 +428,17 @@ export function RunsView({ status, gates, call, base }: { status: StatusPayload 
                     })}
                   </div>
                 )}
-                {(() => {
-                  const tlStage = tlSource === "science" ? stage : undefined;
-                  const tlUrl = api.recordingTimelapseUrl(selRun.run, { source: tlSource, stage: tlStage });
-                  return (
-                    <div className="row" style={{ gap: 8, marginBottom: 8, flexWrap: "wrap", alignItems: "center" }}>
-                      <span className="hint" style={{ marginTop: 0 }}>timelapse</span>
-                      <span className="seg">
-                        <button type="button" className={`small${tlSource === "science" ? " on" : ""}`} aria-pressed={tlSource === "science"} onClick={() => setTlSource("science")}>science</button>
-                        <button type="button" className={`small${tlSource === "overview" ? " on" : ""}`} aria-pressed={tlSource === "overview"} onClick={() => setTlSource("overview")}>overview</button>
-                      </span>
-                      <button className={`small${showTl ? " on" : ""}`} aria-pressed={showTl}
-                        title={`Play the ${tlSource} timelapse${tlStage ? ` · ${STAGE_LABEL[tlStage]}` : ""}`}
-                        onClick={() => setShowTl((v) => !v)}>▶ play</button>
-                      <a className="small" href={tlUrl} download style={{ textDecoration: "none" }} title="Download the timelapse GIF">⬇ gif</a>
-                      {tlSource === "overview" && <span className="hint" style={{ marginTop: 0 }}>(enable overview timelapse on Print before a run)</span>}
-                    </div>
-                  );
-                })()}
+                <div className="row" style={{ gap: 8, marginBottom: 8, flexWrap: "wrap", alignItems: "center" }}>
+                  <span className="hint" style={{ marginTop: 0 }}>science timelapse · {STAGE_LABEL[stage] ?? stage}</span>
+                  <button className={`small${showTl ? " on" : ""}`} aria-pressed={showTl}
+                    title={`Play the science timelapse · ${STAGE_LABEL[stage]}`}
+                    onClick={() => setShowTl((v) => !v)}>▶ play</button>
+                  <a className="small" href={api.recordingTimelapseUrl(selRun.run, { source: "science", stage })} download style={{ textDecoration: "none" }} title="Download the science timelapse GIF">⬇ gif</a>
+                </div>
                 {showTl && (
                   <div className="tl-wrap" style={{ marginBottom: 10, background: "#000", borderRadius: 8, overflow: "hidden", textAlign: "center" }}>
-                    <img src={api.recordingTimelapseUrl(selRun.run, { source: tlSource, stage: tlSource === "science" ? stage : undefined })}
-                      alt={`${tlSource} timelapse`} style={{ maxWidth: "100%", height: "auto", display: "block", margin: "0 auto" }}
+                    <img src={api.recordingTimelapseUrl(selRun.run, { source: "science", stage })}
+                      alt="science timelapse" style={{ maxWidth: "100%", height: "auto", display: "block", margin: "0 auto" }}
                       onError={(e) => { (e.currentTarget as HTMLImageElement).style.display = "none"; }} />
                   </div>
                 )}
@@ -472,6 +461,23 @@ export function RunsView({ status, gates, call, base }: { status: StatusPayload 
                     );
                   })()}
                 </div>
+              </div>
+
+              <div className="card">
+                <h3>overview timelapse<span className="hint" style={{ textTransform: "none", letterSpacing: 0, fontWeight: 400 }}>whole-bed wide view</span></h3>
+                <div className="row" style={{ gap: 8, marginBottom: 8, flexWrap: "wrap", alignItems: "center" }}>
+                  <button className={`small${showOv ? " on" : ""}`} aria-pressed={showOv}
+                    title="Play the overview timelapse" onClick={() => setShowOv((v) => !v)}>▶ play</button>
+                  <a className="small" href={api.recordingTimelapseUrl(selRun.run, { source: "overview" })} download style={{ textDecoration: "none" }} title="Download the overview timelapse GIF">⬇ gif</a>
+                  <span className="hint" style={{ marginTop: 0 }}>separate from the science stills · enable overview timelapse on Print before a run</span>
+                </div>
+                {showOv && (
+                  <div className="tl-wrap" style={{ background: "#000", borderRadius: 8, overflow: "hidden", textAlign: "center" }}>
+                    <img src={api.recordingTimelapseUrl(selRun.run, { source: "overview" })}
+                      alt="overview timelapse" style={{ maxWidth: "100%", height: "auto", display: "block", margin: "0 auto" }}
+                      onError={(e) => { (e.currentTarget as HTMLImageElement).style.display = "none"; }} />
+                  </div>
+                )}
               </div>
 
               <div className="card">
@@ -540,7 +546,11 @@ export function RunsView({ status, gates, call, base }: { status: StatusPayload 
         </div>
       </div>
 
-      {viewCap && (
+      {viewCap && (() => {
+        const withCad = stageComparableToCad(viewCap.stage);  // pre-jet is bare powder — no CAD
+        const stageList = visibleCaptures(caps, [viewCap.stage]).map((x) => x.index);
+        const pos = stageList.indexOf(viewIdx);
+        return (
         <div className="lightbox" role="dialog" aria-modal="true" aria-label="science-cam still" onClick={() => setViewIdx(-1)}>
           <div className="lb-body" onClick={(e) => e.stopPropagation()}>
             <div className="lb-h">
@@ -550,20 +560,25 @@ export function RunsView({ status, gates, call, base }: { status: StatusPayload 
             <div className="lb-compare">
               <div className="cmp"><div className="cmp-h">science cam</div>
                 <img className="cmp-img" src={`${base}${viewCap.url}`} alt={`science cam · ${captureLayerFull(viewCap)} · ${viewCap.stage}`} /></div>
-              <div className="cmp"><div className="cmp-h">CAD slice</div>
-                {viewJobFolder && !viewCadErr
-                  ? <img className="cmp-img" src={api.jobLayerByFolderUrl(viewCap.cadLayer ?? viewCap.layer, viewJobFolder)} alt={`CAD layer ${viewCap.cadLayer ?? viewCap.layer}`} onError={() => setViewCadErr(true)} />
-                  : <div className="cmp-img chart-empty" style={{ display: "grid", placeItems: "center", textAlign: "center", padding: 16 }}>{viewJobFolder ? "CAD slice unavailable — its sliced job isn't loaded" : "CAD slice unavailable for this run"}</div>}
-              </div>
+              {withCad
+                ? <div className="cmp"><div className="cmp-h">CAD slice</div>
+                    {viewJobFolder && !viewCadErr
+                      ? <img className="cmp-img" src={api.jobLayerByFolderUrl(viewCap.cadLayer ?? viewCap.layer, viewJobFolder)} alt={`CAD layer ${viewCap.cadLayer ?? viewCap.layer}`} onError={() => setViewCadErr(true)} />
+                      : <div className="cmp-img chart-empty" style={{ display: "grid", placeItems: "center", textAlign: "center", padding: 16 }}>{viewJobFolder ? "CAD slice unavailable — its sliced job isn't loaded" : "CAD slice unavailable for this run"}</div>}
+                  </div>
+                : <div className="cmp"><div className="cmp-h">CAD slice</div>
+                    <div className="cmp-img chart-empty" style={{ display: "grid", placeItems: "center", textAlign: "center", padding: 16 }}>pre-jet is bare powder — CAD comparison is only for post-jet and post-heat</div>
+                  </div>}
             </div>
             <div className="lb-nav">
-              <button className="small" disabled={viewIdx <= 0} onClick={() => setViewIdx((i) => Math.max(0, i - 1))}>← prev</button>
-              <span>{viewIdx + 1} / {caps.length}</span>
-              <button className="small" disabled={viewIdx >= caps.length - 1} onClick={() => setViewIdx((i) => Math.min(caps.length - 1, i + 1))}>next →</button>
+              <button className="small" disabled={pos <= 0} onClick={() => setViewIdx((i) => stepWithinStage(caps, i, -1))}>← prev</button>
+              <span>{pos + 1} / {stageList.length} · {STAGE_LABEL[viewCap.stage] ?? viewCap.stage}</span>
+              <button className="small" disabled={pos >= stageList.length - 1} onClick={() => setViewIdx((i) => stepWithinStage(caps, i, 1))}>next →</button>
             </div>
           </div>
         </div>
-      )}
+        );
+      })()}
     </div>
   );
 }
