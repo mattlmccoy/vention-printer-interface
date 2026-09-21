@@ -296,8 +296,9 @@ export function SettingsView({ status, gates, call, base, onOpenQuickStart }: {
               {pistonLock && <div className="lock" style={{ marginTop: 0 }}>{pistonLock}</div>}
               <div className="hint" style={{ marginTop: 0 }}>Jog each piston to its physical stop and set its max — that's the usable range for the current cylinder. A build deeper than the build max is blocked before it under-builds.</div>
               <div style={{ display: "grid", gridTemplateColumns: "repeat(2, minmax(0, 1fr))", gap: 16 }}>
-                <Piston axis={1} name="build" field="build_piston_max_mm" status={status} ok={ok} call={call} plan={plan} onPlan={setPlan} />
+                {/* Feed on the left, build on the right — the physical/intuitive layout of the machine. */}
                 <Piston axis={2} name="feed" field="feed_piston_max_mm" status={status} ok={ok} call={call} plan={plan} onPlan={setPlan} />
+                <Piston axis={1} name="build" field="build_piston_max_mm" status={status} ok={ok} call={call} plan={plan} onPlan={setPlan} />
               </div>
             </div>
           )}
