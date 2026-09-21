@@ -162,6 +162,11 @@ class PrintSettings:
     # printhead_start_mm (preserves the original behavior of holding at the printhead start).
     purge_position_mm: float | None = None
     part_max_mm: float = 72.0  # final part-cylinder drop position (= part spill-safe depth)
+    # Per-piston usable max travel FROM HOME (operator sets it per cylinder by jogging to the stop —
+    # see PART_USABLE_TRAVEL_MM). The build limit bounds how deep a build may go (validation); both
+    # default to the ~72 mm attached range. Feed assumed the same range as build unless changed.
+    build_piston_max_mm: float = PART_USABLE_TRAVEL_MM
+    feed_piston_max_mm: float = PART_USABLE_TRAVEL_MM
     heater_speed: float = 50.0
     heater_accel: float = 250.0
     n_heater_passes: int = 1
@@ -230,11 +235,11 @@ class PrintSettings:
                 f"{self.feed_end_mm:.1f} mm (V1.py printability check)"
             )
         deepest_part_mm = max(self.total_thickness_mm, self.part_max_mm)
-        if deepest_part_mm > PART_USABLE_TRAVEL_MM:
+        if deepest_part_mm > self.build_piston_max_mm:
             reasons.append(
-                f"build reaches {deepest_part_mm:.1f} mm but the piston's usable travel is "
-                f"{PART_USABLE_TRAVEL_MM:.0f} mm from home — it stops there, so the part would not "
-                f"finish (silent under-build)"
+                f"build reaches {deepest_part_mm:.1f} mm but the build piston's max travel is "
+                f"{self.build_piston_max_mm:.1f} mm from home — it stops there, so the part would "
+                f"not finish (silent under-build)"
             )
         for name in PHASES:
             # A disabled postcoat is dropped from the compiled plan and excluded from the totals,
@@ -346,6 +351,12 @@ class PrintSettings:
                 PRINTHEAD, num("printhead_start_mm", base.printhead_start_mm)
             ),
             part_max_mm=limits.clamp_position(PART, num("part_max_mm", base.part_max_mm)),
+            build_piston_max_mm=limits.clamp_position(
+                PART, num("build_piston_max_mm", base.build_piston_max_mm)
+            ),
+            feed_piston_max_mm=limits.clamp_position(
+                FEED, num("feed_piston_max_mm", base.feed_piston_max_mm)
+            ),
             heater_speed=limits.clamp_speed(RECOATER, num("heater_speed", base.heater_speed)),
             heater_accel=limits.clamp_accel(RECOATER, num("heater_accel", base.heater_accel)),
             n_heater_passes=int(_clamp(passes, 0, MAX_HEATER_PASSES)),
