@@ -263,7 +263,7 @@ export function RunsView({ status, gates, call, base }: { status: StatusPayload 
   const [runEvents, setRunEvents] = useState<EventItem[]>([]);
   const [metric, setMetric] = useState<Metric>("vel");
   const [axes, setAxes] = useState<number[]>([1, 2, 3, 4]); // all axes stacked by default
-  const [tolUm, setTolUm] = useState("50"); // build-piston tolerance band (µm), editable
+  const [tolUm, setTolUm] = useState("100"); // build-piston tolerance band (µm); floored at the 0.1 mm readout
   const [name, setName] = useState("");
   const [notes, setNotes] = useState("");
   const [dirty, setDirty] = useState(false);
@@ -486,7 +486,8 @@ export function RunsView({ status, gates, call, base }: { status: StatusPayload 
                   <input type="number" inputMode="decimal" value={tolUm} onChange={(e) => setTolUm(e.target.value)} style={{ width: 64 }} aria-label="tolerance band (microns)" />
                   <span className="hint" style={{ marginTop: 0 }}>µm</span>
                 </div>
-                <ActualThicknessChart rows={accuracyRows} tolUm={Math.max(1, Number(tolUm) || 50)} />
+                <ActualThicknessChart rows={accuracyRows} tolUm={Math.max(100, Number(tolUm) || 100)} />
+                <div className="hint" style={{ marginTop: 6, textTransform: "none", letterSpacing: 0 }}>Per-layer thickness can't be trusted below the 0.1 mm encoder readout, and it's sampled at layer-complete — mid-swing during the pre-heater drop — so single-count scatter and the odd out-of-range bar are measurement noise, not the piston. The cumulative height above is the real accuracy.</div>
               </div>
 
               <div className="card">
