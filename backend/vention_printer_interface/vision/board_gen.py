@@ -63,6 +63,13 @@ BOARD_PRESETS: dict[str, BoardSpec] = {
 
 # Colour every filled cell engraves in (single engrave layer). Polarity chooses which cells.
 _ENGRAVE_COLOR = "#000000"
+# The board outline is a CUT, not an engrave: a stroked-only red path (SVG) / a polyline on a
+# dedicated "CUT" layer (DXF), the near-universal laser convention (red = cut, black = engrave),
+# so the operator's laser software maps it to the cut operation and separates the board from stock.
+_CUT_COLOR = "#ff0000"
+_CUT_STROKE_MM = 0.1
+_CUT_LAYER = "CUT"
+_ENGRAVE_LAYER = "ENGRAVE"
 
 
 def resolve_preset(name: str, **overrides: Any) -> BoardSpec:
@@ -195,13 +202,15 @@ def _label_text(spec: BoardSpec) -> str:
 
 
 def generate_charuco_svg(
-    spec: BoardSpec, *, engrave_black: bool = True, label: bool = True
+    spec: BoardSpec, *, engrave_black: bool = True, label: bool = True, cut_outline: bool = True
 ) -> str:
     """Render the ChArUco board as a true-vector SVG string at exact mm scale.
 
     The root ``<svg>`` carries ``width``/``height`` in mm and a ``viewBox`` in mm (so 1 user
     unit == 1 mm); every filled cell is a ``<rect>`` at exact mm. See the module docstring for
-    the ``engrave_black`` polarity contract.
+    the ``engrave_black`` polarity contract. When ``cut_outline`` (default) a red, stroke-only
+    ``<path>`` traces the board's outer rectangle as a CUT contour (kept out of the engrave fills
+    so the laser cuts the board free without engraving that line).
     """
     board_w = spec.squares_x * spec.square_length_mm
     board_h = spec.squares_y * spec.square_length_mm
@@ -229,28 +238,39 @@ def generate_charuco_svg(
             f'font-family="monospace" font-size="{font:g}" fill="{_ENGRAVE_COLOR}">'
             f"{_label_text(spec)}</text>"
         )
+    if cut_outline:
+        parts.append(
+            f'<path class="cut" d="M0 0 H{total_w:g} V{total_h:g} H0 Z" '
+            f'fill="none" stroke="{_CUT_COLOR}" stroke-width="{_CUT_STROKE_MM:g}"/>'
+        )
     parts.append("</svg>")
     return "\n".join(parts)
 
 
 def generate_charuco_dxf(
-    spec: BoardSpec, *, engrave_black: bool = True, label: bool = True
+    spec: BoardSpec, *, engrave_black: bool = True, label: bool = True, cut_outline: bool = True
 ) -> bytes:
     """Render the ChArUco board as a DXF byte string (units = mm) via ``ezdxf``.
 
-    Each filled cell is one closed ``LWPOLYLINE``; the optional spec label is a ``TEXT``
-    entity. Geometry is identical to :func:`generate_charuco_svg`, so the LWPOLYLINE count
-    equals that SVG's filled-cell count.
+    Each filled cell is one closed ``LWPOLYLINE`` on the ``ENGRAVE`` layer; the optional spec
+    label is a ``TEXT`` entity. Geometry is identical to :func:`generate_charuco_svg`, so the
+    ENGRAVE-layer LWPOLYLINE count equals that SVG's filled-cell count. When ``cut_outline``
+    (default) the board's outer rectangle is added as a closed polyline on a separate ``CUT``
+    layer (red), so the operator's laser software maps it to the cut operation.
     """
     import ezdxf
     from ezdxf import units
 
     doc = ezdxf.new()  # type: ignore[attr-defined]  # ezdxf re-exports new() without __all__
     doc.units = units.MM
+    doc.layers.add(_ENGRAVE_LAYER, color=7)  # white/black engrave fills
+    doc.layers.add(_CUT_LAYER, color=1)  # ACI 1 = red = cut
     msp = doc.modelspace()
 
+    board_w = spec.squares_x * spec.square_length_mm
     board_h = spec.squares_y * spec.square_length_mm
     margin = _quiet_zone_mm(spec)
+    total_w = board_w + 2 * margin
     total_h = board_h + 2 * margin
 
     for c in _filled_cells(spec, engrave_black=engrave_black):
@@ -265,11 +285,17 @@ def generate_charuco_dxf(
                 (c.x, y_top),
             ],
             close=True,
+            dxfattribs={"layer": _ENGRAVE_LAYER},
+        )
+    if cut_outline:
+        msp.add_lwpolyline(
+            [(0.0, 0.0), (total_w, 0.0), (total_w, total_h), (0.0, total_h)],
+            close=True,
+            dxfattribs={"layer": _CUT_LAYER},
         )
     if label:
-        board_w = spec.squares_x * spec.square_length_mm
         font = min(margin * 0.5, board_w * 0.05) or 3.0
-        text = msp.add_text(_label_text(spec), height=font)
+        text = msp.add_text(_label_text(spec), height=font, dxfattribs={"layer": _ENGRAVE_LAYER})
         text.set_placement((margin, margin * 0.3))
 
     stream = io.StringIO()

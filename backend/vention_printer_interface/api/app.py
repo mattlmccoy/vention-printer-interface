@@ -1973,6 +1973,7 @@ def create_app(
         dict_name: str = Query("DICT_4X4_50", alias="dict"),
         engrave_black: bool = True,
         label: bool = True,
+        cut_outline: bool = True,
     ) -> Response:
         """Generate a TRUE-VECTOR ChArUco calibration board (SVG or DXF) for laser engraving.
 
@@ -2039,7 +2040,9 @@ def create_app(
         polarity = "black" if engrave_black else "white"
         try:
             if fmt == "svg":
-                svg = generate_charuco_svg(spec, engrave_black=engrave_black, label=label)
+                svg = generate_charuco_svg(
+                    spec, engrave_black=engrave_black, label=label, cut_outline=cut_outline
+                )
                 return Response(
                     content=svg,
                     media_type="image/svg+xml",
@@ -2049,7 +2052,9 @@ def create_app(
                         )
                     },
                 )
-            dxf = generate_charuco_dxf(spec, engrave_black=engrave_black, label=label)
+            dxf = generate_charuco_dxf(
+                spec, engrave_black=engrave_black, label=label, cut_outline=cut_outline
+            )
         except (ValueError, AttributeError, TypeError, cv2.error) as exc:
             raise HTTPException(400, f"invalid board spec: {exc}") from exc
         return Response(

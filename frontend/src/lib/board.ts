@@ -17,6 +17,8 @@ export interface BoardConfig {
   preset: BoardPreset | "custom";
   format: BoardFormat;
   engraveBlack: boolean;
+  /** Include the red CUT-layer perimeter (laser cuts the board free). Off = pre-cut stock. */
+  cutOutline: boolean;
   squaresX: number;
   squaresY: number;
   squareMm: number;
@@ -27,6 +29,7 @@ export const DEFAULT_BOARD: BoardConfig = {
   preset: "medium_5x7",
   format: "svg",
   engraveBlack: true,
+  cutOutline: true,
   squaresX: 5,
   squaresY: 7,
   squareMm: 12,
@@ -48,6 +51,7 @@ export function boardQuery(cfg: BoardConfig, formatOverride?: BoardFormat): stri
     p.set("preset", cfg.preset);
   }
   p.set("engrave_black", String(cfg.engraveBlack));
+  p.set("cut_outline", String(cfg.cutOutline));
   return p.toString();
 }
 

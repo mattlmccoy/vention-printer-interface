@@ -244,6 +244,40 @@ def test_resolve_preset_bad_name_raises() -> None:
         resolve_preset("nope")
 
 
+# --- cut outline (laser CUT path, distinct from the engrave fills) ---------------------------
+def test_svg_has_cut_outline_at_board_perimeter_by_default() -> None:
+    svg = generate_charuco_svg(_SPEC, label=False)
+    m = _SVG_OPEN_RE.search(svg)
+    assert m is not None
+    total_w, total_h = (float(v) for v in m.group("vb").split()[2:4])
+    # The cut is a stroked path (not a fill) so a laser treats it as CUT, not ENGRAVE.
+    cut = re.search(
+        r'<path class="cut" d="(?P<d>[^"]+)"[^>]*fill="none"[^>]*stroke="(?P<s>[^"]+)"', svg
+    )
+    assert cut is not None, "no cut-outline path in the SVG"
+    assert cut.group("s").lower() in ("#ff0000", "red")
+    # the path traces the board's outer rectangle (0,0)->(total_w,total_h)
+    assert f"{total_w:g}" in cut.group("d") and f"{total_h:g}" in cut.group("d")
+
+
+def test_svg_cut_outline_can_be_disabled() -> None:
+    assert 'class="cut"' not in generate_charuco_svg(_SPEC, label=False, cut_outline=False)
+
+
+def test_dxf_cut_outline_is_a_closed_polyline_on_its_own_cut_layer() -> None:
+    import io
+
+    import ezdxf
+
+    dxf = generate_charuco_dxf(_SPEC, label=False)
+    doc = ezdxf.read(io.StringIO(dxf.decode("utf-8")))
+    msp = doc.modelspace()
+    cut = msp.query('LWPOLYLINE[layer=="CUT"]')
+    assert len(cut) == 1, "expected exactly one CUT-layer perimeter polyline"
+    assert cut[0].closed
+    assert "CUT" in doc.layers
+
+
 # --- DXF round-trip + entity count -----------------------------------------------------------
 def test_dxf_roundtrips_and_entity_count_matches_svg_filled_cells() -> None:
     import io
@@ -259,7 +293,9 @@ def test_dxf_roundtrips_and_entity_count_matches_svg_filled_cells() -> None:
         doc = ezdxf.read(io.StringIO(dxf.decode("utf-8")))
         assert int(doc.units) == int(units.MM)
         msp = doc.modelspace()
-        assert len(msp.query("LWPOLYLINE")) == n_filled
+        # engrave fills live on the ENGRAVE layer; the CUT-layer perimeter is separate.
+        assert len(msp.query('LWPOLYLINE[layer=="ENGRAVE"]')) == n_filled
+        assert len(msp.query('LWPOLYLINE[layer=="CUT"]')) == 1
 
 
 # --- M-3: generate -> detect round trip (strengthens the "detectable" guarantee) -------------
@@ -303,6 +339,25 @@ def test_generated_board_rasterized_is_detected_by_charuco_detector() -> None:
     assert got_ids == expected_ids
     assert len(detection.image_points) == n_inner_corners
     assert len(detection.object_points) == n_inner_corners
+
+
+@pytest.mark.parametrize("preset_name", sorted(BOARD_PRESETS))
+def test_every_shipped_preset_is_detected_by_charuco_detector(preset_name: str) -> None:
+    """Confirm every SHIPPED preset actually works: rasterize its generated geometry and run the
+    real cv2 ChArUco detector — all interior corners must be found with the exact expected ids."""
+    from vention_printer_interface.vision.registration import detect_board
+
+    spec = resolve_preset(preset_name)
+    image = _rasterize_black_polarity(spec, px_per_mm=10.0)
+
+    detection = detect_board(image, spec)
+
+    assert detection is not None, f"{preset_name}: generated board was not detected"
+    n_inner = (spec.squares_x - 1) * (spec.squares_y - 1)
+    got_ids = {int(i) for i in detection.ids.ravel()}
+    missing = set(range(n_inner)) - got_ids
+    assert got_ids == set(range(n_inner)), f"{preset_name}: missing corners {missing}"
+    assert len(detection.image_points) == n_inner
 
 
 def test_dxf_and_svg_include_label_when_requested() -> None:

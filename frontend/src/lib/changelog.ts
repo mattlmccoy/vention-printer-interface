@@ -11,6 +11,13 @@ export interface Release {
 
 export const CHANGELOG: Release[] = [
   {
+    version: "0.10.4",
+    date: "2026-09-20",
+    changes: [
+      "ChArUco calibration board now includes a red CUT-layer outline so the laser cuts the board free from the stock (toggle it off for pre-cut pieces); every shipped preset is verified detectable by the OpenCV ChArUco detector.",
+    ],
+  },
+  {
     version: "0.10.3",
     date: "2026-09-18",
     changes: [
