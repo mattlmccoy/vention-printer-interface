@@ -251,79 +251,87 @@ export function SettingsView({ status, gates, call, base, onOpenQuickStart }: {
   onOpenQuickStart: () => void;
 }) {
   const [plan, setPlan] = useState<Record<string, unknown> | null>(null);
+  const [sel, setSel] = useState<string>("pistons");
   useEffect(() => { api.printSettings().then((r) => setPlan(r.plan as Record<string, unknown>)).catch(() => undefined); }, []);
   const ok = gates.controllable && !gates.printActive;
   const pistonLock = !gates.controllable
     ? (gates.connected ? "read-only — take control from the connection pill to jog" : "connect + take control to jog the pistons")
     : gates.printActive ? "a print is running — piston jog is locked" : null;
 
-  // Settings, not a wizard: independent sections, jump to any. The calibration sub-flow (assign →
-  // intrinsics/bed → validate) is grouped but still freely navigable.
+  // Settings master-detail: pick an item on the left, it opens in the pane on the right. Independent
+  // sections (not a wizard) — the calibration ones read top-to-bottom on first commissioning.
+  const SECTIONS = [
+    { key: "pistons", title: "Pistons", sub: "per-cylinder travel" },
+    { key: "assign", title: "Cameras", sub: "identify & assign" },
+    { key: "camset", title: "Camera settings", sub: "res · fps · exposure" },
+    { key: "board", title: "Calibration board", sub: "ChArUco / checkerboard" },
+    { key: "calib", title: "Calibrate", sub: "intrinsics & bed plane" },
+    { key: "validate", title: "Validate", sub: "dimensional ±0.1 mm" },
+    { key: "pose", title: "Capture pose", sub: "overhead science cam" },
+    { key: "manual", title: "Manual calibration", sub: "raw image↔world points" },
+    { key: "unattended", title: "Unattended science", sub: "bind camera by UID" },
+  ];
+  const current = SECTIONS.find((s) => s.key === sel) ?? SECTIONS[0];
+
   return (
     <div className="view fixed-page">
-      <div className="sec-h">pistons — per-cylinder travel</div>
-      {pistonLock && <div className="lock" style={{ marginBottom: 10 }}>{pistonLock}</div>}
-      <div style={{ display: "grid", gridTemplateColumns: "repeat(2, minmax(0, 1fr))", gap: 16 }}>
-        <Piston axis={1} name="build" field="build_piston_max_mm" status={status} ok={ok} call={call} plan={plan} onPlan={setPlan} />
-        <Piston axis={2} name="feed" field="feed_piston_max_mm" status={status} ok={ok} call={call} plan={plan} onPlan={setPlan} />
-      </div>
+      <div className="sec-h">settings</div>
+      <div className="setup-grid">
+        <div className="card">
+          <ol className="srail">
+            {SECTIONS.map((s) => (
+              <li key={s.key} className={sel === s.key ? "on" : ""} aria-current={sel === s.key ? "true" : undefined} onClick={() => setSel(s.key)}>
+                <span className="n" />
+                <div><div className="t">{s.title}</div><div className="sd">{s.sub}</div></div>
+              </li>
+            ))}
+          </ol>
+        </div>
 
-      <div className="sec-h" style={{ marginTop: 20 }}>cameras &amp; calibration</div>
-      <p className="setup-intro">These are independent — open only what you need. First-time commissioning runs top to bottom (assign cameras, generate a board, calibrate, validate); afterwards reach for any one directly.</p>
-      <div className="setup-tools">
-        <details className="rp-drawer" open>
-          <summary>identify &amp; assign cameras (overview · science)</summary>
-          <div className="body">
-            <div className="note">📷 Nothing opens a camera until a page asks for it. Assign each camera by its live feed — the two share a name, so the picture is how you tell them apart: set one as overview (wide live view) and one as science (bed stills). Remembered and auto-reconnected; if a camera doesn't appear, use Rescan.</div>
-            <CameraRoleAssigner />
-            <div className="btnrow">
-              <button className="cta primary" onClick={onOpenQuickStart}>Identify &amp; assign cameras…</button>
-              <button className="small" disabled={!gates.reachable} onClick={() => call("rescan cameras", () => api.visionDevices())}>Rescan devices</button>
-            </div>
-          </div>
-        </details>
-        <details className="rp-drawer">
-          <summary>camera settings (res · fps · format · exposure)</summary>
-          <div className="body">
-            <div className="hint" style={{ marginTop: 0 }}>One panel per camera: live preview, a resolution dropdown, an fps slider on the mode's real scale, an exposure slider read from the camera (in ms), and the YUY2/MJPG format for recorded stills (YUY2 = lossless for CAD). Assign the cameras first; settings are remembered per camera.</div>
-            <div className="cols-2">
-              <CameraSettingsPanel role="overview" />
-              <CameraSettingsPanel role="science" />
-            </div>
-          </div>
-        </details>
-        <details className="rp-drawer">
-          <summary>generate &amp; print calibration board (ChArUco / checkerboard)</summary>
-          <div className="body"><CalibrationBoardPanel base={base} /></div>
-        </details>
-        <details className="rp-drawer">
-          <summary>calibrate intrinsics &amp; bed plane (capture ≥3 board views)</summary>
-          <div className="body">
-            <div className="hint" style={{ marginTop: 0 }}>Capture ≥3 board views from different bed positions / tilts, then finalize with "use the last board view as the bed reference" ticked — that sets the bed plane so mm map to the bed, not the camera.</div>
-            <CalibrationWizard call={call} printing={gates.printActive} />
-          </div>
-        </details>
-        <details className="rp-drawer">
-          <summary>validate (dimensional ±0.1 mm)</summary>
-          <div className="body"><ValidationPanel call={call} printing={gates.printActive} /></div>
-        </details>
-      </div>
+        <div className="card">
+          <h3>{current.title} <span className="hint" style={{ textTransform: "none", letterSpacing: 0, fontWeight: 400 }}>· {current.sub}</span></h3>
 
-      <div className="sec-h">calibration tools</div>
-      <p className="setup-intro">Manual and standalone calibration — set the overhead capture pose, or enter raw image↔world points by hand. The guided steps above are the normal commissioning path; reach for these only to adjust one thing directly.</p>
-      <div className="setup-tools">
-        <details className="rp-drawer">
-          <summary>capture-pose calibration (overhead science cam)</summary>
-          <CaptureCalibration status={status} gates={gates} call={call} base={base} />
-        </details>
-        <details className="rp-drawer">
-          <summary>manual calibration (raw points)</summary>
-          <div className="body"><CalibrationForm call={call} disabled={!gates.reachable} /></div>
-        </details>
-        <details className="rp-drawer">
-          <summary>unattended science capture (bind camera by unique id)</summary>
-          <UnattendedSciencePanel />
-        </details>
+          {sel === "pistons" && (
+            <div className="grid-gap">
+              {pistonLock && <div className="lock" style={{ marginTop: 0 }}>{pistonLock}</div>}
+              <div className="hint" style={{ marginTop: 0 }}>Jog each piston to its physical stop and set its max — that's the usable range for the current cylinder. A build deeper than the build max is blocked before it under-builds.</div>
+              <div style={{ display: "grid", gridTemplateColumns: "repeat(2, minmax(0, 1fr))", gap: 16 }}>
+                <Piston axis={1} name="build" field="build_piston_max_mm" status={status} ok={ok} call={call} plan={plan} onPlan={setPlan} />
+                <Piston axis={2} name="feed" field="feed_piston_max_mm" status={status} ok={ok} call={call} plan={plan} onPlan={setPlan} />
+              </div>
+            </div>
+          )}
+          {sel === "assign" && (
+            <div className="grid-gap">
+              <div className="note">📷 Nothing opens a camera until a page asks for it. Assign each camera by its live feed — the two share a name, so the picture is how you tell them apart: set one as overview (wide live view) and one as science (bed stills). Remembered and auto-reconnected; if a camera doesn't appear, use Rescan.</div>
+              <CameraRoleAssigner />
+              <div className="btnrow">
+                <button className="cta primary" onClick={onOpenQuickStart}>Identify &amp; assign cameras…</button>
+                <button className="small" disabled={!gates.reachable} onClick={() => call("rescan cameras", () => api.visionDevices())}>Rescan devices</button>
+              </div>
+            </div>
+          )}
+          {sel === "camset" && (
+            <div className="grid-gap">
+              <div className="hint" style={{ marginTop: 0 }}>One panel per camera: live preview, a resolution dropdown, an fps slider on the mode's real scale, an exposure slider read from the camera (in ms), and the YUY2/MJPG format for recorded stills (YUY2 = lossless for CAD). Assign the cameras first; settings are remembered per camera.</div>
+              <div className="cols-2">
+                <CameraSettingsPanel role="overview" />
+                <CameraSettingsPanel role="science" />
+              </div>
+            </div>
+          )}
+          {sel === "board" && <CalibrationBoardPanel base={base} />}
+          {sel === "calib" && (
+            <div className="grid-gap">
+              <div className="hint" style={{ marginTop: 0 }}>Capture ≥3 board views from different bed positions / tilts, then finalize with "use the last board view as the bed reference" ticked — that sets the bed plane so mm map to the bed, not the camera.</div>
+              <CalibrationWizard call={call} printing={gates.printActive} />
+            </div>
+          )}
+          {sel === "validate" && <ValidationPanel call={call} printing={gates.printActive} />}
+          {sel === "pose" && <CaptureCalibration status={status} gates={gates} call={call} base={base} />}
+          {sel === "manual" && <div className="body"><CalibrationForm call={call} disabled={!gates.reachable} /></div>}
+          {sel === "unattended" && <UnattendedSciencePanel />}
+        </div>
       </div>
     </div>
   );
