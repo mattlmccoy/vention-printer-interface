@@ -60,6 +60,17 @@ def test_wall_reached_trips_only_when_advance_stops() -> None:
     assert wr([0.0, 0.0], 0.2) is True             # dead against the stop
 
 
+def test_settle_ready_waits_for_the_move_to_register() -> None:
+    # The bug: right after a move is issued, motion_complete is still True from the PREVIOUS move for
+    # a few polls, so settle would return the STALE pre-move position. settle_ready gates acceptance
+    # until we've SEEN motion_complete go False (the move registered) OR the start grace elapsed (a
+    # no-op move that's already at target).
+    sr = piston_sweep.settle_ready
+    assert sr(saw_incomplete=False, elapsed_s=0.1, start_grace_s=0.4) is False  # too early, no move yet
+    assert sr(saw_incomplete=True, elapsed_s=0.1, start_grace_s=0.4) is True    # move registered
+    assert sr(saw_incomplete=False, elapsed_s=0.5, start_grace_s=0.4) is True   # no-op grace elapsed
+
+
 def test_median_is_robust_to_an_outlier_rep() -> None:
     md = piston_sweep.median
     assert md([-0.4, -0.6, -0.7, 0.2, -0.1]) == -0.4   # the +0.2 outlier doesn't move the middle
