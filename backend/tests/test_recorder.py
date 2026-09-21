@@ -1,4 +1,5 @@
 import json
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
@@ -105,12 +106,33 @@ def test_missing_manifest_means_incomplete(tmp_path: Path) -> None:
 
 
 def test_slug_and_collision(tmp_path: Path) -> None:
-    rec = Recorder(tmp_path)
+    # Run-dir names are timestamped to the second, so two runs that start within the SAME second
+    # collide and the second is suffixed _2. A pinned (injected) clock makes this deterministic
+    # regardless of test order/timing — with the real wall clock the two starts occasionally
+    # straddled a 1-second boundary, giving b a fresh timestamp and no _2 (the flake).
+    frozen = datetime(2026, 9, 17, 12, 0, 0, tzinfo=UTC)
+    rec = Recorder(tmp_path, clock=lambda: frozen)
     a = rec.start("My Part!")
     rec.stop()
     b = rec.start("My Part!")
     rec.stop()
     assert a.name.endswith("_My_Part") and b.name.endswith("_My_Part_2")
+
+
+def test_slug_no_collision_across_seconds(tmp_path: Path) -> None:
+    # Two runs whose starts land in DIFFERENT seconds get distinct timestamps and do NOT collide,
+    # so neither carries a _2 suffix. This pins the complement of test_slug_and_collision so the
+    # naming's timing behavior can't silently regress.
+    times = iter(
+        [datetime(2026, 9, 17, 12, 0, 0, tzinfo=UTC), datetime(2026, 9, 17, 12, 0, 1, tzinfo=UTC)]
+    )
+    rec = Recorder(tmp_path, clock=lambda: next(times))
+    a = rec.start("My Part!")
+    rec.stop()
+    b = rec.start("My Part!")
+    rec.stop()
+    assert a.name.endswith("_My_Part") and b.name.endswith("_My_Part")
+    assert a.name != b.name
 
 
 def test_record_and_event_ignored_when_idle(tmp_path: Path) -> None:
