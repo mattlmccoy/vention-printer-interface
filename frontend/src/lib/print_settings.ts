@@ -6,6 +6,10 @@ export const PART = 1, FEED = 2, PRINTHEAD = 3, RECOATER = 4;
 // The thick precoats now live in the priming routine (they fill the runway + part cavity with the
 // build piston fixed). The print begins at the thin precoats, where the build piston first drops.
 export const PHASES = ["thin_precoat", "printing", "postcoat"] as const;
+// Usable build-piston travel FROM HOME (Vention actuator 360 mm − 230 mm dead length = 130 mm;
+// sweep lost motion ~1:1 above ~134 mm). Below the 145 mm hard limit; a deeper build silently
+// under-builds. Mirrors backend print_settings.PART_USABLE_TRAVEL_MM.
+export const PART_USABLE_TRAVEL_MM = 130;
 export type Phase = (typeof PHASES)[number];
 
 // Precoat-style phases lay a cover layer only (spread -> feed advance -> recoater return to 350);
@@ -137,6 +141,9 @@ export function validate(p: PrintSettings, travelMax: Record<number, number> = {
   const total = totalThickness(p);
   if (total > p.feed_end_mm)
     reasons.push(`total thickness ${total.toFixed(1)} mm exceeds feed travel ${p.feed_end_mm.toFixed(1)} mm (V1.py printability check)`);
+  const deepestPart = Math.max(total, p.part_max_mm);
+  if (deepestPart > PART_USABLE_TRAVEL_MM)
+    reasons.push(`build reaches ${deepestPart.toFixed(1)} mm but the piston's usable travel is ${PART_USABLE_TRAVEL_MM.toFixed(0)} mm from home — it stops there, so the part would not finish (silent under-build)`);
   for (const ph of PHASES) if (p[ph].n_layers > 0 && p[ph].layer_thickness_mm <= 0) reasons.push(`${ph}.layer_thickness_mm must be > 0 when n_layers > 0`);
   const positions: Array<[string, number, number]> = [
     ["feed_end_mm", FEED, p.feed_end_mm], ["recoater_home_mm", RECOATER, p.recoater_home_mm],

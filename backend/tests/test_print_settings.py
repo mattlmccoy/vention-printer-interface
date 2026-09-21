@@ -280,6 +280,21 @@ def test_build_backlash_preload_overshoots_the_part_drop() -> None:
     )
 
 
+def test_validate_flags_a_build_beyond_the_pistons_usable_travel() -> None:
+    from vention_printer_interface.control.print_settings import PART_USABLE_TRAVEL_MM
+    assert PART_USABLE_TRAVEL_MM == 130.0
+    ok = PrintSettings()  # default part_max 72 mm, ~25 mm build → within reach
+    assert not any("usable travel" in r for r in ok.validate())
+    # part_max past the ~130 mm wall (bounded clamps to 145 mm, so validate must catch it)
+    deep = dataclasses.replace(ok, part_max_mm=135.0)
+    assert any("usable travel" in r for r in deep.validate())
+    # a tall build (cumulative descent) beyond usable travel is flagged too
+    tall_printing = dataclasses.replace(ok.printing, n_layers=70, layer_thickness_mm=2.0)
+    tall = dataclasses.replace(ok, printing=tall_printing)
+    assert tall.total_thickness_mm > PART_USABLE_TRAVEL_MM
+    assert any("usable travel" in r for r in tall.validate())
+
+
 def test_build_backlash_mm_is_clamped_to_0_5() -> None:
     # The preload is a small overshoot to take up lash, never a large plunge: bounded() (the
     # clamping constructor; from_dict is a raw round-trip) bounds it to [0, 5] mm, so an over-large

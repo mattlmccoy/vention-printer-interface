@@ -72,6 +72,12 @@ test("printability and travel reasons", () => {
   assert.match(validate({ ...DEFAULT_PLAN, recoater_end_mm: 5000 })[0], /recoater_end_mm/);
 });
 
+test("a build past the piston's usable travel is flagged", () => {
+  assert.deepEqual(validate(DEFAULT_PLAN), []); // default part_max 72 mm → within reach
+  const deep = { ...DEFAULT_PLAN, part_max_mm: 135 }; // past the ~130 mm wall
+  assert.ok(validate(deep).some((r) => /usable travel/.test(r)));
+});
+
 test("compile matches the backend order for one print layer (50 steps, heater on)", () => {
   const one = { ...DEFAULT_PLAN, build_backlash_mm: 0, // V1.py-faithful baseline (default is now 0.15)
     thin_precoat: { ...DEFAULT_PLAN.thin_precoat, n_layers: 0 },
