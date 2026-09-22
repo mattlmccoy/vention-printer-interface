@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from "react";
-import { api, type BacklashSession, type CenterSweepBest, type TimingConfig, type VisionCalibrateResult } from "../../lib/api.ts";
+import { api, type BacklashSession, type CenterSweepBest, type Drive, type OffloadJob, type OffloadPlanRow, type TimingConfig, type VisionCalibrateResult } from "../../lib/api.ts";
 import { captureScienceStillOnce } from "../../lib/science_still.ts";
 import { BacklashPlot } from "../BacklashPlot.tsx";
 import { verifyVerdict, type Verdict } from "../../lib/backlash_verify.ts";
@@ -437,6 +437,109 @@ function CaptureCalibration({ status, gates, call }: { status: StatusPayload | n
 /** Bind the SCIENCE camera to a stable macOS AVFoundation unique id, so the operator captures the
  *  RIGHT camera unattended (no browser tab open). The client-side picker is still the primary way to
  *  tell two identical ELPs apart; this is the robust server-side fallback for unattended prints. */
+/** Copy runs to a picked external drive, FLIR-style: each file hash-verified, re-copy skips what's
+ *  already there (a yanked cable just resumes). Runs land under vpi-runs/ on the drive. */
+function DataOffloadPanel() {
+  const [drives, setDrives] = useState<Drive[]>([]);
+  const [dest, setDest] = useState("");
+  const [plan, setPlan] = useState<OffloadPlanRow[]>([]);
+  const [sel, setSel] = useState<Set<string>>(new Set());
+  const [job, setJob] = useState<OffloadJob | null>(null);
+  const [msg, setMsg] = useState("");
+  const gb = (b: number) => (b / 1e9).toFixed(1);
+
+  const loadDrives = () => api.offloadDrives().then((r) => setDrives(r.drives)).catch(() => setDrives([]));
+  useEffect(() => { loadDrives(); }, []);
+  const loadPlan = (d: string) => api.offloadPlan(d).then((r) => {
+    setPlan(r.plan);
+    setJob(r.job.state === "idle" ? null : r.job);
+    setSel(new Set(r.plan.filter((p) => !p.at_dest).map((p) => p.run)));  // default: the missing ones
+  }).catch(() => setPlan([]));
+  const pick = (d: string) => { setDest(d); if (d) loadPlan(d); else setPlan([]); };
+
+  const running = job?.state === "running";
+  useEffect(() => {  // poll while a copy runs; refresh the plan when it finishes
+    if (!running) return;
+    const id = window.setInterval(async () => {
+      try {
+        const j = await api.offloadJob();
+        setJob(j);
+        if (j.state !== "running") { window.clearInterval(id); if (dest) loadPlan(dest); }
+      } catch { /* transient */ }
+    }, 700);
+    return () => window.clearInterval(id);
+  }, [running]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  const start = (runs?: string[]) => {
+    setMsg("");
+    api.offloadStart(dest, runs).then(setJob).catch((e) => setMsg(e instanceof Error ? e.message : "failed"));
+  };
+  const toggle = (run: string) => setSel((s) => {
+    const n = new Set(s); if (n.has(run)) n.delete(run); else n.add(run); return n;
+  });
+  const missing = plan.filter((p) => !p.at_dest).length;
+  const pct = job?.progress && job.progress.runs_total
+    ? Math.round((100 * job.progress.runs_done) / job.progress.runs_total) : 0;
+
+  return (
+    <div className="body">
+      <div className="hint" style={{ marginTop: 0 }}>
+        Copy runs to an external drive. Each file is hash-verified and only kept once verified;
+        re-copying skips what's already there, so a yanked cable just resumes next time. Runs land
+        under <code>vpi-runs/</code> on the drive.
+      </div>
+      <div className="fields" style={{ marginTop: 16 }}>
+        <span>destination drive</span>
+        <select value={dest} onChange={(e) => pick(e.target.value)}>
+          <option value="">— pick a mounted drive —</option>
+          {drives.map((d) => <option key={d.path} value={d.path}>{d.name} · {gb(d.free_bytes)} GB free</option>)}
+        </select>
+      </div>
+      <div className="actions" style={{ marginTop: 8, gap: 8 }}>
+        <button className="small" onClick={loadDrives}>refresh drives</button>
+        {drives.length === 0 && <span className="hint">no external drives mounted — plug one in, then refresh</span>}
+      </div>
+
+      {dest && (
+        <>
+          <div className="kv" style={{ marginTop: 12 }}>
+            <span>runs</span><span className="v">{plan.length} total · {missing} not on drive</span>
+          </div>
+          <div className="actions" style={{ marginTop: 8, gap: 8, flexWrap: "wrap" }}>
+            <button className="cta primary" style={{ whiteSpace: "nowrap" }} disabled={running || missing === 0} onClick={() => start()}>Copy all missing ({missing})</button>
+            <button className="cta" style={{ whiteSpace: "nowrap" }} disabled={running || sel.size === 0} onClick={() => start([...sel])}>Copy selected ({sel.size})</button>
+            {running && <button className="cta" onClick={() => api.offloadCancel().then(setJob).catch(() => undefined)}>Cancel</button>}
+          </div>
+          {job && job.state !== "idle" && (
+            <div className="cal-result" style={{ marginTop: 8 }}>
+              <div className="hint" style={{ marginTop: 0 }}>
+                {job.state === "running" ? `copying ${job.progress?.current} · run ${job.progress?.runs_done}/${job.progress?.runs_total} · file ${job.progress?.file_done}/${job.progress?.file_total}`
+                  : job.state === "done" ? `✓ done — ${job.files_copied} copied, ${job.files_skipped} already there`
+                  : job.state === "cancelled" ? "cancelled" : `error — ${(job.errors ?? []).length} problem(s)`}
+              </div>
+              {running && (
+                <div className="bar" style={{ marginTop: 6, height: 6, background: "var(--track, #2a2f3a)", borderRadius: 3, overflow: "hidden" }}>
+                  <div style={{ height: "100%", width: `${pct}%`, background: "var(--accent, #d9a441)" }} />
+                </div>
+              )}
+              {job.errors && job.errors.length > 0 && <div className="errline" style={{ marginTop: 6 }}>{job.errors.slice(0, 3).join("; ")}</div>}
+            </div>
+          )}
+          <div style={{ marginTop: 10, maxHeight: 240, overflowY: "auto" }}>
+            {plan.map((p) => (
+              <label key={p.run} className="row" style={{ justifyContent: "space-between", gap: 8, padding: "3px 0", borderTop: "1px solid var(--line)", cursor: running ? "default" : "pointer" }}>
+                <span><input type="checkbox" checked={sel.has(p.run)} disabled={running} onChange={() => toggle(p.run)} /> {p.run}</span>
+                {p.at_dest ? <b className="okv">on drive ✓</b> : <span className="hint">not copied</span>}
+              </label>
+            ))}
+          </div>
+        </>
+      )}
+      {msg && <div className="errline" style={{ marginTop: 8 }}>{msg}</div>}
+    </div>
+  );
+}
+
 /** Live-tune the two knobs that pace the print between moves: the per-step wait FLOOR and the
  *  controller POLL interval during a print. Applies immediately (no restart) and persists to the
  *  install-independent config. Tighter = less dead time between moves; too tight risks a step
@@ -585,6 +688,7 @@ export function SettingsView({ status, gates, call, base, onOpenQuickStart }: {
     { key: "pose", title: "Capture pose", sub: "overhead science cam" },
     { key: "manual", title: "Manual calibration", sub: "raw image↔world points" },
     { key: "unattended", title: "Unattended science", sub: "bind camera by UID" },
+    { key: "offload", title: "Data offload", sub: "copy runs to a drive" },
     { key: "pacing", title: "Print pacing", sub: "inter-move timing" },
   ];
   const current = SECTIONS.find((s) => s.key === sel) ?? SECTIONS[0];
@@ -648,6 +752,7 @@ export function SettingsView({ status, gates, call, base, onOpenQuickStart }: {
           {sel === "pose" && <CaptureCalibration status={status} gates={gates} call={call} base={base} />}
           {sel === "manual" && <div className="body"><CalibrationForm call={call} disabled={!gates.reachable} /></div>}
           {sel === "unattended" && <UnattendedSciencePanel />}
+          {sel === "offload" && <DataOffloadPanel />}
           {sel === "pacing" && <PrintPacingPanel />}
         </div>
       </div>

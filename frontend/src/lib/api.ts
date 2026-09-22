@@ -67,6 +67,10 @@ export interface PathsInfo {
   config_path: string;
 }
 export interface Health { version: string; api_version: string; backend: string; platform: string; paths?: PathsInfo | null }
+// Data offload — verified copy of runs to a picked external drive. See backend offload.py.
+export interface Drive { name: string; path: string; total_bytes: number; free_bytes: number }
+export interface OffloadPlanRow { run: string; at_dest: boolean }
+export interface OffloadJob { state: "idle" | "running" | "done" | "cancelled" | "error"; dest?: string; progress?: { runs_done: number; runs_total: number; current: string; file_done: number; file_total: number }; files_copied?: number; files_skipped?: number; errors?: string[] }
 export interface TimingConfig { print_min_wait_s: number; print_poll_interval_s: number; defaults: { print_min_wait_s: number; print_poll_interval_s: number } }
 export interface Discovery { candidates: Array<{ backend: string; ip: string | null; label?: string; reachable: boolean }>; connected: { backend: string } }
 export interface MeteorStatus { backend: string; available: boolean; ready: boolean; job_name: string | null; layers_ready: number; layers_expected: number; detail: string }
@@ -201,6 +205,11 @@ export interface VisionCaptureSidecar {
 export const api = {
   health: () => req<Health>("GET", "/api/health"),
   status: () => req<StatusPayload>("GET", "/api/status"),
+  offloadDrives: () => req<{ drives: Drive[] }>("GET", "/api/offload/drives"),
+  offloadPlan: (dest: string) => req<{ plan: OffloadPlanRow[]; job: OffloadJob }>("GET", `/api/offload/plan?dest=${encodeURIComponent(dest)}`),
+  offloadStart: (dest: string, runs?: string[]) => req<OffloadJob>("POST", "/api/offload/start", { dest, runs: runs ?? null }),
+  offloadJob: () => req<OffloadJob>("GET", "/api/offload/job"),
+  offloadCancel: () => req<OffloadJob>("POST", "/api/offload/cancel"),
   timing: () => req<TimingConfig>("GET", "/api/config/timing"),
   setTiming: (body: { print_min_wait_s?: number; print_poll_interval_s?: number }) => req<TimingConfig>("PUT", "/api/config/timing", body),
   discovery: () => req<Discovery>("GET", "/api/discovery"),

@@ -85,6 +85,12 @@ from vention_printer_interface.jobs.store import (
     load_job,
     preview_png,
 )
+from vention_printer_interface.offload import (
+    OffloadJob,
+    drive_dict,
+    list_drives,
+    offload_plan,
+)
 from vention_printer_interface.paths_config import (
     APP_DIR_NAME,
     PathsConfig,
@@ -333,6 +339,11 @@ class CenterSweepStartBody(BaseModel):
 
 class CenterSweepApplyBody(BaseModel):
     recoater_mm: float = Field(ge=0)
+
+
+class OffloadStartBody(BaseModel):
+    dest: str  # a mounted drive path (from /api/offload/drives)
+    runs: list[str] | None = None  # None -> copy every run not already on the drive
 
 
 class AxisMotionBody(BaseModel):
@@ -2007,6 +2018,65 @@ def create_app(
         if target.parent.parent != root.resolve() or not target.exists():
             raise HTTPException(400, "bad run")
         return FileResponse(target)
+
+    # ---- data offload (verified copy of runs to a picked external drive) ----------------------
+    def _offload_job() -> OffloadJob | None:
+        return getattr(app.state, "offload_job", None)
+
+    def _source_run_names() -> list[str]:
+        try:
+            return sorted((p.name for p in root.iterdir() if p.is_dir()), reverse=True)
+        except OSError:
+            return []
+
+    @app.get("/api/offload/drives")
+    def offload_drives() -> dict[str, Any]:
+        return {"drives": [drive_dict(d) for d in list_drives()]}
+
+    @app.get("/api/offload/plan")
+    def offload_plan_endpoint(dest: str = Query(...)) -> dict[str, Any]:
+        dpath = Path(dest)
+        if not dpath.is_dir():
+            raise HTTPException(400, "destination is not a mounted directory")
+        job = _offload_job()
+        return {"plan": offload_plan(_source_run_names(), dpath),
+                "job": job.snapshot() if job is not None else {"state": "idle"}}
+
+    @app.get("/api/offload/job")
+    def offload_job_status() -> dict[str, Any]:
+        job = _offload_job()
+        return job.snapshot() if job is not None else {"state": "idle"}
+
+    @app.post("/api/offload/start")
+    def offload_start(body: OffloadStartBody) -> dict[str, Any]:
+        running = _offload_job()
+        if running is not None and running.snapshot()["state"] == "running":
+            raise HTTPException(409, "an offload is already running")
+        dpath = Path(body.dest)
+        if not dpath.is_dir():
+            raise HTTPException(400, "destination is not a mounted directory")
+        names = _source_run_names()
+        if body.runs is not None:
+            known = set(names)
+            chosen = [r for r in body.runs if r in known]
+        else:  # every run not already on the drive
+            present = {p["run"] for p in offload_plan(names, dpath) if p["at_dest"]}
+            chosen = [r for r in names if r not in present]
+        if not chosen:
+            raise HTTPException(400, "no runs to copy (all already present, or none matched)")
+        job = OffloadJob(root, dpath, chosen)
+        app.state.offload_job = job
+        job.start_thread()
+        ev("offload_start", {"dest": str(dpath), "runs": len(chosen)})
+        return job.snapshot()
+
+    @app.post("/api/offload/cancel")
+    def offload_cancel() -> dict[str, Any]:
+        job = _offload_job()
+        if job is None:
+            raise HTTPException(409, "no offload to cancel")
+        job.cancel()
+        return job.snapshot()
 
     # ---- vision (overview + science cameras) -------------------------------------------------
     @app.get("/api/vision/status")
