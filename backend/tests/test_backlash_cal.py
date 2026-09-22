@@ -92,14 +92,14 @@ def test_measure_backlash_recovers_known_constant_lash() -> None:
     assert result.recommended_mm == 0.2
 
 
-def test_measure_backlash_reports_progress_per_position() -> None:
+def test_measure_backlash_reports_progress_with_the_completed_position() -> None:
     seen: list[tuple[int, int, float]] = []
     mover = FakeLashMover(lash_mm=0.1)
     measure_backlash(
         mover, axis=2, positions=[10.0, 20.0], d_mm=2.0, reps=2,
-        on_progress=lambda done, total, ref: seen.append((done, total, ref)),
+        # on_progress now carries the just-completed PositionResult (for live plotting).
+        on_progress=lambda done, total, pos: seen.append((done, total, pos.ref_mm)),
     )
-    # total is the number of reference positions; progress advances 0..total.
     assert seen[-1][0] == seen[-1][1] == 2
     assert [s[2] for s in seen[:2]] == [10.0, 20.0]
 

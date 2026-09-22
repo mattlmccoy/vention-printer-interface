@@ -55,6 +55,17 @@ def test_routine_cancel_stops_and_marks_cancelled() -> None:
     assert mover.commands[-1] == 5.0  # still returns home after a cancel
 
 
+def test_snapshot_streams_completed_positions_for_live_plotting() -> None:
+    mover = FakeLashMover(lash_mm=0.2)
+    r = BacklashRoutine(mover, axis=1, positions=[15.0, 30.0], d_mm=2.0, reps=3, return_to_mm=5.0)
+    assert r.snapshot()["partial_positions"] == []  # nothing yet
+    r.run()
+    parts = r.snapshot()["partial_positions"]
+    assert [p["ref_mm"] for p in parts] == [15.0, 30.0]           # one per completed depth
+    assert all(len(p["reps_mm"]) == 3 for p in parts)  # per-rep data present for plotting
+    assert parts[0]["backlash_mag_median_mm"] == 0.2
+
+
 def test_snapshot_before_run_is_idle() -> None:
     r = BacklashRoutine(FakeLashMover(0.0), axis=1, positions=[15.0], d_mm=2.0, reps=1,
                         return_to_mm=5.0)
