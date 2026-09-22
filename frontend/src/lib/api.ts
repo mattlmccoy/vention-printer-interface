@@ -158,6 +158,12 @@ export interface VisionBoardSpecBody {
 export interface CalibCoverage { cells_filled: number; tilt_bins_filled: number; enough: boolean; gaps: string[]; total_views: number }
 export interface VisionCalibSession { n_views: number; spec: Record<string, unknown> | null; ready: boolean; coverage?: CalibCoverage }
 export interface VisionValidateScaleResult { rms_mm: number; max_mm: number; scale_bias: number; n_points: number; target_mm: number; passed: boolean; per_point?: Array<{ error_mm: number }> }
+// Camera-center sweep (browser-driven): the client steps the recoater + captures a science frame
+// per pose; the server scores each frame's bore offset and picks the centring recoater pose.
+export interface CenterSweepSample { recoater_mm: number; offset_px: number | null }
+export interface CenterSweepSession { active: boolean; poses: number[]; start_mm: number | null; samples: CenterSweepSample[]; done?: boolean }
+export interface CenterSweepSampleResult { recoater_mm: number; found: boolean; offset_px: number | null; cx: number | null; cy: number | null; r: number | null; image_size: [number, number] }
+export interface CenterSweepBest { pose_mm: number; offset_px: number; improved: boolean }
 // POST /api/vision/calibrate/capture — see backend app.py's `vision_calibrate_capture`.
 export interface VisionCalibCaptureResult { captured: boolean; count?: number; corners_found?: number; reason?: string }
 // POST /api/vision/calibrate/finalize body — see backend app.py's CalibFinalizeBody.
@@ -358,4 +364,19 @@ export const api = {
   // `url` is a backend-provided path (a record's sidecar_url from visionCaptures), already
   // carrying its own query string — passed straight through to req(), same as every other path.
   visionCaptureSidecar: (url: string) => req<VisionCaptureSidecar>("GET", url),
+  // Camera-center sweep. start/status/best/apply/cancel are plain JSON; sample POSTs a raw frame.
+  centerSweepStart: (body: { start_mm?: number; span_mm?: number; step_mm?: number }) => req<CenterSweepSession>("POST", "/api/vision/center-sweep/session", body),
+  centerSweepStatus: () => req<CenterSweepSession>("GET", "/api/vision/center-sweep/session"),
+  centerSweepBest: () => req<CenterSweepBest>("POST", "/api/vision/center-sweep/best"),
+  centerSweepApply: (recoater_mm: number) => req<PrintSettingsPayload>("POST", "/api/vision/center-sweep/apply", { recoater_mm }),
+  centerSweepCancel: () => req<{ active: boolean }>("POST", "/api/vision/center-sweep/cancel"),
+  centerSweepSample: async (blob: Blob, recoaterMm: number): Promise<CenterSweepSampleResult> => {
+    const res = await fetch(apiUrl(base, `/api/vision/center-sweep/sample?recoater_mm=${recoaterMm}`), {
+      method: "POST",
+      headers: { [CLIENT_HEADER]: "1", "Content-Type": blob.type || "image/png" },
+      body: blob,
+    });
+    if (!res.ok) throw new ApiError(res.status, `${res.status} center-sweep sample`);
+    return res.json() as Promise<CenterSweepSampleResult>;
+  },
 };

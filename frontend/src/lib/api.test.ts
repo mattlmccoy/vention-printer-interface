@@ -69,6 +69,11 @@ test("every route: method + path + body locked", async () => {
       "POST", "/api/plots/validation.png", { residuals_mm: [0.01, 0.03], target_mm: 0.05 }],
     [() => api.plotSweep([{ commanded_mm: 10, deviation_mm: 0, direction: "down" }], "png"),
       "POST", "/api/plots/sweep.png", { rows: [{ commanded_mm: 10, deviation_mm: 0, direction: "down" }] }],
+    [() => api.centerSweepStart({ span_mm: 4, step_mm: 1 }), "POST", "/api/vision/center-sweep/session", { span_mm: 4, step_mm: 1 }],
+    [() => api.centerSweepStatus(), "GET", "/api/vision/center-sweep/session", undefined],
+    [() => api.centerSweepBest(), "POST", "/api/vision/center-sweep/best", undefined],
+    [() => api.centerSweepApply(10.5), "POST", "/api/vision/center-sweep/apply", { recoater_mm: 10.5 }],
+    [() => api.centerSweepCancel(), "POST", "/api/vision/center-sweep/cancel", undefined],
   ];
   for (const [fn, method, path, body] of cases) {
     const c = await last(fn);
