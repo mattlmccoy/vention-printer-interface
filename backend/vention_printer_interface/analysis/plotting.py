@@ -10,6 +10,8 @@ Install with ``uv sync --extra plots``.
 
 from __future__ import annotations
 
+from collections import Counter
+from dataclasses import dataclass
 from importlib.util import find_spec
 from io import BytesIO
 from typing import Any
@@ -53,56 +55,64 @@ def _fig_bytes(plt: Any, fig: Any, fmt: str) -> bytes:
     return buf.getvalue()
 
 
+@dataclass(frozen=True)
+class _Level:
+    value: float
+    count: int
+
+
+def _bin_levels(reps: list[Any], quantum_mm: float = 0.1) -> list[_Level]:
+    """Group reps by nearest encoder level (``quantum_mm``) and count each — quantised reps read as
+    per-level counts instead of an overplotted blob. Ascending by level."""
+    counts = Counter(round(round(float(r) / quantum_mm) * quantum_mm, 6) for r in reps)
+    return [_Level(value, n) for value, n in sorted(counts.items())]
+
+
 def render_backlash(
     positions: list[dict[str, Any]],
     recommended: float | None,
     tol_mm: float = 0.1,
     fmt: str = "png",
 ) -> bytes:
-    """Backlash-per-depth strip plot against a factory-style tolerance band.
+    """Backlash-per-depth COUNT-BUBBLE plot against a factory-style tolerance band.
 
-    ``positions`` is the backlash-cal snapshot shape: each item has ``ref_mm`` (probed
-    depth) and ``reps_mm`` (per-repeat measured lash). The shaded band is ±``tol_mm``
-    (one 0.1 mm encoder count by default); the dashed line is the recommended
-    compensation. Mirrors the live ``BacklashPlot.tsx`` so the export matches the UI.
+    ``positions`` is the backlash-cal snapshot shape: each item has ``ref_mm`` (probed depth)
+    and ``reps_mm`` (per-repeat measured lash). The measurement is quantised to the 0.1 mm
+    encoder readout, so a raw strip plot stacks reps into an unreadable blob; instead each depth
+    shows one bubble per observed level (area ∝ rep count, the count printed in it) plus a bold
+    median tick. The shaded band is ±``tol_mm`` (one count); ``recommended`` is named in the title
+    rather than drawn as a line (it usually equals the band edge). Mirrors ``BacklashPlot.tsx``.
     """
-    import pandas as pd
-    import seaborn as sns
-
     plt, fig, ax = _new_axes()
-    ax.axhspan(-tol_mm, tol_mm, color=_OK, alpha=0.15, zorder=0, label=f"±{tol_mm:g} mm (1 count)")
+    ax.axhspan(-tol_mm, tol_mm, color=_OK, alpha=0.12, zorder=0, label=f"±{tol_mm:g} mm (1 count)")
     ax.axhline(0.0, color=_MUTED, lw=1.0, zorder=1)
-    if recommended is not None and recommended > 0:
-        ax.axhline(
-            recommended, color=_ACCENT, lw=1.3, ls="--", zorder=2,
-            label=f"recommended {recommended:g} mm",
-        )
 
-    rows = [
-        {"depth_mm": float(p["ref_mm"]), "lash_mm": float(v)}
-        for p in positions
-        for v in p.get("reps_mm", [])
-    ]
-    if rows:
-        df = pd.DataFrame(rows)
-        depths = sorted(df["depth_mm"].unique())
-        sns.stripplot(
-            data=df, x="depth_mm", y="lash_mm", order=depths, ax=ax,
-            color=_ACCENT, size=6, alpha=0.7, jitter=0.2, zorder=3,
-        )
-        medians = df.groupby("depth_mm")["lash_mm"].median()
-        for i, depth in enumerate(depths):
-            ax.plot([i - 0.25, i + 0.25], [medians[depth]] * 2, color=_INK, lw=2.5, zorder=4)
-        ax.set_xticks(range(len(depths)), labels=[f"{d:g}" for d in depths])
+    all_counts = [lvl.count for p in positions for lvl in _bin_levels(p.get("reps_mm", []))]
+    max_count = max(all_counts) if all_counts else 1
+    if positions:
+        for i, p in enumerate(positions):
+            for lvl in _bin_levels(p.get("reps_mm", [])):
+                ax.scatter([i], [lvl.value], s=140 + 900 * (lvl.count / max_count),
+                           color=_ACCENT, alpha=0.85, edgecolors="none", zorder=3)
+                ax.annotate(str(lvl.count), (i, lvl.value), ha="center", va="center",
+                            fontsize=8, fontweight="bold", color="#10151f", zorder=4)
+            med = _opt_float(p.get("backlash_median_mm"))
+            if med is not None:
+                ax.plot([i - 0.25, i + 0.25], [med, med], color=_INK, lw=2.5, zorder=5)
+        ax.set_xticks(range(len(positions)),
+                      labels=[f"{float(p['ref_mm']):g}" for p in positions])
+        ax.set_xlim(-0.6, len(positions) - 0.4)
+        span = max([tol_mm] + [abs(lvl.value) for p in positions
+                               for lvl in _bin_levels(p.get("reps_mm", []))]) + 0.035
+        ax.set_ylim(-span, span)  # margin so edge bubbles aren't clipped
     else:
-        ax.text(
-            0.5, 0.5, "no measurements yet", ha="center", va="center",
-            transform=ax.transAxes, color=_MUTED,
-        )
+        ax.text(0.5, 0.5, "no measurements yet", ha="center", va="center",
+                transform=ax.transAxes, color=_MUTED)
 
+    rec_txt = f" · recommended {recommended:g} mm" if recommended else ""
     ax.set_xlabel("probed depth (mm)")
     ax.set_ylabel("measured backlash (mm)")
-    ax.set_title("Piston backlash per depth vs tolerance band")
+    ax.set_title(f"Piston backlash per depth (bubble = rep count){rec_txt}")
     ax.legend(loc="upper right", fontsize=8, framealpha=0.9)
     return _fig_bytes(plt, fig, fmt)
 
