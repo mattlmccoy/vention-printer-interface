@@ -438,27 +438,63 @@ function CaptureCalibration({ status, gates, call }: { status: StatusPayload | n
 function UnattendedSciencePanel() {
   const [cams, setCams] = useState<Array<{ index: number; name: string; unique_id: string }>>([]);
   const [uid, setUid] = useState<string | null>(null);
+  const [ignored, setIgnored] = useState<string[]>([]);
+  const [showIgnored, setShowIgnored] = useState(false);
   const [msg, setMsg] = useState("");
-  const load = () => api.avfCameras().then((r) => { setCams(r.cameras); setUid(r.science_uid); }).catch(() => setCams([]));
+  const load = () => api.avfCameras().then((r) => { setCams(r.cameras); setUid(r.science_uid); setIgnored(r.ignored_uids); }).catch(() => setCams([]));
   useEffect(() => { load(); }, []);
   const set = (u: string | null) => api.setScienceUid(u).then((r) => { setUid(r.unique_id); setMsg(u ? "science camera bound" : "binding cleared"); }).catch(() => setMsg("failed"));
+  const saveIgnored = (list: string[]) => api.setIgnoredCameras(list).then((r) => setIgnored(r.unique_ids)).catch(() => setMsg("failed"));
+  const ignore = (u: string) => { if (uid !== u) void saveIgnored([...ignored, u]); };
+  const unignore = (u: string) => void saveIgnored(ignored.filter((x) => x !== u));
+
+  const rowStyle = { justifyContent: "space-between", gap: 8, padding: "5px 0", borderTop: "1px solid var(--line)" } as const;
+  const active = cams.filter((c) => !ignored.includes(c.unique_id));
+  const ignoredCams = cams.filter((c) => ignored.includes(c.unique_id));
+  const ignoredMissing = ignored.filter((u) => !cams.some((c) => c.unique_id === u));  // unplugged but still ignored
+  const ignoredCount = ignoredCams.length + ignoredMissing.length;
   return (
     <div className="body">
       <div className="hint" style={{ marginTop: 0 }}>
         Bind the science camera to a stable macOS unique id so the server grabs the correct camera even
         with no browser tab open. Identify which is which with the live tiles in the camera quick-start;
-        confirm on the two-ELP rig before relying on it for a real print.
+        confirm on the two-ELP rig before relying on it for a real print. Ignore the cameras you never
+        use (FaceTime, iPhone) to keep the picker clean — it persists across restarts.
       </div>
-      {cams.length === 0
+      {active.length === 0 && ignoredCount === 0
         ? <div className="hint">no macOS cameras enumerated (non-macOS, or none detected)</div>
-        : cams.map((c) => (
-            <div key={c.unique_id} className="row" style={{ justifyContent: "space-between", gap: 8, padding: "5px 0", borderTop: "1px solid var(--line)" }}>
+        : active.map((c) => (
+            <div key={c.unique_id} className="row" style={rowStyle}>
               <span>[{c.index}] {c.name || "camera"} <small className="hint">{c.unique_id}</small></span>
-              {uid === c.unique_id
-                ? <b className="okv">science ✓</b>
-                : <button className="small" onClick={() => set(c.unique_id)}>set as science</button>}
+              <span style={{ display: "flex", gap: 6, flexShrink: 0 }}>
+                {uid === c.unique_id
+                  ? <b className="okv">science ✓</b>
+                  : <button className="small" onClick={() => set(c.unique_id)}>set as science</button>}
+                <button className="small" title="Hide this camera from the picker permanently" disabled={uid === c.unique_id} onClick={() => ignore(c.unique_id)}>ignore</button>
+              </span>
             </div>
           ))}
+      {ignoredCount > 0 && (
+        <div style={{ marginTop: 8 }}>
+          <button className="small" onClick={() => setShowIgnored((v) => !v)}>{showIgnored ? "hide" : "show"} {ignoredCount} ignored</button>
+          {showIgnored && (
+            <>
+              {ignoredCams.map((c) => (
+                <div key={c.unique_id} className="row" style={{ ...rowStyle, opacity: 0.6 }}>
+                  <span>[{c.index}] {c.name || "camera"} <small className="hint">{c.unique_id}</small></span>
+                  <button className="small" onClick={() => unignore(c.unique_id)}>un-ignore</button>
+                </div>
+              ))}
+              {ignoredMissing.map((u) => (
+                <div key={u} className="row" style={{ ...rowStyle, opacity: 0.6 }}>
+                  <span><span className="hint">not connected</span> <small className="hint">{u}</small></span>
+                  <button className="small" onClick={() => unignore(u)}>un-ignore</button>
+                </div>
+              ))}
+            </>
+          )}
+        </div>
+      )}
       <div className="actions" style={{ marginTop: 8, gap: 8 }}>
         <button className="small" onClick={load}>refresh</button>
         {uid && <button className="small" onClick={() => set(null)}>clear binding</button>}

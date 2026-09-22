@@ -1754,3 +1754,21 @@ def test_validate_returns_400_when_board_not_detected(tmp_path: Path) -> None:
             json={"spec": _CHECKER_VALIDATE_SPEC, "square_size_mm": 20.0},
         )
         assert r.status_code == 400
+
+
+def test_ignored_cameras_round_trip(client: TestClient) -> None:
+    assert client.get("/api/vision/ignored-cameras").json() == {"unique_ids": []}
+    r = client.put("/api/vision/ignored-cameras",
+                   json={"unique_ids": ["0xAAA", "0xBBB", "0xAAA", ""]},
+                   headers={"X-VPI-Client": "1"})
+    assert r.status_code == 200
+    assert r.json() == {"unique_ids": ["0xAAA", "0xBBB"]}  # de-duped, empties dropped
+    assert client.get("/api/vision/ignored-cameras").json()["unique_ids"] == ["0xAAA", "0xBBB"]
+    # avf-cameras surfaces the same ignored list so the UI can hide/reveal
+    assert client.get("/api/vision/avf-cameras").json()["ignored_uids"] == ["0xAAA", "0xBBB"]
+
+
+def test_ignored_cameras_rejects_non_list(client: TestClient) -> None:
+    r = client.put("/api/vision/ignored-cameras", json={"unique_ids": "0xAAA"},
+                   headers={"X-VPI-Client": "1"})
+    assert r.status_code == 400

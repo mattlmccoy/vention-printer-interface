@@ -705,6 +705,10 @@ def create_app(
     # present, the server captures science by this STABLE per-camera id instead of a fragile index —
     # so the RIGHT camera is grabbed even with no browser tab open. Unset => current behavior.
     science_uid_path = root / ".vision_science_uid.json"
+    # AVFoundation unique ids the operator has perpetually IGNORED (FaceTime, iPhone, etc.) so they
+    # never clutter the science picker. Persisted server-side (survives browser changes, applies
+    # unattended). A stable-id list, mirroring the science-uid file.
+    ignored_cameras_path = root / ".vision_ignored_cameras.json"
 
     def load_science_uid() -> str | None:
         try:
@@ -712,6 +716,13 @@ def create_app(
             return uid if isinstance(uid, str) and uid else None
         except (OSError, ValueError):
             return None
+
+    def load_ignored_cameras() -> list[str]:
+        try:
+            uids = json.loads(ignored_cameras_path.read_text()).get("unique_ids")
+            return [u for u in uids if isinstance(u, str) and u] if isinstance(uids, list) else []
+        except (OSError, ValueError):
+            return []
 
     def build_camera_config() -> CameraConfig:
         """CameraConfig from env/defaults, merged with any persisted per-role setting overrides.
@@ -2224,7 +2235,23 @@ def create_app(
                 {"index": c.index, "name": c.name, "unique_id": c.unique_id} for c in cams
             ],
             "science_uid": load_science_uid(),
+            "ignored_uids": load_ignored_cameras(),
         }
+
+    @app.get("/api/vision/ignored-cameras")
+    def vision_get_ignored_cameras() -> dict[str, list[str]]:
+        return {"unique_ids": load_ignored_cameras()}
+
+    @app.put("/api/vision/ignored-cameras")
+    def vision_put_ignored_cameras(body: dict[str, Any]) -> dict[str, list[str]]:
+        """Set the perpetually-ignored camera list (AVFoundation unique ids). Idempotent: replaces
+        the whole list, so the UI toggles by sending the new set. De-duplicated, strings only."""
+        raw = body.get("unique_ids")
+        if not isinstance(raw, list) or not all(isinstance(u, str) for u in raw):
+            raise HTTPException(400, "unique_ids must be a list of strings")
+        uids = list(dict.fromkeys(u for u in raw if u))  # de-dup, drop empties, keep order
+        ignored_cameras_path.write_text(json.dumps({"unique_ids": uids}))
+        return {"unique_ids": uids}
 
     @app.get("/api/vision/science-uid")
     def vision_get_science_uid() -> dict[str, str | None]:
