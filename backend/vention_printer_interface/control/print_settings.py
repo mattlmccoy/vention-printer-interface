@@ -204,7 +204,7 @@ class PrintSettings:
     # can trim this to capture just 1 or 2 stages and save disk. Canonical stage order is preserved.
     capture_stages_enabled: tuple[str, ...] = CAPTURE_STAGE_ORDER
     # Overhead science camera rides the recoater gantry. When >0 (and capture_stages on), the
-    # per-layer capture drives the recoater to this ABSOLUTE pose (centred over the bed), dwells
+    # per-layer capture drives the recoater to this ABSOLUTE pose (centered over the bed), dwells
     # capture_settle_s to let vibration settle, then shoots — imaging the freshly printed layer at
     # the constant recoat plane (so scale/focus don't drift across the build). 0 = fixed camera:
     # emit the capture mark in place, no capture move (the original behaviour).

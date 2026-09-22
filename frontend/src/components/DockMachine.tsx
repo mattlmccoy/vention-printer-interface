@@ -17,7 +17,7 @@ export function DockMachine({ status }: { status: StatusPayload | null }) {
   };
   const mv = (a: AxisNo) => (t ? t.motion_complete[String(a)] === false : false);
 
-  // gantry rails span x 52..268; carriage centre measured FROM the home side (printhead homes
+  // gantry rails span x 52..268; carriage center measured FROM the home side (printhead homes
   // left, recoater homes right) so position 0 sits at the correct end of each rail.
   const railX0 = 52, railX1 = 268, span = railX1 - railX0;
   const carriageX = (a: 3 | 4) => (GANTRY_HOME_SIDE[a] === "right" ? railX1 - frac(a) * span : railX0 + frac(a) * span);

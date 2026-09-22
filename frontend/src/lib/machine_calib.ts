@@ -11,10 +11,10 @@ export interface Calibration {
   heater_offset_px: { dx: number; dy: number };
 }
 export const POINTS = [
-  ["rails.printhead.0", "printhead carriage centre at HOME (0 mm)"],
-  ["rails.printhead.1", "printhead carriage centre at the FAR end (970 mm)"],
-  ["rails.recoater.0", "recoater carriage centre at HOME (0 mm)"],
-  ["rails.recoater.1", "recoater carriage centre at the FAR end (972 mm)"],
+  ["rails.printhead.0", "printhead carriage center at HOME (0 mm)"],
+  ["rails.printhead.1", "printhead carriage center at the FAR end (970 mm)"],
+  ["rails.recoater.0", "recoater carriage center at HOME (0 mm)"],
+  ["rails.recoater.1", "recoater carriage center at the FAR end (972 mm)"],
   ["pistons.feed.0", "feed piston top surface fully UP (0 mm)"],
   ["pistons.feed.1", "feed piston top surface fully DOWN (145 mm)"],
   ["pistons.build.0", "build piston top surface fully UP (0 mm)"],

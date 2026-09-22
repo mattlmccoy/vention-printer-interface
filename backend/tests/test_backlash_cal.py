@@ -177,3 +177,15 @@ def test_measure_backlash_stops_when_cancelled() -> None:
     )
     assert result.cancelled
     assert len(result.positions) == 1  # only the first ref completed
+
+
+def test_perturbed_positions_are_interior_midpoints() -> None:
+    from vention_printer_interface.control.backlash_cal import perturbed_positions
+    # midpoints between consecutive references — different depths, still inside the travel
+    assert perturbed_positions([14.4, 28.8, 43.2, 54.0]) == [21.6, 36.0, 48.6]
+
+
+def test_perturbed_positions_needs_two_points() -> None:
+    from vention_printer_interface.control.backlash_cal import perturbed_positions
+    assert perturbed_positions([20.0]) == []
+    assert perturbed_positions([]) == []

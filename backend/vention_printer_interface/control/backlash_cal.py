@@ -89,6 +89,16 @@ def default_positions(
     return sorted(pts)
 
 
+def perturbed_positions(positions: list[float]) -> list[float]:
+    """Midpoints between consecutive reference depths — for a VERIFY re-measure at DIFFERENT
+    positions than the original cal. Re-measuring at the same depths can confirm a position-specific
+    rut instead of ruling it out; probing the gaps tests whether the lash is a real mechanical
+    property that holds across the travel. Midpoints are strictly interior, so they stay valid
+    (each lies between two already-valid references). Needs >= 2 points; otherwise empty."""
+    ordered = sorted(positions)
+    return [round((a + b) / 2.0, 4) for a, b in zip(ordered, ordered[1:], strict=False)]
+
+
 def validate_probe(max_mm: float, positions: list[float], d_mm: float) -> None:
     """Raise ``ValueError`` unless every probe stays inside the usable travel. Each reference is
     reached from both sides (``p - d`` and ``p + d``), so both must lie in ``[0, max_mm]``. Guards a

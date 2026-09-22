@@ -48,6 +48,7 @@ from vention_printer_interface.analysis.dimensional import (
 from vention_printer_interface.analysis.lane_b import analyze_lane_b_from_pngs
 from vention_printer_interface.control.backlash_cal import (
     default_positions,
+    perturbed_positions,
     preflight_problems,
     validate_probe,
 )
@@ -307,6 +308,7 @@ class BacklashStartBody(BaseModel):
     positions: list[float] | None = None  # None -> safe defaults from the piston's max travel
     d_mm: float = Field(default=2.0, gt=0)
     reps: int = Field(default=8, ge=1, le=50)
+    verify: bool = False  # re-measure at the midpoints BETWEEN the default depths (perturbed check)
 
 
 class BacklashApplyBody(BaseModel):
@@ -323,7 +325,7 @@ class PlotSweepBody(BaseModel):
 
 
 class CenterSweepStartBody(BaseModel):
-    start_mm: float | None = None  # centre of the sweep; None -> current capture_recoater_mm
+    start_mm: float | None = None  # center of the sweep; None -> current capture_recoater_mm
     span_mm: float = Field(default=8.0, gt=0)  # sweep ±span around start
     step_mm: float = Field(default=1.0, gt=0)
 
@@ -1319,6 +1321,9 @@ def create_app(
             raise HTTPException(409, "cannot calibrate backlash: " + "; ".join(problems))
         max_mm = piston_max_mm(body.axis)
         positions = body.positions or default_positions(max_mm)
+        if body.verify:  # perturbed re-measure: probe the gaps BETWEEN the default depths
+            midpoints = perturbed_positions(positions)
+            positions = midpoints or positions
         try:
             validate_probe(max_mm, positions, body.d_mm)
         except ValueError as exc:
@@ -1981,7 +1986,7 @@ def create_app(
         }
 
     # ---- camera-center sweep (browser-driven: the client steps the recoater + captures per pose,
-    #      the server scores each frame's bore offset and picks the centring pose) ----------------
+    #      the server scores each frame's bore offset and picks the centering pose) ----------------
     def _center_sweep() -> dict[str, Any] | None:
         return getattr(app.state, "center_sweep", None)
 
@@ -2015,7 +2020,7 @@ def create_app(
         request: Request, recoater_mm: float = Query(...)
     ) -> dict[str, Any]:
         """Score one browser-captured overhead frame at ``recoater_mm``: detect the bore, record
-        its radial offset from the frame centre. ``found=false`` when no bore is detected."""
+        its radial offset from the frame center. ``found=false`` when no bore is detected."""
         sess = _center_sweep()
         if sess is None:
             raise HTTPException(409, "no center sweep in progress; start a session first")

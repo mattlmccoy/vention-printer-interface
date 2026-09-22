@@ -1,7 +1,7 @@
 """Detect the build-piston bore (a large circle) in an overhead science-cam frame.
 
-Used by the camera-center sweep: at each recoater pose we measure how far the bore centre sits
-from the frame centre, and pick the pose that minimises it. Contour-first (robust for a big filled
+Used by the camera-center sweep: at each recoater pose we measure how far the bore center sits
+from the frame center, and pick the pose that minimises it. Contour-first (robust for a big filled
 disc on the textured bed), with a Hough fallback. Pure CV, no IO.
 """
 
@@ -72,11 +72,11 @@ def detect_piston_circle(image: np.ndarray) -> tuple[float, float, float] | None
 
 
 def center_offset_px(image: np.ndarray) -> float | None:
-    """Radial distance (px) from the frame centre to the detected bore centre, or ``None``.
+    """Radial distance (px) from the frame center to the detected bore center, or ``None``.
 
     Radial magnitude (not a single axis) so it works regardless of how the recoater-travel axis maps
     to image X/Y: as the recoater sweeps, only the controllable component varies, so the magnitude
-    still minimises at the centred pose."""
+    still minimises at the centered pose."""
     circle = detect_piston_circle(image)
     if circle is None:
         return None
