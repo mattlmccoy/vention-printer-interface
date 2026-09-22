@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from "react";
 import { api, type BacklashSession, type CenterSweepBest, type VisionCalibrateResult } from "../../lib/api.ts";
 import { captureScienceStillOnce } from "../../lib/science_still.ts";
 import { BacklashPlot } from "../BacklashPlot.tsx";
+import { verifyVerdict, type Verdict } from "../../lib/backlash_verify.ts";
 import type { Gates } from "../../lib/format.ts";
 import type { StatusPayload } from "../../lib/telemetry.ts";
 import { loadRoleMap } from "../../lib/camera_roles.ts";
@@ -26,6 +27,8 @@ function BacklashCal({ axis, name, ok, unref, call, onPlan }: {
 }) {
   const [sess, setSess] = useState<BacklashSession | null>(null);
   const [hideDone, setHideDone] = useState(false);
+  const [verifying, setVerifying] = useState(false);
+  const [verdict, setVerdict] = useState<Verdict | null>(null);
 
   useEffect(() => {
     let live = true;
@@ -53,6 +56,27 @@ function BacklashCal({ axis, name, ok, unref, call, onPlan }: {
   const apply = () => {
     setHideDone(true);
     call(`apply ${name} backlash`, () => api.backlashApply(axis).then((r) => onPlan(r.plan as Record<string, unknown>)));
+  };
+  // Re-measure to check the READING repeats. The cal measures raw mechanical lash (the applied
+  // compensation is a print-time move, not part of the measurement), so a re-run verifies the
+  // measurement is trustworthy — not that comp zeroed the lash. That shows up in layer accuracy.
+  const verify = async () => {
+    if (rec == null) return;
+    const baseline = rec;
+    setVerdict(null); setVerifying(true);
+    const sleep = (ms: number) => new Promise<void>((r) => setTimeout(r, ms));
+    try {
+      let s = await api.backlashStart({ axis });
+      setSess(s);
+      while (s.state === "running") { await sleep(800); s = await api.backlashStatus(); setSess(s); }
+      const newRec = s.result?.recommended_mm;
+      if (s.state === "done" && newRec != null) setVerdict(verifyVerdict(baseline, newRec));
+    } catch (e) {
+      setVerdict(null);
+      window.alert(`re-measure failed: ${e instanceof Error ? e.message : String(e)}`);
+    } finally {
+      setVerifying(false);
+    }
   };
 
   return (
@@ -91,8 +115,19 @@ function BacklashCal({ axis, name, ok, unref, call, onPlan }: {
             : <div className="hint" style={{ marginTop: 6 }}>Apply to write this as the {name}-piston anti-backlash compensation.</div>}
           <div className="actions" style={{ marginTop: 8, display: "flex", gap: 8 }}>
             <button className="cta primary" disabled={!ok} onClick={apply}>Apply {rec !== null ? `(${rec.toFixed(2)} mm)` : ""}</button>
+            <button className="cta" disabled={!ok || verifying} onClick={() => void verify()}
+              data-tip="Re-measure and check the reading repeats. Verifies the measurement is trustworthy — not that compensation zeroed the lash (that shows in layer accuracy).">
+              {verifying ? "re-measuring…" : "Verify (re-measure)"}
+            </button>
             <button className="cta" onClick={() => setHideDone(true)}>Discard</button>
           </div>
+          {verdict && (
+            <div className="hint" style={{ marginTop: 6, color: verdict.consistent ? "var(--ok, #2e7d32)" : "var(--bad, #b00020)" }}>
+              {verdict.consistent
+                ? `✓ Repeatable — re-measured ${verdict.newMm.toFixed(2)} mm (was ${verdict.priorMm.toFixed(2)} mm, Δ ${verdict.deltaMm.toFixed(2)} mm ≤ one count). The reading is trustworthy.`
+                : `⚠ Not repeatable — re-measured ${verdict.newMm.toFixed(2)} mm vs ${verdict.priorMm.toFixed(2)} mm (Δ ${verdict.deltaMm.toFixed(2)} mm > one count). Average more runs or check the mechanism before trusting it.`}
+            </div>
+          )}
           <PlotExportButtons fetchBlob={(fmt) => api.plotBacklash(fmt)}
             filename={`${name}_piston_backlash`} label="Seaborn plot" />
         </div>
