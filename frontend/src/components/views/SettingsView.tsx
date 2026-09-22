@@ -268,18 +268,30 @@ function CaptureCalibration({ status, gates, call }: { status: StatusPayload | n
   return (
     <div className="body">
       <div className="hint" style={{ marginTop: 0 }}>The science camera rides the recoater. Start the live stream, jog the recoater until the bed centre sits under the crosshair, then save the pose — it becomes the capture_recoater_mm the print uses for every-layer overhead captures. This streams the camera you assigned to the science role.</div>
-      <div style={{ position: "relative", maxWidth: 480, margin: "10px 0", background: "var(--image-bg)", borderRadius: "var(--radius)", overflow: "hidden", aspectRatio: "4 / 3" }}>
-        <video ref={videoRef} autoPlay playsInline muted style={{ width: "100%", display: streaming && !err ? "block" : "none" }} />
+      {/* When streaming, the <video> (width:100%, height:auto) defines the box height from the
+          stream's OWN aspect ratio, so the absolute crosshair overlay lands exactly on it — no
+          letterbox, centre on the true frame centre. The fixed 4:3 is only for the placeholder box
+          before a stream exists (the camera's real aspect is unknown until then). */}
+      <div style={{ position: "relative", maxWidth: 480, margin: "10px 0", background: "var(--image-bg)", borderRadius: "var(--radius)", overflow: "hidden", ...(streaming && !err ? {} : { aspectRatio: "4 / 3" }) }}>
+        <video ref={videoRef} autoPlay playsInline muted style={{ width: "100%", display: streaming && !err ? "block" : "none", verticalAlign: "bottom" }} />
         {(!streaming || err) && <div className="chart-empty" style={{ height: "100%" }}>{err ?? "start the stream to align"}</div>}
         {streaming && !err && (
-          <svg viewBox="0 0 100 100" preserveAspectRatio="none" style={{ position: "absolute", inset: 0, width: "100%", height: "100%", pointerEvents: "none" }}>
-            <circle cx="50" cy="50" r="24" fill="none" stroke="var(--accent)" strokeWidth="0.6" opacity="0.9" />
-            <circle cx="50" cy="50" r="1.2" fill="var(--accent)" />
-            <line x1="50" y1="0" x2="50" y2="42" stroke="var(--accent)" strokeWidth="0.5" opacity="0.9" />
-            <line x1="50" y1="58" x2="50" y2="100" stroke="var(--accent)" strokeWidth="0.5" opacity="0.9" />
-            <line x1="0" y1="50" x2="42" y2="50" stroke="var(--accent)" strokeWidth="0.5" opacity="0.9" />
-            <line x1="58" y1="50" x2="100" y2="50" stroke="var(--accent)" strokeWidth="0.5" opacity="0.9" />
-          </svg>
+          <>
+            {/* Cross lines span the whole frame and cross at its exact centre (stretched viewBox
+                keeps them axis-aligned). */}
+            <svg viewBox="0 0 100 100" preserveAspectRatio="none" style={{ position: "absolute", inset: 0, width: "100%", height: "100%", pointerEvents: "none" }}>
+              <line x1="50" y1="0" x2="50" y2="42" stroke="var(--accent)" strokeWidth="0.5" opacity="0.9" />
+              <line x1="50" y1="58" x2="50" y2="100" stroke="var(--accent)" strokeWidth="0.5" opacity="0.9" />
+              <line x1="0" y1="50" x2="42" y2="50" stroke="var(--accent)" strokeWidth="0.5" opacity="0.9" />
+              <line x1="58" y1="50" x2="100" y2="50" stroke="var(--accent)" strokeWidth="0.5" opacity="0.9" />
+            </svg>
+            {/* Guide circle + centre dot in a `meet`-scaled overlay so the circle stays ROUND on
+                any stream aspect (scales to the shorter side, centred) instead of an ellipse. */}
+            <svg viewBox="0 0 100 100" preserveAspectRatio="xMidYMid meet" style={{ position: "absolute", inset: 0, width: "100%", height: "100%", pointerEvents: "none" }}>
+              <circle cx="50" cy="50" r="30" fill="none" stroke="var(--accent)" strokeWidth="0.7" opacity="0.9" />
+              <circle cx="50" cy="50" r="1.4" fill="var(--accent)" />
+            </svg>
+          </>
         )}
       </div>
       <div className="actions" style={{ marginTop: 0 }}>
