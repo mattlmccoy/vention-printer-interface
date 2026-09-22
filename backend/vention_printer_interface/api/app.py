@@ -344,6 +344,7 @@ class CenterSweepApplyBody(BaseModel):
 class OffloadStartBody(BaseModel):
     dest: str  # a mounted drive path (from /api/offload/drives)
     runs: list[str] | None = None  # None -> copy every run not already on the drive
+    move: bool = False  # True -> MOVE (copy, verify, then delete the local source to free space)
 
 
 class AxisMotionBody(BaseModel):
@@ -2059,15 +2060,18 @@ def create_app(
         if body.runs is not None:
             known = set(names)
             chosen = [r for r in body.runs if r in known]
-        else:  # every run not already on the drive
+        elif body.move:  # move all local runs (a move deletes source, so 'present' can't skip)
+            chosen = names
+        else:  # copy: every run not already on the drive
             present = {p["run"] for p in offload_plan(names, dpath) if p["at_dest"]}
             chosen = [r for r in names if r not in present]
         if not chosen:
             raise HTTPException(400, "no runs to copy (all already present, or none matched)")
-        job = OffloadJob(root, dpath, chosen)
+        job = OffloadJob(root, dpath, chosen, mode="move" if body.move else "copy")
         app.state.offload_job = job
         job.start_thread()
-        ev("offload_start", {"dest": str(dpath), "runs": len(chosen)})
+        ev("offload_start", {"dest": str(dpath), "runs": len(chosen),
+                             "mode": "move" if body.move else "copy"})
         return job.snapshot()
 
     @app.post("/api/offload/cancel")

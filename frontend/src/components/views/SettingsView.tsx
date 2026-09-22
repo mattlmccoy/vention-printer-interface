@@ -470,9 +470,11 @@ function DataOffloadPanel() {
     return () => window.clearInterval(id);
   }, [running]); // eslint-disable-line react-hooks/exhaustive-deps
 
+  const [move, setMove] = useState(false);
   const start = (runs?: string[]) => {
+    if (move && !window.confirm(`MOVE ${runs ? runs.length : "all local"} run(s) to the drive? Each is copied and verified, then DELETED from the operator's disk to free space. The copy is only removed locally after it's verified on the drive.`)) return;
     setMsg("");
-    api.offloadStart(dest, runs).then(setJob).catch((e) => setMsg(e instanceof Error ? e.message : "failed"));
+    api.offloadStart(dest, { runs, move }).then(setJob).catch((e) => setMsg(e instanceof Error ? e.message : "failed"));
   };
   const toggle = (run: string) => setSel((s) => {
     const n = new Set(s); if (n.has(run)) n.delete(run); else n.add(run); return n;
@@ -505,16 +507,20 @@ function DataOffloadPanel() {
           <div className="kv" style={{ marginTop: 12 }}>
             <span>runs</span><span className="v">{plan.length} total · {missing} not on drive</span>
           </div>
+          <label className="row" style={{ gap: 6, marginTop: 10, cursor: "pointer" }}>
+            <input type="checkbox" checked={move} disabled={running} onChange={(e) => setMove(e.target.checked)} />
+            <span>Move (delete local after verified copy — frees operator disk space)</span>
+          </label>
           <div className="actions" style={{ marginTop: 8, gap: 8, flexWrap: "wrap" }}>
-            <button className="cta primary" style={{ whiteSpace: "nowrap" }} disabled={running || missing === 0} onClick={() => start()}>Copy all missing ({missing})</button>
-            <button className="cta" style={{ whiteSpace: "nowrap" }} disabled={running || sel.size === 0} onClick={() => start([...sel])}>Copy selected ({sel.size})</button>
+            <button className="cta primary" style={{ whiteSpace: "nowrap" }} disabled={running || (move ? plan.length === 0 : missing === 0)} onClick={() => start()}>{move ? `Move all (${plan.length})` : `Copy all missing (${missing})`}</button>
+            <button className="cta" style={{ whiteSpace: "nowrap" }} disabled={running || sel.size === 0} onClick={() => start([...sel])}>{move ? "Move" : "Copy"} selected ({sel.size})</button>
             {running && <button className="cta" onClick={() => api.offloadCancel().then(setJob).catch(() => undefined)}>Cancel</button>}
           </div>
           {job && job.state !== "idle" && (
             <div className="cal-result" style={{ marginTop: 8 }}>
               <div className="hint" style={{ marginTop: 0 }}>
-                {job.state === "running" ? `copying ${job.progress?.current} · run ${job.progress?.runs_done}/${job.progress?.runs_total} · file ${job.progress?.file_done}/${job.progress?.file_total}`
-                  : job.state === "done" ? `✓ done — ${job.files_copied} copied, ${job.files_skipped} already there`
+                {job.state === "running" ? `${job.mode === "move" ? "moving" : "copying"} ${job.progress?.current} · run ${job.progress?.runs_done}/${job.progress?.runs_total} · file ${job.progress?.file_done}/${job.progress?.file_total}`
+                  : job.state === "done" ? `✓ done — ${job.files_copied} ${job.mode === "move" ? "moved" : "copied"}, ${job.files_skipped} already there`
                   : job.state === "cancelled" ? "cancelled" : `error — ${(job.errors ?? []).length} problem(s)`}
               </div>
               {running && (

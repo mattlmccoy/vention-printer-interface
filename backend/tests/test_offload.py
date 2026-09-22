@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import os
 from pathlib import Path
 
 from vention_printer_interface.offload import (
@@ -65,21 +64,43 @@ def test_copy_run_reports_progress(tmp_path: Path) -> None:
     assert seen[-1] == (2, 2)  # ends at all files done
 
 
-def test_list_drives_excludes_the_boot_volume(tmp_path: Path) -> None:
-    vols = tmp_path / "Volumes"
-    (vols / "SSD_A").mkdir(parents=True)
-    (vols / "SSD_B").mkdir()
-    (vols / "note.txt").write_text("not a dir")  # ignored
-    # make SSD_A look like the boot volume by matching its st_dev to the "root"
-    root_dev = os.stat(vols / "SSD_A").st_dev
-    drives = list_drives(volumes_dir=vols, root_dev=root_dev)
-    names = {d.name for d in drives}
-    # both share the tmpfs st_dev here, so with root_dev set to that, both are excluded;
-    # verify the mechanism by excluding none when root_dev is a sentinel
-    assert list_drives(volumes_dir=vols, root_dev=-1) and names == set()
-    all_drives = list_drives(volumes_dir=vols, root_dev=-1)
-    assert {d.name for d in all_drives} == {"SSD_A", "SSD_B"}
-    assert all(d.total_bytes > 0 and d.path.endswith(d.name) for d in all_drives)
+def test_list_drives_excludes_readonly_dmgs_and_system_volumes() -> None:
+    # mirrors the FLIR storage filter: psutil parts, exclude read-only ("ro") mounts (a mounted DMG
+    # like "Kiro CLI"), the boot volume, and anything not under /Volumes on macOS.
+    from vention_printer_interface.offload import _Part
+    parts = [
+        _Part("/dev/disk1s1", "/", "apfs", "rw"),                      # boot, not /Volumes
+        _Part("/dev/disk2s1", "/Volumes/Macintosh HD", "apfs", "rw"),  # boot alias -> excluded
+        _Part("/dev/disk3s1", "/Volumes/Kiro CLI", "hfs", "ro,nobrowse"),  # read-only DMG -> out
+        _Part("/dev/disk4s1", "/Volumes/FieldSSD", "exfat", "rw,nosuid"),  # real drive -> in
+    ]
+    drives = list_drives(platform="darwin", parts=parts, usage=lambda _m: (2000, 900))
+    assert [d.name for d in drives] == ["FieldSSD"]
+    assert drives[0].free_bytes == 900 and drives[0].path == "/Volumes/FieldSSD"
+
+
+def test_copy_run_skips_os_junk(tmp_path: Path) -> None:
+    src = tmp_path / "r"
+    _write(src / "data.csv", b"x")
+    _write(src / ".DS_Store", b"junk")
+    _write(src / "._data.csv", b"appledouble")
+    copy_run(src, tmp_path / "d")
+    assert (tmp_path / "d" / "data.csv").exists()
+    assert not (tmp_path / "d" / ".DS_Store").exists()
+    assert not (tmp_path / "d" / "._data.csv").exists()
+
+
+def test_move_run_copies_verifies_then_deletes_source(tmp_path: Path) -> None:
+    from vention_printer_interface.offload import move_run
+    src = tmp_path / "experiments" / "run1"
+    _write(src / "telemetry.csv", b"telem")
+    _write(src / "vision" / "l.png", b"\x89PNG")
+    dest = tmp_path / "drive" / "vpi-runs" / "run1"
+    res = move_run(src, dest)
+    assert res.verified and not src.exists()          # source gone only after verified copy
+    assert (dest / "telemetry.csv").read_bytes() == b"telem"
+    assert (dest / "vision" / "l.png").read_bytes() == b"\x89PNG"
+    assert not dest.with_name("run1.partial").exists()  # staging cleaned up
 
 
 def test_offload_job_copies_selected_runs_and_reports(tmp_path: Path) -> None:

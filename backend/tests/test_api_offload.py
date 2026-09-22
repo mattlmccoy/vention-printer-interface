@@ -85,3 +85,20 @@ def test_start_with_no_missing_runs_is_400(env: tuple[TestClient, Path]) -> None
     # second all-missing start now finds nothing to copy
     r = client.post("/api/offload/start", json={"dest": str(drive)}, headers={"X-VPI-Client": "1"})
     assert r.status_code == 400
+
+
+def test_move_deletes_local_source_after_verified_copy(env: tuple[TestClient, Path]) -> None:
+    client, tmp = env
+    exp = tmp / "experiments"
+    drive = tmp / "DRIVE_MOVE"
+    drive.mkdir()
+    r = client.post("/api/offload/start", json={"dest": str(drive), "move": True},
+                    headers={"X-VPI-Client": "1"})
+    assert r.status_code == 200
+    assert r.json()["mode"] == "move"
+    snap = _wait_done(client)
+    assert snap["state"] == "done"
+    # copied to the drive AND removed locally
+    assert (drive / "vpi-runs" / "20260101_000000_a" / "telemetry.csv").exists()
+    assert not (exp / "20260101_000000_a").exists()
+    assert not (exp / "20260102_000000_b").exists()
