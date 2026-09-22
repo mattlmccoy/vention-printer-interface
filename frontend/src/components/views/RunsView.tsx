@@ -114,7 +114,7 @@ function AxisPanel({ series, tMax, label, color, unit }: { series: { t: number; 
 
 /** layer_accuracy.csv → per-layer ACTUAL build-piston thickness as bars, each against its own
  *  commanded target (a solid tick across the bar) with the tolerance shown as an error-bar whisker
- *  (±tol, capped, centred on the target) — NOT a filled block, which read as an unreached remainder.
+ *  (±tol, capped, centered on the target) — NOT a filled block, which read as an unreached remainder.
  *  A layer that didn't move (bar below the whisker) or doubled (bar above it) is obvious. */
 function ActualThicknessChart({ rows, tolUm }: { rows: LayerAccuracy[]; tolUm: number }) {
   const [hov, setHov] = useState<number | null>(null);
@@ -147,7 +147,7 @@ function ActualThicknessChart({ rows, tolUm }: { rows: LayerAccuracy[]; tolUm: n
           <g key={p.layer}>
             <rect x={left} y={y(p.act)} width={bw} height={Math.max(0, y0 - y(p.act))} fill={col} fillOpacity={on ? 1 : 0.82} rx="2" />
             {/* target: a solid tick across the bar. tolerance: a capped ±tol error-bar whisker
-                centred on the target — a range marker, never a filled "missed" box over the bar. */}
+                centered on the target — a range marker, never a filled "missed" box over the bar. */}
             <line x1={left - 2} y1={y(p.cmd)} x2={left + bw + 2} y2={y(p.cmd)} stroke="var(--fg-strong)" strokeWidth="2" />
             <line x1={cx(i)} y1={y(p.cmd + tol)} x2={cx(i)} y2={y(p.cmd - tol)} stroke="var(--muted)" strokeWidth="1" />
             <line x1={cx(i) - 4} y1={y(p.cmd + tol)} x2={cx(i) + 4} y2={y(p.cmd + tol)} stroke="var(--muted)" strokeWidth="1" />

@@ -485,7 +485,7 @@ def analyze_dot_array(
     # Centroid-based metrics
     centroids = np.array([d["centroid_mm"] for d in details]) if details else np.empty((0, 2))
     if centroids.size:
-        # Centre of the dot cloud (median is robust)
+        # Center of the dot cloud (median is robust)
         median_c = np.median(centroids, axis=0)
         deviations = centroids - median_c
         mis_mags = np.linalg.norm(deviations, axis=1)
@@ -895,10 +895,10 @@ def analyze_concentric_rings(
 
     Steps:
       * threshold + invert
-      * find centre via image moments
+      * find center via image moments
       * Canny edges
       * contours on edges (RETR_TREE so all rings are included)
-      * for each contour, compute mean radius from centre
+      * for each contour, compute mean radius from center
       * merge similar radii into unique edge radii
       * differences between radii => alternating line widths and spacings
     """
@@ -930,7 +930,7 @@ def analyze_concentric_rings(
         if thresh_path:
             cv2.imwrite(thresh_path, binary)
 
-        # Centre of mass of ring structure
+        # Center of mass of ring structure
         M = cv2.moments(binary)
         if M["m00"] == 0:
             return _nan_ring_result({"algorithm_error": "zero_moment"})
@@ -949,7 +949,7 @@ def analyze_concentric_rings(
         if not contours:
             return _nan_ring_result({"algorithm_error": "no_edges"})
 
-        # Compute mean radius for each contour relative to centre
+        # Compute mean radius for each contour relative to center
         radii: List[float] = []
         for c in contours:
             if len(c) < 10:
@@ -1049,7 +1049,7 @@ def analyze_concentric_rings(
         result = _nan_ring_result({"algorithm_error": f"{type(exc).__name__}: {exc}"})
         peaks = np.array([], dtype=float)
 
-    # Debug overlay: centre + all merged edge radii
+    # Debug overlay: center + all merged edge radii
     if overlay_path:
         if roi.ndim == 2:
             overlay = cv2.cvtColor(roi, cv2.COLOR_GRAY2BGR)

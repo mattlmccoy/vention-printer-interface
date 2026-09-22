@@ -75,7 +75,7 @@ export interface PrintSettings {
   feed_fast_accel: number;
   capture_stages: boolean; // emit layerwise vision capture marks (OFF by default; no cameras yet)
   capture_stages_enabled: string[]; // which stages to capture when capture_stages is on (subset of CAPTURE_STAGES)
-  capture_recoater_mm: number; // overhead science cam: recoater pose to centre it over the bed (0 = fixed cam)
+  capture_recoater_mm: number; // overhead science cam: recoater pose to center it over the bed (0 = fixed cam)
   capture_settle_s: number; // dwell after moving to the capture pose before the shot
   capture_hold_s: number; // dwell after the trigger so the asynchronous browser exposure finishes
 }

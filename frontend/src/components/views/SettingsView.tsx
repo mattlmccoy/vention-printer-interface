@@ -57,16 +57,18 @@ function BacklashCal({ axis, name, ok, unref, call, onPlan }: {
     setHideDone(true);
     call(`apply ${name} backlash`, () => api.backlashApply(axis).then((r) => onPlan(r.plan as Record<string, unknown>)));
   };
-  // Re-measure to check the READING repeats. The cal measures raw mechanical lash (the applied
-  // compensation is a print-time move, not part of the measurement), so a re-run verifies the
-  // measurement is trustworthy — not that comp zeroed the lash. That shows up in layer accuracy.
+  // Re-measure at PERTURBED depths (the midpoints between the original references) to check the
+  // lash holds across the travel, not just at the depths first probed — guards against reading a
+  // position-specific rut. The cal measures raw mechanical lash (the applied compensation is a
+  // print-time move, not part of the measurement), so this verifies the MEASUREMENT is trustworthy,
+  // not that comp zeroed the lash — that shows up in layer accuracy.
   const verify = async () => {
     if (rec == null) return;
     const baseline = rec;
     setVerdict(null); setVerifying(true);
     const sleep = (ms: number) => new Promise<void>((r) => setTimeout(r, ms));
     try {
-      let s = await api.backlashStart({ axis });
+      let s = await api.backlashStart({ axis, verify: true });
       setSess(s);
       while (s.state === "running") { await sleep(800); s = await api.backlashStatus(); setSess(s); }
       const newRec = s.result?.recommended_mm;
@@ -116,16 +118,16 @@ function BacklashCal({ axis, name, ok, unref, call, onPlan }: {
           <div className="actions" style={{ marginTop: 8, display: "flex", gap: 8 }}>
             <button className="cta primary" disabled={!ok} onClick={apply}>Apply {rec !== null ? `(${rec.toFixed(2)} mm)` : ""}</button>
             <button className="cta" disabled={!ok || verifying} onClick={() => void verify()}
-              data-tip="Re-measure and check the reading repeats. Verifies the measurement is trustworthy — not that compensation zeroed the lash (that shows in layer accuracy).">
-              {verifying ? "re-measuring…" : "Verify (re-measure)"}
+              data-tip="Re-measure at the depths BETWEEN the first ones. If the lash holds there too, it's a real mechanical property, not a position-specific rut. Verifies the measurement — not that compensation zeroed the lash (that shows in layer accuracy).">
+              {verifying ? "re-measuring…" : "Verify (perturb + re-measure)"}
             </button>
             <button className="cta" onClick={() => setHideDone(true)}>Discard</button>
           </div>
           {verdict && (
             <div className="hint" style={{ marginTop: 6, color: verdict.consistent ? "var(--ok, #2e7d32)" : "var(--bad, #b00020)" }}>
               {verdict.consistent
-                ? `✓ Repeatable — re-measured ${verdict.newMm.toFixed(2)} mm (was ${verdict.priorMm.toFixed(2)} mm, Δ ${verdict.deltaMm.toFixed(2)} mm ≤ one count). The reading is trustworthy.`
-                : `⚠ Not repeatable — re-measured ${verdict.newMm.toFixed(2)} mm vs ${verdict.priorMm.toFixed(2)} mm (Δ ${verdict.deltaMm.toFixed(2)} mm > one count). Average more runs or check the mechanism before trusting it.`}
+                ? `✓ Holds at perturbed depths — re-measured ${verdict.newMm.toFixed(2)} mm (was ${verdict.priorMm.toFixed(2)} mm, Δ ${verdict.deltaMm.toFixed(2)} mm ≤ one count). Consistent across the travel, so the reading is trustworthy.`
+                : `⚠ Differs at perturbed depths — re-measured ${verdict.newMm.toFixed(2)} mm vs ${verdict.priorMm.toFixed(2)} mm (Δ ${verdict.deltaMm.toFixed(2)} mm > one count). The lash is position-dependent — average more runs or check the mechanism before trusting one value.`}
             </div>
           )}
           <PlotExportButtons fetchBlob={(fmt) => api.plotBacklash(fmt)}
@@ -255,7 +257,7 @@ function CalibrationForm({ call, disabled }: { call: Call; disabled: boolean }) 
 
 
 /** Manual capture-pose calibration: the science cam rides the recoater, so jog the recoater until
- *  the bed centre sits under the crosshair, then save the recoater position as capture_recoater_mm
+ *  the bed center sits under the crosshair, then save the recoater position as capture_recoater_mm
  *  (the every-layer overhead capture pose). Grabs an on-demand science frame to check alignment. */
 function CaptureCalibration({ status, gates, call }: { status: StatusPayload | null; gates: Gates; call: Call; base: string }) {
   const [streaming, setStreaming] = useState(false);
@@ -302,7 +304,7 @@ function CaptureCalibration({ status, gates, call }: { status: StatusPayload | n
     }));
   };
 
-  // ---- automated centre-find: sweep the recoater, score the bore offset per pose, pick the centre.
+  // ---- automated center-find: sweep the recoater, score the bore offset per pose, pick the center.
   const [sweeping, setSweeping] = useState(false);
   const [progress, setProgress] = useState({ done: 0, total: 0 });
   const [best, setBest] = useState<CenterSweepBest | null>(null);
@@ -319,8 +321,8 @@ function CaptureCalibration({ status, gates, call }: { status: StatusPayload | n
     }
     await sleep(400);  // let gantry vibration settle before the shot
   };
-  const findCentre = async () => {
-    if (!window.confirm("Auto-find the overhead centre? The recoater sweeps through several positions, capturing the science camera at each, then recommends the pose that centres the build piston. Keep clear of the gantry.")) return;
+  const findCenter = async () => {
+    if (!window.confirm("Auto-find the overhead center? The recoater sweeps through several positions, capturing the science camera at each, then recommends the pose that centers the build piston. Keep clear of the gantry.")) return;
     const storage = typeof localStorage === "undefined" ? null : localStorage;
     setAutoErr(null); setBest(null); setSweeping(true);
     if (streaming) { stopStream(); setStreaming(false); }  // free the science cam for per-pose grabs
@@ -345,9 +347,9 @@ function CaptureCalibration({ status, gates, call }: { status: StatusPayload | n
       setSweeping(false);
     }
   };
-  const applyCentre = () => {
+  const applyCenter = () => {
     if (best == null) return;
-    call("apply overhead centre", () => api.centerSweepApply(best.pose_mm).then((p) => {
+    call("apply overhead center", () => api.centerSweepApply(best.pose_mm).then((p) => {
       const v = (p.plan as Record<string, unknown>).capture_recoater_mm;
       setPose(typeof v === "number" ? v : best.pose_mm);
       setBest(null);
@@ -355,17 +357,17 @@ function CaptureCalibration({ status, gates, call }: { status: StatusPayload | n
   };
   return (
     <div className="body">
-      <div className="hint" style={{ marginTop: 0 }}>The science camera rides the recoater. Start the live stream, jog the recoater until the bed centre sits under the crosshair, then save the pose — it becomes the capture_recoater_mm the print uses for every-layer overhead captures. This streams the camera you assigned to the science role.</div>
+      <div className="hint" style={{ marginTop: 0 }}>The science camera rides the recoater. Start the live stream, jog the recoater until the bed center sits under the crosshair, then save the pose — it becomes the capture_recoater_mm the print uses for every-layer overhead captures. This streams the camera you assigned to the science role.</div>
       {/* When streaming, the <video> (width:100%, height:auto) defines the box height from the
           stream's OWN aspect ratio, so the absolute crosshair overlay lands exactly on it — no
-          letterbox, centre on the true frame centre. The fixed 4:3 is only for the placeholder box
+          letterbox, center on the true frame center. The fixed 4:3 is only for the placeholder box
           before a stream exists (the camera's real aspect is unknown until then). */}
       <div style={{ position: "relative", maxWidth: 480, margin: "10px 0", background: "var(--image-bg)", borderRadius: "var(--radius)", overflow: "hidden", ...(streaming && !err ? {} : { aspectRatio: "4 / 3" }) }}>
         <video ref={videoRef} autoPlay playsInline muted style={{ width: "100%", display: streaming && !err ? "block" : "none", verticalAlign: "bottom" }} />
         {(!streaming || err) && <div className="chart-empty" style={{ height: "100%" }}>{err ?? "start the stream to align"}</div>}
         {streaming && !err && (
           <>
-            {/* Cross lines span the whole frame and cross at its exact centre (stretched viewBox
+            {/* Cross lines span the whole frame and cross at its exact center (stretched viewBox
                 keeps them axis-aligned). */}
             <svg viewBox="0 0 100 100" preserveAspectRatio="none" style={{ position: "absolute", inset: 0, width: "100%", height: "100%", pointerEvents: "none" }}>
               <line x1="50" y1="0" x2="50" y2="42" stroke="var(--accent)" strokeWidth="0.5" opacity="0.9" />
@@ -373,8 +375,8 @@ function CaptureCalibration({ status, gates, call }: { status: StatusPayload | n
               <line x1="0" y1="50" x2="42" y2="50" stroke="var(--accent)" strokeWidth="0.5" opacity="0.9" />
               <line x1="58" y1="50" x2="100" y2="50" stroke="var(--accent)" strokeWidth="0.5" opacity="0.9" />
             </svg>
-            {/* Guide circle + centre dot in a `meet`-scaled overlay so the circle stays ROUND on
-                any stream aspect (scales to the shorter side, centred) instead of an ellipse. */}
+            {/* Guide circle + center dot in a `meet`-scaled overlay so the circle stays ROUND on
+                any stream aspect (scales to the shorter side, centered) instead of an ellipse. */}
             <svg viewBox="0 0 100 100" preserveAspectRatio="xMidYMid meet" style={{ position: "absolute", inset: 0, width: "100%", height: "100%", pointerEvents: "none" }}>
               <circle cx="50" cy="50" r="30" fill="none" stroke="var(--accent)" strokeWidth="0.7" opacity="0.9" />
               <circle cx="50" cy="50" r="1.4" fill="var(--accent)" />
@@ -397,12 +399,12 @@ function CaptureCalibration({ status, gates, call }: { status: StatusPayload | n
         <button className="cta primary" disabled={!ok || typeof rc !== "number"} onClick={savePose}>Set capture pose = {typeof rc === "number" ? `${rc.toFixed(1)} mm` : "?"}</button>
       </div>
 
-      {/* Automated alternative to the manual jog: sweep + circle-detect finds the overhead centre. */}
+      {/* Automated alternative to the manual jog: sweep + circle-detect finds the overhead center. */}
       <div style={{ marginTop: 14, borderTop: "1px solid var(--line)", paddingTop: 12 }}>
-        <div className="hint" style={{ marginTop: 0 }}>Or find it automatically: the recoater sweeps a tight range while the science camera watches, and the build-piston bore is detected in each frame to pick the centring pose. HOME + prime the bed first so the bore is visible.</div>
+        <div className="hint" style={{ marginTop: 0 }}>Or find it automatically: the recoater sweeps a tight range while the science camera watches, and the build-piston bore is detected in each frame to pick the centering pose. HOME + prime the bed first so the bore is visible.</div>
         <div className="actions one tight" style={{ marginTop: 8 }}>
-          <button className="cta" disabled={!ok || sweeping} onClick={() => void findCentre()}>
-            {sweeping ? `sweeping… ${progress.done}/${progress.total}` : "Find overhead centre"}
+          <button className="cta" disabled={!ok || sweeping} onClick={() => void findCenter()}>
+            {sweeping ? `sweeping… ${progress.done}/${progress.total}` : "Find overhead center"}
           </button>
         </div>
         {sweeping && progress.total > 0 && (
@@ -410,7 +412,7 @@ function CaptureCalibration({ status, gates, call }: { status: StatusPayload | n
             <div style={{ height: "100%", width: `${(100 * progress.done) / progress.total}%`, background: "var(--accent, #d9a441)" }} />
           </div>
         )}
-        {autoErr && <div className="errline" style={{ marginTop: 8 }}>centre-find failed: {autoErr}</div>}
+        {autoErr && <div className="errline" style={{ marginTop: 8 }}>center-find failed: {autoErr}</div>}
         {best && (
           <div className="cal-result" style={{ marginTop: 8 }}>
             <div className="kv" style={{ marginTop: 0 }}>
@@ -418,10 +420,10 @@ function CaptureCalibration({ status, gates, call }: { status: StatusPayload | n
               <span>residual offset</span><span className="v">{best.offset_px.toFixed(0)} px</span>
             </div>
             {best.improved
-              ? <div className="hint" style={{ marginTop: 6 }}>Better centred than the previous pose. Apply to write it as the capture pose.</div>
-              : <div className="hint" style={{ marginTop: 6 }}>No improvement over the current pose — the bore may already be centred, or the bore wasn’t clearly detected. Check the preview before applying.</div>}
+              ? <div className="hint" style={{ marginTop: 6 }}>Better centered than the previous pose. Apply to write it as the capture pose.</div>
+              : <div className="hint" style={{ marginTop: 6 }}>No improvement over the current pose — the bore may already be centered, or the bore wasn’t clearly detected. Check the preview before applying.</div>}
             <div className="actions" style={{ marginTop: 8, display: "flex", gap: 8 }}>
-              <button className="cta primary" disabled={!ok} onClick={applyCentre}>Apply ({best.pose_mm.toFixed(1)} mm)</button>
+              <button className="cta primary" disabled={!ok} onClick={applyCenter}>Apply ({best.pose_mm.toFixed(1)} mm)</button>
               <button className="cta" onClick={() => setBest(null)}>Discard</button>
             </div>
           </div>

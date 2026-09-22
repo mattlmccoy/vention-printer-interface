@@ -159,7 +159,7 @@ export interface CalibCoverage { cells_filled: number; tilt_bins_filled: number;
 export interface VisionCalibSession { n_views: number; spec: Record<string, unknown> | null; ready: boolean; coverage?: CalibCoverage }
 export interface VisionValidateScaleResult { rms_mm: number; max_mm: number; scale_bias: number; n_points: number; target_mm: number; passed: boolean; per_point?: Array<{ error_mm: number }> }
 // Camera-center sweep (browser-driven): the client steps the recoater + captures a science frame
-// per pose; the server scores each frame's bore offset and picks the centring recoater pose.
+// per pose; the server scores each frame's bore offset and picks the centering recoater pose.
 export interface CenterSweepSample { recoater_mm: number; offset_px: number | null }
 export interface CenterSweepSession { active: boolean; poses: number[]; start_mm: number | null; samples: CenterSweepSample[]; done?: boolean }
 export interface CenterSweepSampleResult { recoater_mm: number; found: boolean; offset_px: number | null; cx: number | null; cy: number | null; r: number | null; image_size: [number, number] }
@@ -217,7 +217,7 @@ export const api = {
   operatorRestart: () => req<{ ok: boolean; restarting_in_s: number }>("POST", "/api/operator/restart"),
   move: (axis: number, mode: "abs" | "rel", mm: number) => req<{ applied_mm: number }>("POST", "/api/motion/move", { axis, mode, mm }),
   stop: () => req<StatusPayload>("POST", "/api/motion/stop", {}),
-  backlashStart: (body: { axis: number; positions?: number[]; d_mm?: number; reps?: number }) => req<BacklashSession>("POST", "/api/motion/backlash/session", body),
+  backlashStart: (body: { axis: number; positions?: number[]; d_mm?: number; reps?: number; verify?: boolean }) => req<BacklashSession>("POST", "/api/motion/backlash/session", body),
   backlashStatus: () => req<BacklashSession>("GET", "/api/motion/backlash/session"),
   backlashCancel: () => req<BacklashSession>("POST", "/api/motion/backlash/cancel"),
   backlashApply: (axis: number) => req<PrintSettingsPayload>("POST", "/api/motion/backlash/apply", { axis }),

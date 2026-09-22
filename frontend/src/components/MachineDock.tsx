@@ -13,7 +13,7 @@ const AXCLS: Record<AxisNo, string> = { 1: "ax-build", 2: "ax-feed", 3: "ax-ph",
 const CHIP_ORDER: AxisNo[] = [3, 4, 2, 1];
 
 /** The persistent right-side machine monitor — mockup layout: a LARGE, clear machine schematic on
- *  top (the centrepiece), then compact 2x2 axis chips, an on-demand overview PIP, heater/health,
+ *  top (the centerpiece), then compact 2x2 axis chips, an on-demand overview PIP, heater/health,
  *  and pause/abort while a print runs. Kept clean and uncluttered. */
 export function MachineDock({ status, base, gates, call, view }: {
   status: StatusPayload | null;

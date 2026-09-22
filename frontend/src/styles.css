@@ -110,7 +110,7 @@ details > .body { margin-top: 12px; }
 .control { grid-template-columns: repeat(2, minmax(0, 1fr)); }
 .control > .col + .col { border-left: 1px solid var(--line); }
 .runs { grid-template-columns: minmax(0, 1fr); }
-/* priming full page: a guided stepper (left) beside the LIVE diagram centrepiece (right). Fills
+/* priming full page: a guided stepper (left) beside the LIVE diagram centerpiece (right). Fills
    width and height; each column scrolls internally; stacks on a narrow viewport, diagram kept tall. */
 .priming-walk { grid-template-columns: minmax(320px, 27rem) minmax(0, 1fr); grid-template-rows: minmax(0, 1fr); gap: 16px; padding: 16px; }
 /* clean card treatment for both columns (matches the rest of the tool) */
