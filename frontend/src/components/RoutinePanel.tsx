@@ -124,14 +124,14 @@ function readDraft(plan: Record<string, unknown>): Draft {
     heater_end_mm: n(plan.heater_end_mm, 600),
     printhead_home_mm: n(plan.printhead_home_mm, 5),
     printhead_end_mm: n(plan.printhead_end_mm, 900),
-    settle_s: n(plan.settle_s, 1),
+    settle_s: n(plan.settle_s, 0.4),
     feed_fast_speed: n(plan.feed_fast_speed, 5),
     feed_fast_accel: n(plan.feed_fast_accel, 30),
     n_heater_passes: n(plan.n_heater_passes, 1),
     capture_stages: typeof plan.capture_stages === "boolean" ? plan.capture_stages : false,
     capture_recoater_mm: n(plan.capture_recoater_mm),
-    capture_settle_s: n(plan.capture_settle_s, 0.5),
-    capture_hold_s: n(plan.capture_hold_s, 2),
+    capture_settle_s: n(plan.capture_settle_s, 0.3),
+    capture_hold_s: n(plan.capture_hold_s, 1),
   };
 }
 
