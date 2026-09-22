@@ -2,6 +2,7 @@ import { useState } from "react";
 import { api, type VisionValidateScaleResult } from "../lib/api.ts";
 import { captureScienceStillOnce } from "../lib/science_still.ts";
 import { ToleranceBand } from "./ToleranceBand.tsx";
+import { PlotExportButtons } from "./PlotExportButtons.tsx";
 import type { Call } from "./views/types.ts";
 
 // The bought board's nominal geometry (17x17 INNER corners, 4.5mm nominal pitch). The nominal pitch
@@ -64,6 +65,14 @@ export function ValidationPanel({ call, printing }: { call: Call; printing: bool
             mode="max"
             hint={`rms ${result.rms_mm.toFixed(3)} mm · scale bias ${result.scale_bias.toFixed(4)} · ${result.n_points} corners`}
           />
+          {result.per_point && result.per_point.length > 0 && (
+            <PlotExportButtons
+              fetchBlob={(fmt) => api.plotValidation(
+                result.per_point!.map((p) => p.error_mm), result.target_mm, fmt)}
+              filename="scale_validation"
+              label="Seaborn plot"
+            />
+          )}
         </div>
       )}
     </>

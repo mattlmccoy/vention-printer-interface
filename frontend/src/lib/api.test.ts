@@ -62,6 +62,13 @@ test("every route: method + path + body locked", async () => {
     [() => api.events(), "GET", "/api/events", undefined],
     [() => api.autoLog(), "GET", "/api/auto-log", undefined],
     [() => api.setAutoLog(false), "PUT", "/api/auto-log", { enabled: false }],
+    [() => api.plotBacklash("png"), "GET", "/api/plots/backlash.png", undefined],
+    [() => api.plotLayerAccuracy("20260101_000000_run", "pdf"),
+      "GET", "/api/plots/layer-accuracy/20260101_000000_run.pdf", undefined],
+    [() => api.plotValidation([0.01, 0.03], 0.05, "png"),
+      "POST", "/api/plots/validation.png", { residuals_mm: [0.01, 0.03], target_mm: 0.05 }],
+    [() => api.plotSweep([{ commanded_mm: 10, deviation_mm: 0, direction: "down" }], "png"),
+      "POST", "/api/plots/sweep.png", { rows: [{ commanded_mm: 10, deviation_mm: 0, direction: "down" }] }],
   ];
   for (const [fn, method, path, body] of cases) {
     const c = await last(fn);

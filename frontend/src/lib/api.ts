@@ -33,6 +33,34 @@ async function req<T>(method: string, path: string, body?: unknown): Promise<T> 
   return data as T;
 }
 
+/** Like req() but returns the raw response body as a Blob — for binary downloads (seaborn PNG/PDF
+ *  exports). Same client-header + FastAPI-detail error handling as req(). */
+async function reqBlob(method: string, path: string, body?: unknown): Promise<Blob> {
+  const headers: Record<string, string> = {};
+  if (method !== "GET" && method !== "HEAD") headers[CLIENT_HEADER] = "1";
+  if (body !== undefined) headers["Content-Type"] = "application/json";
+  const res = await fetch(apiUrl(base, path), { method, headers, body: body === undefined ? undefined : JSON.stringify(body) });
+  if (!res.ok) {
+    const text = await res.text().catch(() => "");
+    let detail = text;
+    try { const j = JSON.parse(text); if (j && typeof j === "object" && "detail" in j) detail = String((j as { detail: unknown }).detail); } catch { /* keep text */ }
+    throw new ApiError(res.status, `${res.status} ${detail || res.statusText}`);
+  }
+  return res.blob();
+}
+
+/** Trigger a browser "save file" for a fetched blob (download-button glue). */
+export function saveBlob(blob: Blob, filename: string): void {
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement("a");
+  a.href = url;
+  a.download = filename;
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
+  setTimeout(() => URL.revokeObjectURL(url), 0);
+}
+
 export interface PathsInfo {
   jobs_root: string; jobs_root_source: string; jobs_root_is_fallback: boolean;
   experiments_root: string; experiments_root_source: string; experiments_root_is_fallback: boolean;
@@ -129,7 +157,7 @@ export interface VisionBoardSpecBody {
 // GET/POST /api/vision/calibrate/session — see backend app.py's `_calib_session_state`.
 export interface CalibCoverage { cells_filled: number; tilt_bins_filled: number; enough: boolean; gaps: string[]; total_views: number }
 export interface VisionCalibSession { n_views: number; spec: Record<string, unknown> | null; ready: boolean; coverage?: CalibCoverage }
-export interface VisionValidateScaleResult { rms_mm: number; max_mm: number; scale_bias: number; n_points: number; target_mm: number; passed: boolean }
+export interface VisionValidateScaleResult { rms_mm: number; max_mm: number; scale_bias: number; n_points: number; target_mm: number; passed: boolean; per_point?: Array<{ error_mm: number }> }
 // POST /api/vision/calibrate/capture — see backend app.py's `vision_calibrate_capture`.
 export interface VisionCalibCaptureResult { captured: boolean; count?: number; corners_found?: number; reason?: string }
 // POST /api/vision/calibrate/finalize body — see backend app.py's CalibFinalizeBody.
@@ -187,6 +215,11 @@ export const api = {
   backlashStatus: () => req<BacklashSession>("GET", "/api/motion/backlash/session"),
   backlashCancel: () => req<BacklashSession>("POST", "/api/motion/backlash/cancel"),
   backlashApply: (axis: number) => req<PrintSettingsPayload>("POST", "/api/motion/backlash/apply", { axis }),
+  // Seaborn figure exports (optional `plots` extra; 503 if not installed). Return PNG/PDF blobs.
+  plotBacklash: (fmt: "png" | "pdf") => reqBlob("GET", `/api/plots/backlash.${fmt}`),
+  plotLayerAccuracy: (run: string, fmt: "png" | "pdf") => reqBlob("GET", `/api/plots/layer-accuracy/${encodeURIComponent(run)}.${fmt}`),
+  plotValidation: (residuals_mm: number[], target_mm: number, fmt: "png" | "pdf") => reqBlob("POST", `/api/plots/validation.${fmt}`, { residuals_mm, target_mm }),
+  plotSweep: (rows: Array<Record<string, unknown>>, fmt: "png" | "pdf") => reqBlob("POST", `/api/plots/sweep.${fmt}`, { rows }),
   axisMotion: (n: number) => req<AxisMotion>("GET", `/api/axes/${n}/motion`),
   setAxisMotion: (n: number, body: { max_speed?: number; max_accel?: number }) => req<AxisMotion>("PUT", `/api/axes/${n}/motion`, body),
   limits: () => req<Record<string, unknown>>("GET", "/api/safety-limits"),

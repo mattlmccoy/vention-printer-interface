@@ -1,5 +1,6 @@
 import { useEffect, useState, type MouseEvent as ReactMouseEvent } from "react";
 import { api, type RunMeta } from "../../lib/api.ts";
+import { PlotExportButtons } from "../PlotExportButtons.tsx";
 import type { Gates } from "../../lib/format.ts";
 import type { EventItem, StatusPayload } from "../../lib/telemetry.ts";
 import { captureLayerFull, captureLayerShort, defaultStage, parseCaptures, stageComparableToCad, stepWithinStage, visibleCaptures, type Capture } from "../../lib/vision.ts";
@@ -494,6 +495,10 @@ export function RunsView({ status, gates, call, base }: { status: StatusPayload 
                 </div>
                 <ActualThicknessChart rows={accuracyRows} tolUm={Math.max(100, Number(tolUm) || 100)} />
                 <div className="hint" style={{ marginTop: 6, textTransform: "none", letterSpacing: 0 }}>Per-layer thickness can't be trusted below the 0.1 mm encoder readout, and it's sampled at layer-complete — mid-swing during the pre-heater drop — so single-count scatter and the odd out-of-range bar are measurement noise, not the piston. The cumulative height above is the real accuracy.</div>
+                {sel && accuracyRows.length > 0 && (
+                  <PlotExportButtons fetchBlob={(fmt) => api.plotLayerAccuracy(sel, fmt)}
+                    filename={`${sel}_layer_accuracy`} label="Seaborn plot" />
+                )}
               </div>
 
               <div className="card">
