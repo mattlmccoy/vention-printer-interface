@@ -2428,37 +2428,69 @@ def create_app(
             frame = vision.grab_once()  # on-demand: open -> grab -> close, never held open
         except Exception as exc:  # noqa: BLE001 - a grab failure must not 500 the request
             raise HTTPException(400, f"frame grab failed: {exc}") from exc
+        return _score_checkerboard_mm(frame.image, spec, body.square_size_mm, calib)
 
-        detection = detect_board(frame.image, spec)
+    def _score_checkerboard_mm(
+        image: np.ndarray, spec: BoardSpec, certified_mm: float, calib: Calibration,
+        target_mm: float = 0.05,
+    ) -> dict[str, Any]:
+        """Score a checkerboard image against its certified pitch through the CURRENT calibration:
+        corners -> undistort -> bed-mm homography -> rigid (no-scale) align onto the known grid ->
+        residuals (mm). A separate scale_bias catches a pure scale error the no-scale fit ignores.
+        ``passed`` is advisory vs ``target_mm`` (the ±0.05 mm band)."""
+        detection = detect_board(image, spec)
         if detection is None:
             raise HTTPException(400, "checkerboard not detected in frame")
-
-        # Corners -> bed mm via point correspondences (undistort, then H on undistorted px).
         img_pts = np.asarray(detection.image_points, dtype=float)
         if calib.camera_matrix is not None:
             dist = calib.dist_coeffs if calib.dist_coeffs is not None else np.zeros(5)
             img_pts = undistort_points(img_pts, calib.camera_matrix, dist)
         measured_mm = apply_homography(calib.H, img_pts)
-
-        # Known grid at the CERTIFIED pitch, in the SAME order as the detection's own object
-        # points (guaranteed paired with image_points) — avoids any corner-ordering mismatch.
         known_mm = np.asarray(detection.object_points, dtype=float)[:, :2]
-        known_mm = known_mm * (body.square_size_mm / spec.square_size_mm)
-
-        # Rigid (no-scale) best fit of measured onto known, then score the aligned points.
+        known_mm = known_mm * (certified_mm / spec.square_size_mm)
         r_mat, t_vec = rigid_transform_2d(measured_mm, known_mm)
         aligned_mm = measured_mm @ r_mat.T + t_vec
         scored = validate_dimensions(known_mm, aligned_mm)
-
-        scale_bias = _grid_scale_bias(known_mm, measured_mm, body.square_size_mm)
-
         return {
             "rms_mm": scored["rms_mm"],
             "max_mm": scored["max_mm"],
             "per_point": scored["points"],
-            "scale_bias": scale_bias,
+            "scale_bias": _grid_scale_bias(known_mm, measured_mm, certified_mm),
             "n_points": int(len(known_mm)),
+            "target_mm": target_mm,
+            "passed": bool(scored["max_mm"] <= target_mm),
         }
+
+    @app.post("/api/vision/validate/scale-upload")
+    async def vision_validate_scale_upload(
+        request: Request,
+        cols: int = Query(...),
+        rows: int = Query(...),
+        square_size_mm: float = Query(...),
+        certified_mm: float = Query(...),
+        target_mm: float = Query(default=0.05),
+    ) -> dict[str, Any]:
+        """Browser-image scale validation: the operator captures the chessboard via getUserMedia and
+        POSTs the encoded image (raw body); scored against the current calibration in world-mm. Same
+        source as the print-time captures (fixes the server-grab frame-source mismatch)."""
+        vision = app.state.vision
+        calib = vision.calibration if vision is not None else load_calibration(
+            vision_calibration_path
+        )
+        if calib is None:
+            raise HTTPException(400, "no calibration loaded; calibrate before validating")
+        if square_size_mm <= 0 or certified_mm <= 0:
+            raise HTTPException(400, "square_size_mm and certified_mm must be > 0")
+        body = await request.body()
+        if not body:
+            raise HTTPException(400, "empty image body")
+        import cv2
+
+        arr = cv2.imdecode(np.frombuffer(body, dtype=np.uint8), cv2.IMREAD_COLOR)
+        if arr is None:
+            raise HTTPException(400, "could not decode uploaded image")
+        spec = BoardSpec(kind="checkerboard", cols=cols, rows=rows, square_size_mm=square_size_mm)
+        return _score_checkerboard_mm(arr, spec, certified_mm, calib, target_mm)
 
     @app.get("/api/vision/captures")
     def vision_captures(run: str) -> list[dict[str, Any]]:

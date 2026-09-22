@@ -1523,6 +1523,42 @@ def test_calibrate_capture_upload_guards_empty_body_and_no_session(tmp_path: Pat
                       content=b"not an image").status_code == 400
 
 
+def test_validate_scale_upload_needs_a_calibration(tmp_path: Path) -> None:
+    app = create_app(backend="none", experiments_root=tmp_path, poll_interval_s=0.05,
+                     print_min_wait_s=0.1, print_step_timeout_s=5.0)
+    with TestClient(app) as c:
+        import cv2
+        ok, buf = cv2.imencode(".png", np.full((480, 640, 3), 255, np.uint8))
+        r = c.post("/api/vision/validate/scale-upload"
+                   "?cols=9&rows=6&square_size_mm=20&certified_mm=20", content=bytes(buf.tobytes()))
+        assert r.status_code == 400 and "calibrat" in r.json()["detail"].lower()
+
+
+def test_validate_scale_upload_runs_through_a_real_calibration(tmp_path: Path) -> None:
+    import cv2
+    app = _calib_app(tmp_path, _CharucoPoseSource())
+    with TestClient(app) as c:
+        c.post("/api/vision/calibrate/session", json={"spec": _SESSION_CHARUCO})
+        for _ in range(8):
+            c.post("/api/vision/calibrate/capture")
+        c.post("/api/vision/calibrate/finalize",
+               json={"mm_per_px": 0.5, "bed_extent_mm": [0.0, 0.0, 120.0, 80.0],
+                     "use_last_capture_as_bed": True})
+        assert app.state.vision.calibration is not None  # a calibration is now active
+        # Browser-image validate reaches detection end-to-end; a blank frame -> "not detected", 400.
+        ok, buf = cv2.imencode(".png", np.full((480, 640, 3), 255, np.uint8))
+        r = c.post("/api/vision/validate/scale-upload"
+                   "?cols=9&rows=6&square_size_mm=20&certified_mm=20", content=bytes(buf.tobytes()))
+        assert r.status_code == 400 and "detect" in r.json()["detail"].lower()
+        # Guards: empty body, bad params.
+        empty = c.post("/api/vision/validate/scale-upload"
+                       "?cols=9&rows=6&square_size_mm=20&certified_mm=20", content=b"")
+        assert empty.status_code == 400
+        assert c.post("/api/vision/validate/scale-upload"
+                      "?cols=9&rows=6&square_size_mm=0&certified_mm=20",
+                      content=bytes(buf.tobytes())).status_code == 400
+
+
 def test_view_tilt_deg_flat_vs_tilted() -> None:
     import cv2
 
