@@ -68,6 +68,8 @@ test("every route: method + path + body locked", async () => {
     [() => api.offloadStart("/Volumes/X"), "POST", "/api/offload/start", { dest: "/Volumes/X", runs: null }],
     [() => api.offloadJob(), "GET", "/api/offload/job", undefined],
     [() => api.offloadCancel(), "POST", "/api/offload/cancel", undefined],
+    [() => api.timing(), "GET", "/api/config/timing", undefined],
+    [() => api.setTiming({ print_min_wait_s: 0.1 }), "PUT", "/api/config/timing", { print_min_wait_s: 0.1 }],
     [() => api.plotBacklash("png"), "GET", "/api/plots/backlash.png", undefined],
     [() => api.plotLayerAccuracy("20260101_000000_run", "pdf"),
       "GET", "/api/plots/layer-accuracy/20260101_000000_run.pdf", undefined],

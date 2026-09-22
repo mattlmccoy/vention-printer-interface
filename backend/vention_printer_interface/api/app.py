@@ -103,6 +103,7 @@ from vention_printer_interface.paths_config import (
 )
 from vention_printer_interface.protocol import routes as r
 from vention_printer_interface.recording.recorder import Recorder
+from vention_printer_interface.timing_config import TimingConfig, load_timing, save_timing
 from vention_printer_interface.vision.avfoundation import list_avf_cameras
 from vention_printer_interface.vision.board_gen import (
     generate_charuco_dxf,
@@ -705,6 +706,13 @@ def create_app(
         default=Path.cwd() / "experiments",
     )
     root = _exp.path
+    # Print-timing knobs: a persisted UI value OVERRIDES the CLI/plist default (the Settings UI is
+    # the source of truth for these — set once, survives restarts). Unset -> keep the CLI default.
+    _timing = load_timing()
+    if _timing.print_min_wait_s is not None:
+        print_min_wait_s = _timing.print_min_wait_s
+    if _timing.print_poll_interval_s is not None:
+        print_poll_interval_s = _timing.print_poll_interval_s
     _jobs_resolved = (
         ResolvedRoot(jobs_roots[0], "cli", False)
         if jobs_roots
@@ -1180,6 +1188,41 @@ def create_app(
             restart_required = True
         info = getattr(app.state, "paths_info", {}) or {}
         return {**info, "restart_required": restart_required}
+
+    @app.get("/api/config/timing")
+    def get_config_timing() -> dict[str, Any]:
+        return {
+            "print_min_wait_s": printer().min_wait_s,
+            "print_poll_interval_s": ctrl().print_poll_interval_s,
+            "defaults": {"print_min_wait_s": 0.25, "print_poll_interval_s": 0.2},
+        }
+
+    @app.put("/api/config/timing")
+    def put_config_timing(body: dict[str, Any]) -> dict[str, Any]:
+        """Live-tune + persist the print-pacing knobs. ``print_min_wait_s`` is the per-step floor;
+        ``print_poll_interval_s`` is the controller poll during a print. Applies IMMEDIATELY (no
+        restart — read each tick) and writes the install-independent config so it survives
+        restarts. Tighter = faster inter-move pacing; too tight risks advancing before a move
+        settles, so values are range-checked."""
+
+        def _num(label: str, v: Any, lo: float, hi: float) -> float | None:
+            if v is None:
+                return None
+            if not isinstance(v, int | float) or not (lo <= float(v) <= hi):
+                raise HTTPException(400, f"{label} must be a number in [{lo}, {hi}]")
+            return float(v)
+
+        mw = _num("print_min_wait_s", body.get("print_min_wait_s"), 0.0, 5.0)
+        pp = _num("print_poll_interval_s", body.get("print_poll_interval_s"), 0.02, 1.0)
+        if mw is not None:
+            printer().min_wait_s = mw
+        if pp is not None:
+            ctrl().print_poll_interval_s = pp
+        save_timing(TimingConfig(print_min_wait_s=printer().min_wait_s,
+                                 print_poll_interval_s=ctrl().print_poll_interval_s))
+        ev("print_timing_set", {"print_min_wait_s": printer().min_wait_s,
+                                "print_poll_interval_s": ctrl().print_poll_interval_s})
+        return get_config_timing()
 
     @app.get("/api/status")
     def status() -> dict[str, Any]:

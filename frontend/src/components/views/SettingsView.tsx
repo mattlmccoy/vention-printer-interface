@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from "react";
-import { api, type BacklashSession, type CenterSweepBest, type Drive, type OffloadJob, type OffloadPlanRow, type VisionCalibrateResult } from "../../lib/api.ts";
+import { api, type BacklashSession, type CenterSweepBest, type Drive, type OffloadJob, type OffloadPlanRow, type TimingConfig, type VisionCalibrateResult } from "../../lib/api.ts";
 import { captureScienceStillOnce } from "../../lib/science_still.ts";
 import { BacklashPlot } from "../BacklashPlot.tsx";
 import { verifyVerdict, type Verdict } from "../../lib/backlash_verify.ts";
@@ -115,13 +115,13 @@ function BacklashCal({ axis, name, ok, unref, call, onPlan }: {
           {rec === 0
             ? <div className="hint" style={{ marginTop: 6 }}>no lash detected on this cylinder — nothing to compensate. Applying sets it to 0.</div>
             : <div className="hint" style={{ marginTop: 6 }}>Apply to write this as the {name}-piston anti-backlash compensation.</div>}
-          <div className="actions" style={{ marginTop: 8, display: "flex", gap: 8 }}>
-            <button className="cta primary" disabled={!ok} onClick={apply}>Apply {rec !== null ? `(${rec.toFixed(2)} mm)` : ""}</button>
-            <button className="cta" disabled={!ok || verifying} onClick={() => void verify()}
+          <div className="actions" style={{ marginTop: 8, display: "flex", gap: 8, flexWrap: "wrap" }}>
+            <button className="cta primary" style={{ whiteSpace: "nowrap" }} disabled={!ok} onClick={apply}>Apply {rec !== null ? `(${rec.toFixed(2)} mm)` : ""}</button>
+            <button className="cta" style={{ whiteSpace: "nowrap" }} disabled={!ok || verifying} onClick={() => void verify()}
               data-tip="Re-measure at the depths BETWEEN the first ones. If the lash holds there too, it's a real mechanical property, not a position-specific rut. Verifies the measurement — not that compensation zeroed the lash (that shows in layer accuracy).">
-              {verifying ? "re-measuring…" : "Verify (perturb + re-measure)"}
+              {verifying ? "re-measuring…" : "Verify · re-measure"}
             </button>
-            <button className="cta" onClick={() => setHideDone(true)}>Discard</button>
+            <button className="cta" style={{ whiteSpace: "nowrap" }} onClick={() => setHideDone(true)}>Discard</button>
           </div>
           {verdict && (
             <div className="hint" style={{ marginTop: 6, color: verdict.consistent ? "var(--ok, #2e7d32)" : "var(--bad, #b00020)" }}>
@@ -540,6 +540,60 @@ function DataOffloadPanel() {
   );
 }
 
+/** Live-tune the two knobs that pace the print between moves: the per-step wait FLOOR and the
+ *  controller POLL interval during a print. Applies immediately (no restart) and persists to the
+ *  install-independent config. Tighter = less dead time between moves; too tight risks a step
+ *  advancing before motion settles. */
+function PrintPacingPanel() {
+  const [cfg, setCfg] = useState<TimingConfig | null>(null);
+  const [minWait, setMinWait] = useState("");
+  const [poll, setPoll] = useState("");
+  const [msg, setMsg] = useState("");
+  const load = () => api.timing().then((t) => {
+    setCfg(t); setMinWait(String(t.print_min_wait_s)); setPoll(String(t.print_poll_interval_s));
+  }).catch(() => setMsg("could not load timing"));
+  useEffect(() => { load(); }, []);
+  const save = (body: { print_min_wait_s?: number; print_poll_interval_s?: number }) => {
+    setMsg("");
+    api.setTiming(body).then((t) => {
+      setCfg(t); setMinWait(String(t.print_min_wait_s)); setPoll(String(t.print_poll_interval_s));
+      setMsg("applied + saved");
+    }).catch((e) => setMsg(e instanceof Error ? e.message : "failed"));
+  };
+  const apply = () => {
+    const mw = Number(minWait), pp = Number(poll);
+    if (!Number.isFinite(mw) || mw < 0 || mw > 5) { setMsg("wait floor must be 0–5 s"); return; }
+    if (!Number.isFinite(pp) || pp < 0.02 || pp > 1) { setMsg("poll must be 0.02–1 s"); return; }
+    save({ print_min_wait_s: mw, print_poll_interval_s: pp });
+  };
+  const d = cfg?.defaults;
+  return (
+    <div className="body">
+      <div className="hint" style={{ marginTop: 0 }}>
+        These pace the choreography BETWEEN moves. A move longer than the poll interval is detected the
+        instant it finishes; only very short / no-op moves wait out the floor. Tighten both to cut the
+        dead time between steps — but if a step ever advances before motion settles, raise them back.
+        Applies live (no restart) and survives restarts.
+      </div>
+      <div className="fields" style={{ marginTop: 16 }}>
+        <span>per-step wait floor (s)</span>
+        <input type="number" step="0.01" min="0" max="5" value={minWait} onChange={(e) => setMinWait(e.target.value)} />
+        <span>poll interval during print (s)</span>
+        <input type="number" step="0.01" min="0.02" max="1" value={poll} onChange={(e) => setPoll(e.target.value)} />
+      </div>
+      <div className="kv" style={{ marginTop: 10 }}>
+        <span>live now</span><span className="v">{cfg ? `${cfg.print_min_wait_s}s floor · ${cfg.print_poll_interval_s}s poll` : "—"}</span>
+        <span>defaults</span><span>{d ? `${d.print_min_wait_s}s · ${d.print_poll_interval_s}s` : "—"}</span>
+      </div>
+      <div className="actions" style={{ marginTop: 10, gap: 8 }}>
+        <button className="cta primary" onClick={apply}>Apply</button>
+        {d && <button className="cta" onClick={() => save({ print_min_wait_s: d.print_min_wait_s, print_poll_interval_s: d.print_poll_interval_s })}>Reset to defaults</button>}
+        {msg && <span className="hint" style={{ marginTop: 0 }}>{msg}</span>}
+      </div>
+    </div>
+  );
+}
+
 function UnattendedSciencePanel() {
   const [cams, setCams] = useState<Array<{ index: number; name: string; unique_id: string }>>([]);
   const [uid, setUid] = useState<string | null>(null);
@@ -635,6 +689,7 @@ export function SettingsView({ status, gates, call, base, onOpenQuickStart }: {
     { key: "manual", title: "Manual calibration", sub: "raw image↔world points" },
     { key: "unattended", title: "Unattended science", sub: "bind camera by UID" },
     { key: "offload", title: "Data offload", sub: "copy runs to a drive" },
+    { key: "pacing", title: "Print pacing", sub: "inter-move timing" },
   ];
   const current = SECTIONS.find((s) => s.key === sel) ?? SECTIONS[0];
 
@@ -698,6 +753,7 @@ export function SettingsView({ status, gates, call, base, onOpenQuickStart }: {
           {sel === "manual" && <div className="body"><CalibrationForm call={call} disabled={!gates.reachable} /></div>}
           {sel === "unattended" && <UnattendedSciencePanel />}
           {sel === "offload" && <DataOffloadPanel />}
+          {sel === "pacing" && <PrintPacingPanel />}
         </div>
       </div>
     </div>

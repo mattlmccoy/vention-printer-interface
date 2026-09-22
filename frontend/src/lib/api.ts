@@ -71,6 +71,7 @@ export interface Health { version: string; api_version: string; backend: string;
 export interface Drive { name: string; path: string; total_bytes: number; free_bytes: number }
 export interface OffloadPlanRow { run: string; at_dest: boolean }
 export interface OffloadJob { state: "idle" | "running" | "done" | "cancelled" | "error"; dest?: string; progress?: { runs_done: number; runs_total: number; current: string; file_done: number; file_total: number }; files_copied?: number; files_skipped?: number; errors?: string[] }
+export interface TimingConfig { print_min_wait_s: number; print_poll_interval_s: number; defaults: { print_min_wait_s: number; print_poll_interval_s: number } }
 export interface Discovery { candidates: Array<{ backend: string; ip: string | null; label?: string; reachable: boolean }>; connected: { backend: string } }
 export interface MeteorStatus { backend: string; available: boolean; ready: boolean; job_name: string | null; layers_ready: number; layers_expected: number; detail: string }
 export interface PrintSettingsPayload { plan: Record<string, unknown>; validation: string[]; n_steps: number; estimated_duration_s: number; min_wait_s: number; total_layers: number; total_thickness_mm: number; bounds: Record<string, unknown>; limits: Record<string, unknown>; exposure: { energy_j: number; time_s: number; sweep_speed_mm_s: number } }
@@ -209,6 +210,8 @@ export const api = {
   offloadStart: (dest: string, runs?: string[]) => req<OffloadJob>("POST", "/api/offload/start", { dest, runs: runs ?? null }),
   offloadJob: () => req<OffloadJob>("GET", "/api/offload/job"),
   offloadCancel: () => req<OffloadJob>("POST", "/api/offload/cancel"),
+  timing: () => req<TimingConfig>("GET", "/api/config/timing"),
+  setTiming: (body: { print_min_wait_s?: number; print_poll_interval_s?: number }) => req<TimingConfig>("PUT", "/api/config/timing", body),
   discovery: () => req<Discovery>("GET", "/api/discovery"),
   connect: (body: { backend: string; ip?: string | null; heater_io?: [number, number] | null }) => req<StatusPayload>("POST", "/api/connect", body),
   disconnect: () => req<StatusPayload>("POST", "/api/disconnect"),
