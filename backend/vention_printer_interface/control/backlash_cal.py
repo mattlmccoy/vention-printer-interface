@@ -7,13 +7,15 @@ so the operator can run it in-process and tests can run it against a fake piston
 At each reference position ``p`` the target is reached from BOTH directions ``reps`` times:
 ``p-d -> p`` (descending, position increasing) gives ``a_desc``; ``p+d -> p`` (ascending, position
 decreasing) gives ``a_asc``. The bidirectional gap ``a_desc - a_asc`` is the lost motion (lash).
-The recommended anti-backlash compensation is the median across positions of each position's
-median |lash|, snapped to the 0.1 mm encoder readout (and never rounded below one count when any
-lash was seen).
+The recommended anti-backlash compensation is a conservative (75th) percentile of ALL per-rep
+|lash| pooled across positions, snapped to the 0.1 mm encoder readout (never below one count when
+any lash was seen). Pooling every rep is far more stable across runs at different depths than the
+old median-of-per-position-medians, and the upper percentile covers the bulk of the lash.
 """
 
 from __future__ import annotations
 
+import math
 from collections.abc import Callable
 from dataclasses import dataclass
 from typing import Any, Protocol
@@ -63,14 +65,32 @@ def backlash_from_pair(approached_descending: float, approached_ascending: float
     return round(approached_descending - approached_ascending, 4)
 
 
-def recommend_comp(per_position_mag_medians: list[float]) -> float:
-    """Recommended anti-backlash comp = median of the per-position |lash| medians, snapped to the
-    0.1 mm readout. Floored to one count when any position saw lash, so a tiny-but-real lash never
-    rounds to 0 (which would silently disable compensation)."""
-    if not per_position_mag_medians:
+RECOMMEND_PERCENTILE = 0.75  # cover ~3/4 of observed lash; see recommend_comp
+
+
+def _percentile(sorted_vals: list[float], p: float) -> float:
+    """Nearest-rank percentile of an ascending list (p in [0,1]). Robust for quantised data."""
+    if not sorted_vals:
         return 0.0
-    rec = round(median(per_position_mag_medians) / READOUT_MM) * READOUT_MM
-    if rec < READOUT_MM and max(per_position_mag_medians) > 0:
+    k = max(0, min(len(sorted_vals) - 1, math.ceil(p * len(sorted_vals)) - 1))
+    return sorted_vals[k]
+
+
+def recommend_comp(mags: list[float], percentile: float = RECOMMEND_PERCENTILE) -> float:
+    """Recommended anti-backlash comp from ALL per-rep |lash| POOLED across positions.
+
+    Pooling every rep (not the median of per-position medians) is far more stable across runs that
+    probe different depths — the old median-of-medians swung between one and two counts on the same
+    cylinder depending on which depths were sampled. A conservative 75th-percentile covers the bulk
+    of the observed lash: anti-backlash should compensate the lash, because UNDER-compensating
+    leaves residual error every layer while a mild over-shoot still returns to the target. Snapped
+    to the 0.1 mm readout, and floored to one count when any lash is seen so a tiny-but-real lash
+    never rounds to 0 (which would silently disable compensation)."""
+    vals = [m for m in mags if m is not None]
+    if not vals:
+        return 0.0
+    rec = round(_percentile(sorted(vals), percentile) / READOUT_MM) * READOUT_MM
+    if rec < READOUT_MM and max(vals) > 0:
         rec = READOUT_MM
     return round(rec, 4)
 
@@ -179,7 +199,7 @@ def measure_backlash(
         )
         if on_progress is not None:
             on_progress(len(results), total, results[-1])
-    recommended = recommend_comp([p.backlash_mag_median_mm for p in results])
+    recommended = recommend_comp([abs(v) for p in results for v in p.reps_mm])
     return BacklashResult(
         axis=axis, positions=tuple(results), recommended_mm=recommended, cancelled=cancelled
     )

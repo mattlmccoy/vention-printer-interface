@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from "react";
-import { api, type BacklashSession, type CenterSweepBest, type Drive, type OffloadJob, type OffloadPlanRow, type TimingConfig, type VisionCalibrateResult } from "../../lib/api.ts";
+import { api, type BacklashHistoryItem, type BacklashRecord, type BacklashSession, type CenterSweepBest, type Drive, type OffloadJob, type OffloadPlanRow, type TimingConfig, type VisionCalibrateResult } from "../../lib/api.ts";
 import { captureScienceStillOnce } from "../../lib/science_still.ts";
 import { BacklashPlot } from "../BacklashPlot.tsx";
 import { verifyVerdict, type Verdict } from "../../lib/backlash_verify.ts";
@@ -29,6 +29,15 @@ function BacklashCal({ axis, name, ok, unref, call, onPlan }: {
   const [hideDone, setHideDone] = useState(false);
   const [verifying, setVerifying] = useState(false);
   const [verdict, setVerdict] = useState<Verdict | null>(null);
+  const [hist, setHist] = useState<BacklashHistoryItem[]>([]);
+  const [histOpen, setHistOpen] = useState(false);
+  const [viewing, setViewing] = useState<BacklashRecord | null>(null);
+  const loadHist = () => api.backlashHistory()
+    .then((r) => setHist(r.calibrations.filter((c) => c.axis === axis)))
+    .catch(() => setHist([]));
+  useEffect(() => { loadHist(); }, []); // eslint-disable-line react-hooks/exhaustive-deps
+  const doneState = sess?.state === "done" && sess.result?.axis === axis;
+  useEffect(() => { if (doneState) loadHist(); }, [doneState]); // eslint-disable-line react-hooks/exhaustive-deps
 
   useEffect(() => {
     let live = true;
@@ -137,6 +146,27 @@ function BacklashCal({ axis, name, ok, unref, call, onPlan }: {
       {errMine && (
         <div className="cal-result" style={{ marginTop: 8 }}>
           <div className="errline">calibration failed: {sess!.error}</div>
+        </div>
+      )}
+      {hist.length > 0 && (
+        <div style={{ marginTop: 10, borderTop: "1px solid var(--line)", paddingTop: 8 }}>
+          <button className="small" onClick={() => setHistOpen((v) => !v)}>{histOpen ? "hide" : "show"} saved calibrations ({hist.length})</button>
+          {histOpen && (
+            <>
+              {hist.map((h) => (
+                <div key={h.id} className="row" style={{ justifyContent: "space-between", gap: 8, padding: "3px 0" }}>
+                  <span className="hint" style={{ marginTop: 0 }}>{(h.saved_utc || "").replace("T", " ").replace("Z", " UTC")} · {h.recommended_mm != null ? `${h.recommended_mm.toFixed(2)} mm` : "—"} · {h.n_positions} depths</span>
+                  <button className="small" onClick={() => api.backlashRecord(h.id).then(setViewing).catch(() => undefined)}>view</button>
+                </div>
+              ))}
+              {viewing && viewing.axis === axis && viewing.positions.length > 0 && (
+                <div style={{ marginTop: 6 }}>
+                  <div className="hint" style={{ marginTop: 0 }}>recommended {viewing.recommended_mm != null ? `${viewing.recommended_mm.toFixed(2)} mm` : "—"}</div>
+                  <BacklashPlot positions={viewing.positions} recommended={viewing.recommended_mm ?? null} />
+                </div>
+              )}
+            </>
+          )}
         </div>
       )}
     </div>

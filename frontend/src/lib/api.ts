@@ -81,6 +81,9 @@ export interface PrimedPayload { primed: { part_mm: number; feed_mm: number; cap
 export interface BacklashPositionResult { ref_mm: number; backlash_median_mm: number; backlash_mag_median_mm: number; reps_mm: number[] }
 export interface BacklashResult { axis: number; recommended_mm: number; cancelled: boolean; positions: BacklashPositionResult[] }
 export interface BacklashSession { state: "idle" | "running" | "done" | "cancelled" | "error"; axis: number | null; progress: { done: number; total: number }; current_ref_mm: number | null; partial_positions?: BacklashPositionResult[]; result: BacklashResult | null; error: string | null }
+// Persisted backlash cal history (survives restarts) — see backend control/backlash_history.py.
+export interface BacklashHistoryItem { id: string; saved_utc: string; axis: number; recommended_mm: number | null; n_positions: number }
+export interface BacklashRecord { id: string; saved_utc: string; axis: number; recommended_mm: number | null; positions: BacklashPositionResult[] }
 export interface VisionStatus { cameras: string[]; calibration: string | null; queue: { drops: number }; active: boolean; roles_resolved: boolean; unresolved: string[] }
 export interface VisionCameraSpec { role: string; index: number; path: string | null; backend: number | null; width: number | null; height: number | null }
 export interface VisionCameras { overview: VisionCameraSpec; science: VisionCameraSpec }
@@ -233,6 +236,8 @@ export const api = {
   backlashStatus: () => req<BacklashSession>("GET", "/api/motion/backlash/session"),
   backlashCancel: () => req<BacklashSession>("POST", "/api/motion/backlash/cancel"),
   backlashApply: (axis: number) => req<PrintSettingsPayload>("POST", "/api/motion/backlash/apply", { axis }),
+  backlashHistory: () => req<{ calibrations: BacklashHistoryItem[] }>("GET", "/api/motion/backlash/history"),
+  backlashRecord: (id: string) => req<BacklashRecord>("GET", `/api/motion/backlash/history/${encodeURIComponent(id)}`),
   // Seaborn figure exports (optional `plots` extra; 503 if not installed). Return PNG/PDF blobs.
   plotBacklash: (fmt: "png" | "pdf") => reqBlob("GET", `/api/plots/backlash.${fmt}`),
   plotLayerAccuracy: (run: string, fmt: "png" | "pdf") => reqBlob("GET", `/api/plots/layer-accuracy/${encodeURIComponent(run)}.${fmt}`),

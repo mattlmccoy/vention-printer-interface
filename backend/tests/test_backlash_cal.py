@@ -70,10 +70,28 @@ def test_backlash_from_pair_is_descending_minus_ascending() -> None:
 
 
 def test_recommend_comp_snaps_to_readout() -> None:
-    # median of per-position |lash| medians, snapped to 0.1 mm.
+    # a conservative percentile of pooled per-rep |lash|, snapped to 0.1 mm.
     assert recommend_comp([0.18, 0.22, 0.2]) == 0.2
     assert recommend_comp([]) == 0.0
     assert recommend_comp([0.0, 0.0]) == 0.0
+
+
+def _pool(spec: dict[float, int]) -> list[float]:
+    return [v for v, n in spec.items() for _ in range(n)]
+
+
+def test_recommend_is_stable_and_conservative_across_depths() -> None:
+    from vention_printer_interface.control.backlash_cal import _percentile
+    # Two REAL runs at DIFFERENT depths that the old median-of-per-position-medians scored 0.1 vs
+    # 0.2 on the same cylinder. Pooling every rep + a 75th percentile makes both land on 0.2 —
+    # stable across depth, and covering the bulk of the observed lash (anti-backlash wants that).
+    run_original = _pool({0.0: 4, 0.1: 15, 0.2: 11, 0.3: 2})          # 4 depths x 8 reps
+    run_perturbed = _pool({0.0: 4, 0.1: 6, 0.2: 12, 0.3: 1, 0.4: 1})  # 3 midpoints x 8 reps
+    assert recommend_comp(run_original) == 0.2
+    assert recommend_comp(run_perturbed) == 0.2
+    # the nearest-rank percentile itself
+    assert _percentile([0.1, 0.1, 0.2, 0.2], 0.75) == 0.2
+    assert _percentile([], 0.5) == 0.0
 
 
 def test_recommend_comp_floors_to_one_count_when_any_lash_seen() -> None:

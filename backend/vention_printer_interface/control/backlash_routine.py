@@ -9,6 +9,7 @@ operator supplies a mover backed by the real controller, tests supply a fake one
 from __future__ import annotations
 
 import threading
+from collections.abc import Callable
 from dataclasses import asdict
 from typing import Any
 
@@ -24,6 +25,7 @@ class BacklashRoutine:
         d_mm: float,
         reps: int,
         return_to_mm: float,
+        on_done: Callable[[BacklashResult], None] | None = None,
     ) -> None:
         self._mover = mover
         self._axis = axis
@@ -31,6 +33,7 @@ class BacklashRoutine:
         self._d_mm = d_mm
         self._reps = reps
         self._return_to_mm = return_to_mm
+        self._on_done = on_done  # fired once with the result when a cal COMPLETES (persist it)
         self._lock = threading.Lock()
         self._state = "idle"  # idle | running | done | cancelled | error
         self._done = 0
@@ -65,6 +68,11 @@ class BacklashRoutine:
             with self._lock:
                 self._result = result
                 self._state = "cancelled" if result.cancelled else "done"
+            if self._state == "done" and self._on_done is not None:
+                try:
+                    self._on_done(result)  # persist; a save failure must not fault the routine
+                except Exception:  # noqa: BLE001
+                    pass
         except Exception as exc:  # a stall/timeout or lost telemetry — surface it, don't crash
             self._safe_return_home()
             with self._lock:
