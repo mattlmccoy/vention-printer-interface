@@ -72,6 +72,9 @@ export function CalibrationWizard({ call, printing }: { call: Call; printing: bo
   };
 
   const ready = session !== null && calibrationReady(session);
+  // Coverage gate: finalize only once the frame + tilt coverage is met (falls back to the ≥3-view
+  // readiness when an older backend doesn't report coverage).
+  const covEnough = session?.coverage ? session.coverage.enough : ready;
 
   return (
     <>
@@ -101,7 +104,21 @@ export function CalibrationWizard({ call, printing }: { call: Call; printing: bo
       {session && (
         <div className="kv">
           <span>views captured</span><span>{session.n_views}</span>
-          <span>ready to finalize</span><span>{ready ? "yes (≥ 3 views)" : "no — capture more views"}</span>
+          <span>ready to finalize</span><span>{covEnough ? "yes — coverage met" : "no — fill the coverage map"}</span>
+        </div>
+      )}
+      {session?.coverage && (
+        <div className="cov" style={{ marginTop: 8 }}>
+          <div className="hint" style={{ marginTop: 0, textTransform: "none", letterSpacing: 0 }}>coverage — move the board across the frame AND tilt it a few ways</div>
+          <div style={{ display: "grid", gridTemplateColumns: "repeat(3, 30px)", gap: 4, marginTop: 4 }}>
+            {[1, 2, 3].flatMap((r) => [1, 2, 3].map((c) => {
+              const filled = !session.coverage!.gaps.includes(`r${r}c${c}`);
+              return <div key={`r${r}c${c}`} title={`cell r${r}c${c}`} style={{ width: 30, height: 22, borderRadius: 4, background: filled ? "var(--ok, #2e7d32)" : "var(--track, #2a2f3a)" }} />;
+            }))}
+          </div>
+          <div className="hint" style={{ marginTop: 4, textTransform: "none", letterSpacing: 0 }}>
+            {session.coverage.tilt_bins_filled}/3 tilt angles{session.coverage.gaps.includes("tilt") ? " — tilt the board more" : " ✓"} · {session.coverage.total_views} views{session.coverage.enough ? " · ✓ enough" : ""}
+          </div>
         </div>
       )}
       {captureNote && <div className="hint">science camera — {captureNote}</div>}
@@ -119,7 +136,7 @@ export function CalibrationWizard({ call, printing }: { call: Call; printing: bo
       </div>
       {finalizeErr && <div className="errline">{finalizeErr}</div>}
       <div className="actions one tight">
-        <button className="cta primary" disabled={printing || !ready} onClick={finalize}>finalize calibration</button>
+        <button className="cta primary" disabled={printing || !covEnough} onClick={finalize}>finalize calibration</button>
       </div>
       {result && (
         <div className="kv">

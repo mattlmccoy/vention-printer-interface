@@ -33,6 +33,37 @@ def apply_homography(h_matrix: np.ndarray, pts: np.ndarray) -> np.ndarray:
     return result
 
 
+def view_tilt_deg(image_points: np.ndarray, object_points: np.ndarray) -> float:
+    """Out-of-plane tilt (deg) of a planar board from its image/object correspondences: fit the
+    board->image homography and measure the foreshortening of opposite edges of the board's bounding
+    rectangle. Board-aspect invariant (opposite edges are equal when fronto-parallel, regardless of
+    the board's own aspect). ~0 for a flat view; grows with tilt. 0.0 if no homography fits."""
+    import math
+
+    import cv2
+
+    img = np.asarray(image_points, float).reshape(-1, 2)
+    obj = np.asarray(object_points, float).reshape(-1, 3)[:, :2]
+    if len(img) < 4 or len(obj) < 4:
+        return 0.0
+    h, _ = cv2.findHomography(obj, img, cv2.RANSAC)
+    if h is None:
+        return 0.0
+    xmin, ymin = obj.min(axis=0)
+    xmax, ymax = obj.max(axis=0)
+    corners = np.array([[xmin, ymin], [xmax, ymin], [xmax, ymax], [xmin, ymax]], float)
+    m = apply_homography(h, corners)
+
+    def edge(a: int, b: int) -> float:
+        return float(np.hypot(m[a][0] - m[b][0], m[a][1] - m[b][1]))
+
+    top, bottom, left, right = edge(0, 1), edge(3, 2), edge(0, 3), edge(1, 2)
+    rh = min(top, bottom) / max(top, bottom) if max(top, bottom) > 0 else 1.0
+    rv = min(left, right) / max(left, right) if max(left, right) > 0 else 1.0
+    ratio = max(-1.0, min(1.0, min(rh, rv)))
+    return math.degrees(math.acos(ratio))
+
+
 def reprojection_error(
     h_matrix: np.ndarray, image_pts: np.ndarray, world_pts_mm: np.ndarray
 ) -> float:
@@ -388,6 +419,36 @@ def save_calibration(path: Path, calib: Calibration) -> None:
     payload["dist_coeffs"] = calib.dist_coeffs.tolist() if calib.dist_coeffs is not None else None
     payload["image_size"] = list(calib.image_size) if calib.image_size is not None else None
     Path(path).write_text(json.dumps(payload, indent=2), encoding="utf-8")
+
+
+def save_validation(path: Path, calibration_version: str, scale: dict[str, Any]) -> None:
+    """Persist the latest scale-validation result, keyed to the calibration version it validated, so
+    trust travels with the calibration (a stale validation for an older version does not count)."""
+    Path(path).write_text(
+        json.dumps({"calibration_version": calibration_version, "scale": scale}, indent=2),
+        encoding="utf-8",
+    )
+
+
+def load_validation(path: Path) -> dict[str, Any] | None:
+    """Read the stored validation record, or None when absent."""
+    p = Path(path)
+    if not p.exists():
+        return None
+    result: dict[str, Any] = json.loads(p.read_text(encoding="utf-8"))
+    return result
+
+
+def calibration_validation_warning(
+    calibration_version: str, validation: dict[str, Any] | None
+) -> str | None:
+    """Advisory warning when the active calibration has no PASSING scale validation. None = trusted.
+    A validation for a different (older) calibration version does not count."""
+    if validation is None or validation.get("calibration_version") != calibration_version:
+        return "this calibration has not been validated against a certified board (run Validate)"
+    if not (validation.get("scale") or {}).get("passed"):
+        return "the last scale validation of this calibration did not pass its tolerance band"
+    return None
 
 
 def load_calibration(path: Path) -> Calibration | None:

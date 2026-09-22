@@ -117,6 +117,7 @@ from vention_printer_interface.vision.capture import (
     image_has_usable_content,
     store_uploaded,
 )
+from vention_printer_interface.vision.coverage import coverage
 from vention_printer_interface.vision.events import label_to_stage
 from vention_printer_interface.vision.frame_source import (
     AVFoundationFrameSource,
@@ -131,14 +132,18 @@ from vention_printer_interface.vision.registration import (
     apply_homography,
     calibrate_intrinsics,
     calibrate_intrinsics_boards,
+    calibration_validation_warning,
     compute_homography,
     detect_board,
     load_calibration,
+    load_validation,
     reprojection_error,
     rigid_transform_2d,
     save_calibration,
+    save_validation,
     undistort_points,
     validate_dimensions,
+    view_tilt_deg,
 )
 from vention_printer_interface.vision.store import read_manifest, write_overview_frame
 
@@ -950,6 +955,7 @@ def create_app(
         app.state.calib_session_spec = None
         app.state.calib_session_views = []
         app.state.calib_session_image_size = None
+        app.state.calib_session_cov = []
         app.state.backend = "none"
         app.state.default_heater_io = heater_io or DEFAULT_HEATER_IO
         app.state.axis_motion = _fresh_axis_motion()
@@ -2247,6 +2253,7 @@ def create_app(
             "n_views": len(views),
             "spec": dataclasses.asdict(spec) if spec is not None else None,
             "ready": len(views) >= _MIN_CALIB_VIEWS,
+            "coverage": dataclasses.asdict(coverage(app.state.calib_session_cov)),
         }
 
     @app.post("/api/vision/calibrate/session")
@@ -2256,6 +2263,7 @@ def create_app(
         app.state.calib_session_spec = spec
         app.state.calib_session_views = []
         app.state.calib_session_image_size = None
+        app.state.calib_session_cov = []
         return _calib_session_state()
 
     @app.get("/api/vision/calibrate/session")
@@ -2272,6 +2280,13 @@ def create_app(
         views: list[BoardDetection] = app.state.calib_session_views
         views.append(detection)
         app.state.calib_session_image_size = (int(image.shape[1]), int(image.shape[0]))
+        # Coverage descriptor for capture guidance: where in the frame + how tilted this view is.
+        centroid = np.asarray(detection.image_points, float).reshape(-1, 2).mean(axis=0)
+        app.state.calib_session_cov.append({
+            "centroid_px": (float(centroid[0]), float(centroid[1])),
+            "tilt_deg": view_tilt_deg(detection.image_points, detection.object_points),
+            "image_size": (int(image.shape[1]), int(image.shape[0])),
+        })
         return {
             "captured": True,
             "count": len(views),
@@ -2416,37 +2431,78 @@ def create_app(
             frame = vision.grab_once()  # on-demand: open -> grab -> close, never held open
         except Exception as exc:  # noqa: BLE001 - a grab failure must not 500 the request
             raise HTTPException(400, f"frame grab failed: {exc}") from exc
+        return _score_checkerboard_mm(frame.image, spec, body.square_size_mm, calib)
 
-        detection = detect_board(frame.image, spec)
+    def _score_checkerboard_mm(
+        image: np.ndarray, spec: BoardSpec, certified_mm: float, calib: Calibration,
+        target_mm: float = 0.05,
+    ) -> dict[str, Any]:
+        """Score a checkerboard image against its certified pitch through the CURRENT calibration:
+        corners -> undistort -> bed-mm homography -> rigid (no-scale) align onto the known grid ->
+        residuals (mm). A separate scale_bias catches a pure scale error the no-scale fit ignores.
+        ``passed`` is advisory vs ``target_mm`` (the ±0.05 mm band)."""
+        detection = detect_board(image, spec)
         if detection is None:
             raise HTTPException(400, "checkerboard not detected in frame")
-
-        # Corners -> bed mm via point correspondences (undistort, then H on undistorted px).
         img_pts = np.asarray(detection.image_points, dtype=float)
         if calib.camera_matrix is not None:
             dist = calib.dist_coeffs if calib.dist_coeffs is not None else np.zeros(5)
             img_pts = undistort_points(img_pts, calib.camera_matrix, dist)
         measured_mm = apply_homography(calib.H, img_pts)
-
-        # Known grid at the CERTIFIED pitch, in the SAME order as the detection's own object
-        # points (guaranteed paired with image_points) — avoids any corner-ordering mismatch.
         known_mm = np.asarray(detection.object_points, dtype=float)[:, :2]
-        known_mm = known_mm * (body.square_size_mm / spec.square_size_mm)
-
-        # Rigid (no-scale) best fit of measured onto known, then score the aligned points.
+        known_mm = known_mm * (certified_mm / spec.square_size_mm)
         r_mat, t_vec = rigid_transform_2d(measured_mm, known_mm)
         aligned_mm = measured_mm @ r_mat.T + t_vec
         scored = validate_dimensions(known_mm, aligned_mm)
-
-        scale_bias = _grid_scale_bias(known_mm, measured_mm, body.square_size_mm)
-
         return {
             "rms_mm": scored["rms_mm"],
             "max_mm": scored["max_mm"],
             "per_point": scored["points"],
-            "scale_bias": scale_bias,
+            "scale_bias": _grid_scale_bias(known_mm, measured_mm, certified_mm),
             "n_points": int(len(known_mm)),
+            "target_mm": target_mm,
+            "passed": bool(scored["max_mm"] <= target_mm),
         }
+
+    @app.post("/api/vision/validate/scale-upload")
+    async def vision_validate_scale_upload(
+        request: Request,
+        cols: int = Query(...),
+        rows: int = Query(...),
+        square_size_mm: float = Query(...),
+        certified_mm: float = Query(...),
+        target_mm: float = Query(default=0.05),
+    ) -> dict[str, Any]:
+        """Browser-image scale validation: the operator captures the chessboard via getUserMedia and
+        POSTs the encoded image (raw body); scored against the current calibration in world-mm. Same
+        source as the print-time captures (fixes the server-grab frame-source mismatch)."""
+        vision = app.state.vision
+        calib = vision.calibration if vision is not None else load_calibration(
+            vision_calibration_path
+        )
+        if calib is None:
+            raise HTTPException(400, "no calibration loaded; calibrate before validating")
+        if square_size_mm <= 0 or certified_mm <= 0:
+            raise HTTPException(400, "square_size_mm and certified_mm must be > 0")
+        body = await request.body()
+        if not body:
+            raise HTTPException(400, "empty image body")
+        import cv2
+
+        arr = cv2.imdecode(np.frombuffer(body, dtype=np.uint8), cv2.IMREAD_COLOR)
+        if arr is None:
+            raise HTTPException(400, "could not decode uploaded image")
+        spec = BoardSpec(kind="checkerboard", cols=cols, rows=rows, square_size_mm=square_size_mm)
+        result = _score_checkerboard_mm(arr, spec, certified_mm, calib, target_mm)
+        # Persist trust keyed to this calibration version, so the analysis can tell validated apart.
+        save_validation(
+            root / ".vision_validation.json",
+            calib.version,
+            {"max_mm": result["max_mm"], "rms_mm": result["rms_mm"],
+             "passed": result["passed"], "target_mm": target_mm,
+             "scale_bias": result["scale_bias"]},
+        )
+        return result
 
     @app.get("/api/vision/captures")
     def vision_captures(run: str) -> list[dict[str, Any]]:
@@ -2572,6 +2628,19 @@ def create_app(
         write_overview_frame(run_dir, arr)
         return {"stored": True}
 
+    def _with_calibration_trust(out: dict[str, Any]) -> dict[str, Any]:
+        """Advisory: flag when the active calibration has no PASSING scale validation, so a
+        never read as trustworthy on an unvalidated calibration. Never overrides an existing warning
+        and never changes status."""
+        calib = load_calibration(vision_calibration_path)
+        if calib is not None and not out.get("calibration_warning"):
+            warn = calibration_validation_warning(
+                calib.version, load_validation(root / ".vision_validation.json")
+            )
+            if warn:
+                out["calibration_warning"] = warn
+        return out
+
     @app.post("/api/analysis/{run}/dimensional")
     def analysis_dimensional_run(
         run: str, body: DimensionalAnalyzeRequest | None = None
@@ -2593,7 +2662,7 @@ def create_app(
             circle=req.circle.model_dump() if req.circle else None,
             nominals=nominals,
         )
-        return report.to_dict()
+        return _with_calibration_trust(report.to_dict())
 
     @app.get("/api/analysis/{run}/dimensional")
     def analysis_dimensional_get(run: str) -> dict[str, Any]:
@@ -2602,7 +2671,7 @@ def create_app(
         report = load_report(run_dir)
         if report is None:
             return {"status": "not_run", "run": run}
-        return report
+        return _with_calibration_trust(report)
 
     @app.get("/api/analysis/{run}/lane-b")
     def analysis_lane_b(
