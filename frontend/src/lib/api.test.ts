@@ -62,6 +62,7 @@ test("every route: method + path + body locked", async () => {
     [() => api.events(), "GET", "/api/events", undefined],
     [() => api.autoLog(), "GET", "/api/auto-log", undefined],
     [() => api.setAutoLog(false), "PUT", "/api/auto-log", { enabled: false }],
+    [() => api.setIgnoredCameras(["0xAAA"]), "PUT", "/api/vision/ignored-cameras", { unique_ids: ["0xAAA"] }],
     [() => api.plotBacklash("png"), "GET", "/api/plots/backlash.png", undefined],
     [() => api.plotLayerAccuracy("20260101_000000_run", "pdf"),
       "GET", "/api/plots/layer-accuracy/20260101_000000_run.pdf", undefined],
