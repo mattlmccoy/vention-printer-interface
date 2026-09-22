@@ -388,6 +388,52 @@ def _sha256(path: Path) -> str:
     return h.hexdigest()
 
 
+def summarize_run(d: Path, active: Path | None = None) -> dict[str, Any]:
+    """Runs-browser summary for one run directory (size, status, layer/capture counts, job link).
+    ``active`` is the currently-recording directory, if any (only it can be status "recording")."""
+    # One walk for both the byte size and the vision-capture count (a run is "analyzable"
+    # in the Analysis tab only if it has captured images under vision/).
+    size = 0
+    captures = 0
+    for f in d.rglob("*"):
+        if not f.is_file():
+            continue
+        size += f.stat().st_size
+        if f.suffix in (".png", ".webp") and f.relative_to(d).parts[0] == "vision" \
+                and not f.name.endswith(".raw.webp"):
+            captures += 1
+    meta = _read_run_meta(d)
+    raw_experiment = meta.get("experiment")
+    experiment: dict[str, Any] = raw_experiment if isinstance(raw_experiment, dict) else {}
+    complete = (d / "manifest.json").exists()
+    return {
+        "run": d.name,
+        "complete": complete,
+        "status": derive_run_status(
+            _event_labels(d), complete=complete, active=(d == active)
+        ),
+        "size_bytes": size,
+        "name": experiment.get("name", ""),
+        "notes": experiment.get("notes", ""),
+        "started_at": meta.get("started_utc"),
+        "layer_count": _layer_count(d),
+        "duration_s": _telemetry_duration_s(d),
+        "capture_count": captures,
+        # Job link (recorded going forward): lets a Runs card show that job's preview.
+        # None for manual prints and every pre-existing run (data-contract: no link).
+        "job_folder": experiment.get("job_folder"),
+        "job_name": experiment.get("job_name"),
+    }
+
+
+def list_runs_in(root: Path, active: Path | None = None) -> list[dict[str, Any]]:
+    """Runs-browser summaries for every run directory directly under ``root`` (newest first)."""
+    if not root.exists():
+        return []
+    dirs = sorted(p for p in root.iterdir() if p.is_dir() and not p.name.startswith("."))
+    return [summarize_run(d, active=active) for d in dirs]
+
+
 class Recorder:
     def __init__(
         self,
@@ -563,43 +609,4 @@ class Recorder:
         return run
 
     def list_runs(self) -> list[dict[str, Any]]:
-        if not self.root.exists():
-            return []
-        out = []
-        dirs = sorted(p for p in self.root.iterdir() if p.is_dir() and not p.name.startswith("."))
-        for d in dirs:
-            # One walk for both the byte size and the vision-capture count (a run is "analyzable"
-            # in the Analysis tab only if it has captured images under vision/).
-            size = 0
-            captures = 0
-            for f in d.rglob("*"):
-                if not f.is_file():
-                    continue
-                size += f.stat().st_size
-                if f.suffix == ".png" and f.relative_to(d).parts[0] == "vision":
-                    captures += 1
-            meta = _read_run_meta(d)
-            raw_experiment = meta.get("experiment")
-            experiment: dict[str, Any] = raw_experiment if isinstance(raw_experiment, dict) else {}
-            complete = (d / "manifest.json").exists()
-            out.append(
-                {
-                    "run": d.name,
-                    "complete": complete,
-                    "status": derive_run_status(
-                        _event_labels(d), complete=complete, active=(d == self.active)
-                    ),
-                    "size_bytes": size,
-                    "name": experiment.get("name", ""),
-                    "notes": experiment.get("notes", ""),
-                    "started_at": meta.get("started_utc"),
-                    "layer_count": _layer_count(d),
-                    "duration_s": _telemetry_duration_s(d),
-                    "capture_count": captures,
-                    # Job link (recorded going forward): lets a Runs card show that job's preview.
-                    # None for manual prints and every pre-existing run (data-contract: no link).
-                    "job_folder": experiment.get("job_folder"),
-                    "job_name": experiment.get("job_name"),
-                }
-            )
-        return out
+        return list_runs_in(self.root, active=self.active)

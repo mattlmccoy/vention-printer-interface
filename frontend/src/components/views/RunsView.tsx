@@ -13,7 +13,7 @@ import {
   type Metric,
 } from "../../lib/motion.ts";
 import { EventLog } from "../EventLog.tsx";
-import { runStatusChip } from "../../lib/runs.ts";
+import { runStatusChip, runLocationLabel } from "../../lib/runs.ts";
 import type { Call } from "./types.ts";
 
 const STAGE_LABEL: Record<string, string> = { pre_jet: "pre-jet", post_jet: "post-jet", post_heat: "post-heat" };
@@ -30,6 +30,7 @@ const runLayers = (r: RunMeta) =>
 function RunListItem({ r, selected, onSelect }: { r: RunMeta; selected: boolean; onSelect: () => void }) {
   const [imgErr, setImgErr] = useState(false);
   const chip = runStatusChip(r.status);
+  const loc = runLocationLabel(r.locations);
   const showImg = !!r.job_folder && !imgErr;
   return (
     <button className={`runitem${selected ? " on" : ""}`} onClick={onSelect}>
@@ -46,6 +47,7 @@ function RunListItem({ r, selected, onSelect }: { r: RunMeta; selected: boolean;
         <span className="rn">{runDispName(r)}</span>
         <span className="rd">{runLabel(r.run)} · {runLayers(r)}</span>
         <span className="rchip" style={{ color: chip.color }} title={chip.title}>{chip.label}</span>
+        {loc && <span className="rloc" title={`This run's data lives ${loc}`}>{loc}</span>}
       </span>
     </button>
   );
