@@ -70,7 +70,7 @@ export interface Health { version: string; api_version: string; backend: string;
 // Data offload — verified copy of runs to a picked external drive. See backend offload.py.
 export interface Drive { name: string; path: string; total_bytes: number; free_bytes: number }
 export interface OffloadPlanRow { run: string; at_dest: boolean }
-export interface OffloadJob { state: "idle" | "running" | "done" | "cancelled" | "error"; dest?: string; progress?: { runs_done: number; runs_total: number; current: string; file_done: number; file_total: number }; files_copied?: number; files_skipped?: number; errors?: string[] }
+export interface OffloadJob { state: "idle" | "running" | "done" | "cancelled" | "error"; mode?: "copy" | "move"; dest?: string; progress?: { runs_done: number; runs_total: number; current: string; file_done: number; file_total: number }; files_copied?: number; files_skipped?: number; errors?: string[] }
 export interface TimingConfig { print_min_wait_s: number; print_poll_interval_s: number; defaults: { print_min_wait_s: number; print_poll_interval_s: number } }
 export interface Discovery { candidates: Array<{ backend: string; ip: string | null; label?: string; reachable: boolean }>; connected: { backend: string } }
 export interface MeteorStatus { backend: string; available: boolean; ready: boolean; job_name: string | null; layers_ready: number; layers_expected: number; detail: string }
@@ -207,7 +207,7 @@ export const api = {
   status: () => req<StatusPayload>("GET", "/api/status"),
   offloadDrives: () => req<{ drives: Drive[] }>("GET", "/api/offload/drives"),
   offloadPlan: (dest: string) => req<{ plan: OffloadPlanRow[]; job: OffloadJob }>("GET", `/api/offload/plan?dest=${encodeURIComponent(dest)}`),
-  offloadStart: (dest: string, runs?: string[]) => req<OffloadJob>("POST", "/api/offload/start", { dest, runs: runs ?? null }),
+  offloadStart: (dest: string, opts?: { runs?: string[]; move?: boolean }) => req<OffloadJob>("POST", "/api/offload/start", { dest, runs: opts?.runs ?? null, move: opts?.move ?? false }),
   offloadJob: () => req<OffloadJob>("GET", "/api/offload/job"),
   offloadCancel: () => req<OffloadJob>("POST", "/api/offload/cancel"),
   timing: () => req<TimingConfig>("GET", "/api/config/timing"),

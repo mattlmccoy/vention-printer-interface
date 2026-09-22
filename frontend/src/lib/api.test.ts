@@ -65,7 +65,7 @@ test("every route: method + path + body locked", async () => {
     [() => api.setIgnoredCameras(["0xAAA"]), "PUT", "/api/vision/ignored-cameras", { unique_ids: ["0xAAA"] }],
     [() => api.offloadDrives(), "GET", "/api/offload/drives", undefined],
     [() => api.offloadPlan("/Volumes/X"), "GET", "/api/offload/plan?dest=%2FVolumes%2FX", undefined],
-    [() => api.offloadStart("/Volumes/X"), "POST", "/api/offload/start", { dest: "/Volumes/X", runs: null }],
+    [() => api.offloadStart("/Volumes/X"), "POST", "/api/offload/start", { dest: "/Volumes/X", runs: null, move: false }],
     [() => api.offloadJob(), "GET", "/api/offload/job", undefined],
     [() => api.offloadCancel(), "POST", "/api/offload/cancel", undefined],
     [() => api.timing(), "GET", "/api/config/timing", undefined],
