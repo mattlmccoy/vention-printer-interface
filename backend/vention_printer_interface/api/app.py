@@ -47,10 +47,16 @@ from vention_printer_interface.analysis.dimensional import (
 )
 from vention_printer_interface.analysis.lane_b import analyze_lane_b_from_pngs
 from vention_printer_interface.control.backlash_cal import (
+    BacklashResult,
     default_positions,
     perturbed_positions,
     preflight_problems,
     validate_probe,
+)
+from vention_printer_interface.control.backlash_history import (
+    list_backlash,
+    load_backlash,
+    save_backlash,
 )
 from vention_printer_interface.control.backlash_routine import BacklashRoutine
 from vention_printer_interface.control.controller import REFERENCE_MATCH_TOL_MM, Controller
@@ -1386,9 +1392,12 @@ def create_app(
         if pos is None:
             raise HTTPException(409, f"no position reported for axis {body.axis} yet")
         start_mm = float(pos)
+        def _persist_cal(result: BacklashResult) -> None:
+            save_backlash(root / ".calibrations", dataclasses.asdict(result))
+
         routine = BacklashRoutine(
             ControllerMover(ctrl()), body.axis, positions, body.d_mm, body.reps,
-            return_to_mm=start_mm,
+            return_to_mm=start_mm, on_done=_persist_cal,
         )
         app.state.backlash_routine = routine
         routine.start_thread()
@@ -1428,6 +1437,19 @@ def create_app(
         save_print_settings(root, app.state.print_settings)
         ev("backlash_cal_apply", {"axis": body.axis, field: recommended})
         return print_settings_payload()
+
+    @app.get("/api/motion/backlash/history")
+    def backlash_history() -> dict[str, Any]:
+        """Saved backlash cals (newest first) — persisted under the experiments root, so past sweeps
+        survive a restart and stay reviewable/exportable."""
+        return {"calibrations": list_backlash(root / ".calibrations")}
+
+    @app.get("/api/motion/backlash/history/{rec_id}")
+    def backlash_history_record(rec_id: str) -> dict[str, Any]:
+        record = load_backlash(root / ".calibrations", rec_id)
+        if record is None:
+            raise HTTPException(404, "no such calibration")
+        return record
 
     # ---- seaborn figure exports (optional `plots` extra) -------------------------------------
     def _plot_response(data: bytes, fmt: str, stem: str) -> Response:

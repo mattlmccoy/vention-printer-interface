@@ -63,6 +63,8 @@ test("every route: method + path + body locked", async () => {
     [() => api.autoLog(), "GET", "/api/auto-log", undefined],
     [() => api.setAutoLog(false), "PUT", "/api/auto-log", { enabled: false }],
     [() => api.setIgnoredCameras(["0xAAA"]), "PUT", "/api/vision/ignored-cameras", { unique_ids: ["0xAAA"] }],
+    [() => api.backlashHistory(), "GET", "/api/motion/backlash/history", undefined],
+    [() => api.backlashRecord("backlash_a1_x"), "GET", "/api/motion/backlash/history/backlash_a1_x", undefined],
     [() => api.offloadDrives(), "GET", "/api/offload/drives", undefined],
     [() => api.offloadPlan("/Volumes/X"), "GET", "/api/offload/plan?dest=%2FVolumes%2FX", undefined],
     [() => api.offloadStart("/Volumes/X"), "POST", "/api/offload/start", { dest: "/Volumes/X", runs: null }],
