@@ -421,6 +421,36 @@ def save_calibration(path: Path, calib: Calibration) -> None:
     Path(path).write_text(json.dumps(payload, indent=2), encoding="utf-8")
 
 
+def save_validation(path: Path, calibration_version: str, scale: dict[str, Any]) -> None:
+    """Persist the latest scale-validation result, keyed to the calibration version it validated, so
+    trust travels with the calibration (a stale validation for an older version does not count)."""
+    Path(path).write_text(
+        json.dumps({"calibration_version": calibration_version, "scale": scale}, indent=2),
+        encoding="utf-8",
+    )
+
+
+def load_validation(path: Path) -> dict[str, Any] | None:
+    """Read the stored validation record, or None when absent."""
+    p = Path(path)
+    if not p.exists():
+        return None
+    result: dict[str, Any] = json.loads(p.read_text(encoding="utf-8"))
+    return result
+
+
+def calibration_validation_warning(
+    calibration_version: str, validation: dict[str, Any] | None
+) -> str | None:
+    """Advisory warning when the active calibration has no PASSING scale validation. None = trusted.
+    A validation for a different (older) calibration version does not count."""
+    if validation is None or validation.get("calibration_version") != calibration_version:
+        return "this calibration has not been validated against a certified board (run Validate)"
+    if not (validation.get("scale") or {}).get("passed"):
+        return "the last scale validation of this calibration did not pass its tolerance band"
+    return None
+
+
 def load_calibration(path: Path) -> Calibration | None:
     """Read a `Calibration` from `path`, or return None when the file is absent.
 

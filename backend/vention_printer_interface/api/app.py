@@ -132,12 +132,15 @@ from vention_printer_interface.vision.registration import (
     apply_homography,
     calibrate_intrinsics,
     calibrate_intrinsics_boards,
+    calibration_validation_warning,
     compute_homography,
     detect_board,
     load_calibration,
+    load_validation,
     reprojection_error,
     rigid_transform_2d,
     save_calibration,
+    save_validation,
     undistort_points,
     validate_dimensions,
     view_tilt_deg,
@@ -2490,7 +2493,16 @@ def create_app(
         if arr is None:
             raise HTTPException(400, "could not decode uploaded image")
         spec = BoardSpec(kind="checkerboard", cols=cols, rows=rows, square_size_mm=square_size_mm)
-        return _score_checkerboard_mm(arr, spec, certified_mm, calib, target_mm)
+        result = _score_checkerboard_mm(arr, spec, certified_mm, calib, target_mm)
+        # Persist trust keyed to this calibration version, so the analysis can tell validated apart.
+        save_validation(
+            root / ".vision_validation.json",
+            calib.version,
+            {"max_mm": result["max_mm"], "rms_mm": result["rms_mm"],
+             "passed": result["passed"], "target_mm": target_mm,
+             "scale_bias": result["scale_bias"]},
+        )
+        return result
 
     @app.get("/api/vision/captures")
     def vision_captures(run: str) -> list[dict[str, Any]]:
@@ -2616,6 +2628,19 @@ def create_app(
         write_overview_frame(run_dir, arr)
         return {"stored": True}
 
+    def _with_calibration_trust(out: dict[str, Any]) -> dict[str, Any]:
+        """Advisory: flag when the active calibration has no PASSING scale validation, so a
+        never read as trustworthy on an unvalidated calibration. Never overrides an existing warning
+        and never changes status."""
+        calib = load_calibration(vision_calibration_path)
+        if calib is not None and not out.get("calibration_warning"):
+            warn = calibration_validation_warning(
+                calib.version, load_validation(root / ".vision_validation.json")
+            )
+            if warn:
+                out["calibration_warning"] = warn
+        return out
+
     @app.post("/api/analysis/{run}/dimensional")
     def analysis_dimensional_run(
         run: str, body: DimensionalAnalyzeRequest | None = None
@@ -2637,7 +2662,7 @@ def create_app(
             circle=req.circle.model_dump() if req.circle else None,
             nominals=nominals,
         )
-        return report.to_dict()
+        return _with_calibration_trust(report.to_dict())
 
     @app.get("/api/analysis/{run}/dimensional")
     def analysis_dimensional_get(run: str) -> dict[str, Any]:
@@ -2646,7 +2671,7 @@ def create_app(
         report = load_report(run_dir)
         if report is None:
             return {"status": "not_run", "run": run}
-        return report
+        return _with_calibration_trust(report)
 
     @app.get("/api/analysis/{run}/lane-b")
     def analysis_lane_b(
