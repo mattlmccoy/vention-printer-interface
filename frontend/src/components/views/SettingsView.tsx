@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from "react";
-import { api, type BacklashSession, type VisionCalibrateResult } from "../../lib/api.ts";
+import { api, type BacklashSession, type CenterSweepBest, type VisionCalibrateResult } from "../../lib/api.ts";
+import { captureScienceStillOnce } from "../../lib/science_still.ts";
 import { BacklashPlot } from "../BacklashPlot.tsx";
 import type { Gates } from "../../lib/format.ts";
 import type { StatusPayload } from "../../lib/telemetry.ts";
@@ -265,6 +266,58 @@ function CaptureCalibration({ status, gates, call }: { status: StatusPayload | n
       setPose(typeof v === "number" ? v : rc);
     }));
   };
+
+  // ---- automated centre-find: sweep the recoater, score the bore offset per pose, pick the centre.
+  const [sweeping, setSweeping] = useState(false);
+  const [progress, setProgress] = useState({ done: 0, total: 0 });
+  const [best, setBest] = useState<CenterSweepBest | null>(null);
+  const [autoErr, setAutoErr] = useState<string | null>(null);
+  const sleep = (ms: number) => new Promise<void>((r) => setTimeout(r, ms));
+  const waitSettled = async (axis: number, timeoutMs = 6000) => {
+    const t0 = Date.now();
+    while (Date.now() - t0 < timeoutMs) {
+      try {
+        const s = await api.status();
+        if (s.controller?.telemetry?.motion_complete?.[String(axis)] !== false) break;
+      } catch { /* transient */ }
+      await sleep(200);
+    }
+    await sleep(400);  // let gantry vibration settle before the shot
+  };
+  const findCentre = async () => {
+    if (!window.confirm("Auto-find the overhead centre? The recoater sweeps through several positions, capturing the science camera at each, then recommends the pose that centres the build piston. Keep clear of the gantry.")) return;
+    const storage = typeof localStorage === "undefined" ? null : localStorage;
+    setAutoErr(null); setBest(null); setSweeping(true);
+    if (streaming) { stopStream(); setStreaming(false); }  // free the science cam for per-pose grabs
+    try {
+      const sess = await api.centerSweepStart({ span_mm: 8, step_mm: 2 });
+      setProgress({ done: 0, total: sess.poses.length });
+      for (let i = 0; i < sess.poses.length; i++) {
+        const p = sess.poses[i];
+        await api.move(4, "abs", p);
+        await waitSettled(4);
+        const blob = await captureScienceStillOnce(storage);
+        await api.centerSweepSample(blob, p);
+        setProgress({ done: i + 1, total: sess.poses.length });
+      }
+      const b = await api.centerSweepBest();
+      setBest(b);
+      await api.move(4, "abs", b.pose_mm);  // park at the recommended pose so the preview shows it
+    } catch (e) {
+      setAutoErr(e instanceof Error ? e.message : String(e));
+      await api.centerSweepCancel().catch(() => undefined);
+    } finally {
+      setSweeping(false);
+    }
+  };
+  const applyCentre = () => {
+    if (best == null) return;
+    call("apply overhead centre", () => api.centerSweepApply(best.pose_mm).then((p) => {
+      const v = (p.plan as Record<string, unknown>).capture_recoater_mm;
+      setPose(typeof v === "number" ? v : best.pose_mm);
+      setBest(null);
+    }));
+  };
   return (
     <div className="body">
       <div className="hint" style={{ marginTop: 0 }}>The science camera rides the recoater. Start the live stream, jog the recoater until the bed centre sits under the crosshair, then save the pose — it becomes the capture_recoater_mm the print uses for every-layer overhead captures. This streams the camera you assigned to the science role.</div>
@@ -307,6 +360,37 @@ function CaptureCalibration({ status, gates, call }: { status: StatusPayload | n
       </div>
       <div className="actions one tight" style={{ marginTop: 10 }}>
         <button className="cta primary" disabled={!ok || typeof rc !== "number"} onClick={savePose}>Set capture pose = {typeof rc === "number" ? `${rc.toFixed(1)} mm` : "?"}</button>
+      </div>
+
+      {/* Automated alternative to the manual jog: sweep + circle-detect finds the overhead centre. */}
+      <div style={{ marginTop: 14, borderTop: "1px solid var(--line)", paddingTop: 12 }}>
+        <div className="hint" style={{ marginTop: 0 }}>Or find it automatically: the recoater sweeps a tight range while the science camera watches, and the build-piston bore is detected in each frame to pick the centring pose. HOME + prime the bed first so the bore is visible.</div>
+        <div className="actions one tight" style={{ marginTop: 8 }}>
+          <button className="cta" disabled={!ok || sweeping} onClick={() => void findCentre()}>
+            {sweeping ? `sweeping… ${progress.done}/${progress.total}` : "Find overhead centre"}
+          </button>
+        </div>
+        {sweeping && progress.total > 0 && (
+          <div className="bar" style={{ marginTop: 8, height: 6, background: "var(--track, #2a2f3a)", borderRadius: 3, overflow: "hidden" }}>
+            <div style={{ height: "100%", width: `${(100 * progress.done) / progress.total}%`, background: "var(--accent, #d9a441)" }} />
+          </div>
+        )}
+        {autoErr && <div className="errline" style={{ marginTop: 8 }}>centre-find failed: {autoErr}</div>}
+        {best && (
+          <div className="cal-result" style={{ marginTop: 8 }}>
+            <div className="kv" style={{ marginTop: 0 }}>
+              <span>recommended pose</span><span className="v">{best.pose_mm.toFixed(1)} mm</span>
+              <span>residual offset</span><span className="v">{best.offset_px.toFixed(0)} px</span>
+            </div>
+            {best.improved
+              ? <div className="hint" style={{ marginTop: 6 }}>Better centred than the previous pose. Apply to write it as the capture pose.</div>
+              : <div className="hint" style={{ marginTop: 6 }}>No improvement over the current pose — the bore may already be centred, or the bore wasn’t clearly detected. Check the preview before applying.</div>}
+            <div className="actions" style={{ marginTop: 8, display: "flex", gap: 8 }}>
+              <button className="cta primary" disabled={!ok} onClick={applyCentre}>Apply ({best.pose_mm.toFixed(1)} mm)</button>
+              <button className="cta" onClick={() => setBest(null)}>Discard</button>
+            </div>
+          </div>
+        )}
       </div>
       {!ok && <div className="lock">{gates.printActive ? "print in progress — jog locked" : gates.connected ? "read-only · take control from the connection pill" : "connect + arm to jog the recoater"}</div>}
     </div>

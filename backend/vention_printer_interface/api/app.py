@@ -119,6 +119,8 @@ from vention_printer_interface.vision.capture import (
     image_has_usable_content,
     store_uploaded,
 )
+from vention_printer_interface.vision.center_sweep import best_center_pose
+from vention_printer_interface.vision.circle_detect import center_offset_px, detect_piston_circle
 from vention_printer_interface.vision.coverage import coverage
 from vention_printer_interface.vision.events import label_to_stage
 from vention_printer_interface.vision.frame_source import (
@@ -318,6 +320,16 @@ class PlotValidationBody(BaseModel):
 
 class PlotSweepBody(BaseModel):
     rows: list[dict[str, Any]]  # piston_sweep.py rows: commanded_mm, deviation_mm, direction, ...
+
+
+class CenterSweepStartBody(BaseModel):
+    start_mm: float | None = None  # centre of the sweep; None -> current capture_recoater_mm
+    span_mm: float = Field(default=8.0, gt=0)  # sweep ±span around start
+    step_mm: float = Field(default=1.0, gt=0)
+
+
+class CenterSweepApplyBody(BaseModel):
+    recoater_mm: float = Field(ge=0)
 
 
 class AxisMotionBody(BaseModel):
@@ -1956,6 +1968,95 @@ def create_app(
             "roles_resolved": not unresolved,
             "unresolved": unresolved,
         }
+
+    # ---- camera-center sweep (browser-driven: the client steps the recoater + captures per pose,
+    #      the server scores each frame's bore offset and picks the centring pose) ----------------
+    def _center_sweep() -> dict[str, Any] | None:
+        return getattr(app.state, "center_sweep", None)
+
+    def _sweep_poses(start: float, span: float, step: float, end_mm: float) -> list[float]:
+        n = int(round(span / step))
+        poses = [round(start + i * step, 3) for i in range(-n, n + 1)]
+        return [p for p in poses if 0.0 <= p <= end_mm]
+
+    @app.post("/api/vision/center-sweep/session")
+    def center_sweep_start(body: CenterSweepStartBody) -> dict[str, Any]:
+        plan: PrintSettings = app.state.print_settings
+        start = body.start_mm
+        if start is None:
+            start = plan.capture_recoater_mm if plan.capture_recoater_mm > 0 else 0.0
+        poses = _sweep_poses(start, body.span_mm, body.step_mm, plan.recoater_end_mm)
+        if not poses:
+            raise HTTPException(400, "sweep range is empty (check start/span vs recoater travel)")
+        app.state.center_sweep = {"poses": poses, "start_mm": float(start), "samples": []}
+        ev("center_sweep_start", {"poses": poses, "start_mm": start})
+        return {"active": True, "poses": poses, "start_mm": float(start), "samples": []}
+
+    @app.get("/api/vision/center-sweep/session")
+    def center_sweep_status() -> dict[str, Any]:
+        sess = _center_sweep()
+        if sess is None:
+            return {"active": False, "poses": [], "start_mm": None, "samples": [], "done": False}
+        return {"active": True, **sess, "done": len(sess["samples"]) >= len(sess["poses"])}
+
+    @app.post("/api/vision/center-sweep/sample")
+    async def center_sweep_sample(
+        request: Request, recoater_mm: float = Query(...)
+    ) -> dict[str, Any]:
+        """Score one browser-captured overhead frame at ``recoater_mm``: detect the bore, record
+        its radial offset from the frame centre. ``found=false`` when no bore is detected."""
+        sess = _center_sweep()
+        if sess is None:
+            raise HTTPException(409, "no center sweep in progress; start a session first")
+        body = await request.body()
+        if not body:
+            raise HTTPException(400, "empty image body")
+        import cv2
+
+        arr = cv2.imdecode(np.frombuffer(body, dtype=np.uint8), cv2.IMREAD_COLOR)
+        if arr is None:
+            raise HTTPException(400, "could not decode uploaded image")
+        circle = detect_piston_circle(arr)
+        offset = center_offset_px(arr)
+        h, w = arr.shape[:2]
+        sess["samples"].append({"recoater_mm": float(recoater_mm),
+                                "offset_px": None if offset is None else float(offset)})
+        return {
+            "recoater_mm": float(recoater_mm),
+            "found": circle is not None,
+            "offset_px": None if offset is None else float(offset),
+            "cx": None if circle is None else circle[0],
+            "cy": None if circle is None else circle[1],
+            "r": None if circle is None else circle[2],
+            "image_size": [w, h],
+        }
+
+    @app.post("/api/vision/center-sweep/best")
+    def center_sweep_best() -> dict[str, Any]:
+        sess = _center_sweep()
+        if sess is None:
+            raise HTTPException(409, "no center sweep in progress")
+        pts = [(s["recoater_mm"], s["offset_px"]) for s in sess["samples"]
+               if s["offset_px"] is not None]
+        if not pts:
+            raise HTTPException(409, "no bore detected in any frame; re-run the sweep")
+        result = best_center_pose(pts, sess["start_mm"])
+        return {"pose_mm": result.pose_mm, "offset_px": result.offset_px,
+                "improved": result.improved}
+
+    @app.post("/api/vision/center-sweep/apply")
+    def center_sweep_apply(body: CenterSweepApplyBody) -> dict[str, Any]:
+        current = app.state.print_settings.to_dict()
+        current["capture_recoater_mm"] = body.recoater_mm
+        app.state.print_settings = PrintSettings.bounded(current, ctrl().limits)
+        save_print_settings(root, app.state.print_settings)
+        ev("center_sweep_apply", {"capture_recoater_mm": body.recoater_mm})
+        return print_settings_payload()
+
+    @app.post("/api/vision/center-sweep/cancel")
+    def center_sweep_cancel() -> dict[str, Any]:
+        app.state.center_sweep = None
+        return {"active": False}
 
     @app.post("/api/vision/deactivate")
     def vision_deactivate() -> dict[str, Any]:
