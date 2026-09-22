@@ -10,6 +10,7 @@ import { CameraRoleAssigner } from "../CameraRoleAssigner.tsx";
 import { CameraSettingsPanel } from "../CameraSettingsPanel.tsx";
 import { CalibrationWizard } from "../CalibrationWizard.tsx";
 import { ValidationPanel } from "../ValidationPanel.tsx";
+import { PlotExportButtons } from "../PlotExportButtons.tsx";
 import { pistonMaxPatch, type PistonField } from "../../lib/pistons.ts";
 import type { Call } from "./types.ts";
 
@@ -91,6 +92,8 @@ function BacklashCal({ axis, name, ok, unref, call, onPlan }: {
             <button className="cta primary" disabled={!ok} onClick={apply}>Apply {rec !== null ? `(${rec.toFixed(2)} mm)` : ""}</button>
             <button className="cta" onClick={() => setHideDone(true)}>Discard</button>
           </div>
+          <PlotExportButtons fetchBlob={(fmt) => api.plotBacklash(fmt)}
+            filename={`${name}_piston_backlash`} label="Seaborn plot" />
         </div>
       )}
       {errMine && (

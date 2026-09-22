@@ -7,6 +7,7 @@ Cross-origin policy is copied from FLIR/T&C: cross-origin state-changing /api/ r
 from __future__ import annotations
 
 import asyncio
+import csv
 import dataclasses
 import io
 import json
@@ -35,6 +36,7 @@ from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 
 from vention_printer_interface import __version__
+from vention_printer_interface.analysis import plotting
 from vention_printer_interface.analysis.dimensional import (
     DEFAULTS,
     _read_mm_per_px,
@@ -307,6 +309,15 @@ class BacklashStartBody(BaseModel):
 
 class BacklashApplyBody(BaseModel):
     axis: int = Field(ge=1, le=2)
+
+
+class PlotValidationBody(BaseModel):
+    residuals_mm: list[float]  # absolute per-gap scale errors (ScaleResult.residuals_mm)
+    target_mm: float = Field(default=0.05, gt=0)
+
+
+class PlotSweepBody(BaseModel):
+    rows: list[dict[str, Any]]  # piston_sweep.py rows: commanded_mm, deviation_mm, direction, ...
 
 
 class AxisMotionBody(BaseModel):
@@ -1335,6 +1346,68 @@ def create_app(
         save_print_settings(root, app.state.print_settings)
         ev("backlash_cal_apply", {"axis": body.axis, field: recommended})
         return print_settings_payload()
+
+    # ---- seaborn figure exports (optional `plots` extra) -------------------------------------
+    def _plot_response(data: bytes, fmt: str, stem: str) -> Response:
+        return Response(
+            content=data,
+            media_type=plotting.FORMAT_CONTENT_TYPE[fmt],
+            headers={"Content-Disposition": f'attachment; filename="{stem}.{fmt}"'},
+        )
+
+    def _check_plot_fmt(fmt: str) -> None:
+        """503 if the extra is absent, 400 if the requested format is unsupported."""
+        if not plotting.plots_available():
+            raise HTTPException(503, "plot export needs the 'plots' extra (uv sync --extra plots)")
+        if fmt not in plotting.FORMAT_CONTENT_TYPE:
+            raise HTTPException(400, f"unsupported format {fmt!r} (png | pdf)")
+
+    @app.get("/api/plots/backlash.{fmt}")
+    def plot_backlash(fmt: str) -> Response:
+        """Backlash-per-depth strip plot for the live/last session — completed result if present,
+        otherwise the in-progress partial positions. 404 when no measurements exist yet."""
+        _check_plot_fmt(fmt)
+        routine = backlash_routine()
+        snap = routine.snapshot() if routine is not None else None
+        result = (snap or {}).get("result")
+        if result and result.get("positions"):
+            positions = result["positions"]
+            recommended = result.get("recommended_mm")
+        elif snap and snap.get("partial_positions"):
+            positions = snap["partial_positions"]
+            recommended = None
+        else:
+            raise HTTPException(404, "no backlash measurements to plot yet")
+        data = plotting.render_backlash(positions, recommended, fmt=fmt)
+        return _plot_response(data, fmt, "backlash")
+
+    @app.get("/api/plots/layer-accuracy/{run}.{fmt}")
+    def plot_layer_accuracy(run: str, fmt: str) -> Response:
+        """Cumulative commanded-vs-actual build height for one run's ``layer_accuracy.csv``."""
+        _check_plot_fmt(fmt)
+        run_dir = _resolve_run_dir(root, run)
+        csv_path = run_dir / "layer_accuracy.csv"
+        if not csv_path.exists():
+            raise HTTPException(404, "run has no layer_accuracy.csv")
+        with csv_path.open(newline="") as f:
+            rows = list(csv.DictReader(f))
+        data = plotting.render_layer_accuracy(rows, fmt=fmt)
+        return _plot_response(data, fmt, f"{run}_layer_accuracy")
+
+    @app.post("/api/plots/validation.{fmt}")
+    def plot_validation(fmt: str, body: PlotValidationBody) -> Response:
+        """Histogram of world-space scale residuals (mm) vs the ±target acceptance line. The
+        residuals come from the just-run validation (client-held), so this is a POST."""
+        _check_plot_fmt(fmt)
+        data = plotting.render_validation(body.residuals_mm, body.target_mm, fmt=fmt)
+        return _plot_response(data, fmt, "scale_validation")
+
+    @app.post("/api/plots/sweep.{fmt}")
+    def plot_sweep(fmt: str, body: PlotSweepBody) -> Response:
+        """Piston hysteresis (deviation vs commanded, up vs down) from posted piston-sweep rows."""
+        _check_plot_fmt(fmt)
+        data = plotting.render_sweep(body.rows, fmt=fmt)
+        return _plot_response(data, fmt, "piston_sweep")
 
     @app.get("/api/axes/{axis}/motion")
     def axis_motion(axis: int) -> dict[str, Any]:

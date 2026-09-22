@@ -18,6 +18,9 @@ dependencies = [
 
 [project.optional-dependencies]
 dev = ["pytest>=8.0", "pytest-asyncio>=0.23", "ruff>=0.5", "mypy>=1.10"]
+# Publication-quality figure export (seaborn/matplotlib). Optional so the core operator install
+# stays lean; enable with `uv sync --extra plots`. The plot endpoints degrade gracefully without it.
+plots = ["matplotlib>=3.8", "seaborn>=0.13", "pandas>=2.0"]
 
 [project.scripts]
 # vpi- = Vention Printer Interface. Mirrors FLIR's fri- and T&C's tcp- entry points.
