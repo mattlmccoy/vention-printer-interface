@@ -47,7 +47,7 @@ export interface PrimingPayload { settings: Record<string, number>; validation: 
 export interface PrimedPayload { primed: { part_mm: number; feed_mm: number; captured_at: number } | null }
 export interface BacklashPositionResult { ref_mm: number; backlash_median_mm: number; backlash_mag_median_mm: number; reps_mm: number[] }
 export interface BacklashResult { axis: number; recommended_mm: number; cancelled: boolean; positions: BacklashPositionResult[] }
-export interface BacklashSession { state: "idle" | "running" | "done" | "cancelled" | "error"; axis: number | null; progress: { done: number; total: number }; current_ref_mm: number | null; result: BacklashResult | null; error: string | null }
+export interface BacklashSession { state: "idle" | "running" | "done" | "cancelled" | "error"; axis: number | null; progress: { done: number; total: number }; current_ref_mm: number | null; partial_positions?: BacklashPositionResult[]; result: BacklashResult | null; error: string | null }
 export interface VisionStatus { cameras: string[]; calibration: string | null; queue: { drops: number }; active: boolean; roles_resolved: boolean; unresolved: string[] }
 export interface VisionCameraSpec { role: string; index: number; path: string | null; backend: number | null; width: number | null; height: number | null }
 export interface VisionCameras { overview: VisionCameraSpec; science: VisionCameraSpec }

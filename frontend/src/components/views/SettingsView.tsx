@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import { api, type BacklashSession, type VisionCalibrateResult } from "../../lib/api.ts";
+import { BacklashPlot } from "../BacklashPlot.tsx";
 import type { Gates } from "../../lib/format.ts";
 import type { StatusPayload } from "../../lib/telemetry.ts";
 import { loadRoleMap } from "../../lib/camera_roles.ts";
@@ -70,6 +71,8 @@ function BacklashCal({ axis, name, ok, unref, call, onPlan }: {
           <div className="bar" style={{ marginTop: 6, height: 6, background: "var(--track, #2a2f3a)", borderRadius: 3, overflow: "hidden" }}>
             <div style={{ height: "100%", width: `${sess!.progress.total ? (100 * sess!.progress.done) / sess!.progress.total : 0}%`, background: "var(--accent, #d9a441)" }} />
           </div>
+          {sess!.partial_positions && sess!.partial_positions.length > 0 &&
+            <BacklashPlot positions={sess!.partial_positions} recommended={null} />}
           <div className="actions" style={{ marginTop: 8 }}><button className="cta" onClick={cancel}>Cancel</button></div>
         </div>
       )}
@@ -79,6 +82,8 @@ function BacklashCal({ axis, name, ok, unref, call, onPlan }: {
             <span>measured backlash</span>
             <span className="v">{rec !== null ? `${rec.toFixed(2)} mm` : "—"}</span>
           </div>
+          {sess!.result && sess!.result.positions.length > 0 &&
+            <BacklashPlot positions={sess!.result.positions} recommended={rec} />}
           {rec === 0
             ? <div className="hint" style={{ marginTop: 6 }}>no lash detected on this cylinder — nothing to compensate. Applying sets it to 0.</div>
             : <div className="hint" style={{ marginTop: 6 }}>Apply to write this as the {name}-piston anti-backlash compensation.</div>}

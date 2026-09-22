@@ -12,7 +12,7 @@ import threading
 from dataclasses import asdict
 from typing import Any
 
-from .backlash_cal import BacklashResult, Mover, measure_backlash
+from .backlash_cal import BacklashResult, Mover, PositionResult, measure_backlash
 
 
 class BacklashRoutine:
@@ -36,6 +36,7 @@ class BacklashRoutine:
         self._done = 0
         self._total = len(positions)
         self._current_ref: float | None = None
+        self._partial: list[PositionResult] = []  # completed positions, streamed live for plotting
         self._result: BacklashResult | None = None
         self._error: str | None = None
         self._cancel = threading.Event()
@@ -71,11 +72,12 @@ class BacklashRoutine:
                 self._state = "error"
 
     # -- internals -----------------------------------------------------------------------------
-    def _on_progress(self, done: int, total: int, ref_mm: float) -> None:
+    def _on_progress(self, done: int, total: int, position: PositionResult) -> None:
         with self._lock:
             self._done = done
             self._total = total
-            self._current_ref = ref_mm
+            self._current_ref = position.ref_mm
+            self._partial.append(position)  # live: the plot fills in per depth as it completes
 
     def _return_home(self) -> None:
         self._mover.move_abs(self._axis, self._return_to_mm)
@@ -95,6 +97,7 @@ class BacklashRoutine:
                 "axis": self._axis,
                 "progress": {"done": self._done, "total": self._total},
                 "current_ref_mm": self._current_ref,
+                "partial_positions": [asdict(p) for p in self._partial],
                 "result": None if self._result is None else _result_dict(self._result),
                 "error": self._error,
             }

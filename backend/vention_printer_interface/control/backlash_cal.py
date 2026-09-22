@@ -132,13 +132,14 @@ def measure_backlash(
     positions: list[float],
     d_mm: float,
     reps: int,
-    on_progress: Callable[[int, int, float], None] | None = None,
+    on_progress: Callable[[int, int, PositionResult], None] | None = None,
     is_cancelled: Callable[[], bool] | None = None,
 ) -> BacklashResult:
     """Measure bidirectional lash at each reference position and return the per-position summary
-    plus the recommended compensation. ``on_progress(done, total, ref_mm)`` is called once per
-    position (``done`` counting completed positions); ``is_cancelled`` is polled before each
-    position so a long routine stops promptly and reports what it measured so far."""
+    plus the recommended compensation. ``on_progress(done, total, position)`` is called once per
+    position with the just-completed ``PositionResult`` (``done`` counting completed positions), so
+    a caller can stream results live; ``is_cancelled`` is polled before each position so a routine
+    stops promptly and reports what it measured so far."""
     total = len(positions)
     results: list[PositionResult] = []
     cancelled = False
@@ -167,7 +168,7 @@ def measure_backlash(
             )
         )
         if on_progress is not None:
-            on_progress(len(results), total, ref)
+            on_progress(len(results), total, results[-1])
     recommended = recommend_comp([p.backlash_mag_median_mm for p in results])
     return BacklashResult(
         axis=axis, positions=tuple(results), recommended_mm=recommended, cancelled=cancelled
