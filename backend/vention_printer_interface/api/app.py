@@ -117,6 +117,7 @@ from vention_printer_interface.vision.capture import (
     image_has_usable_content,
     store_uploaded,
 )
+from vention_printer_interface.vision.coverage import coverage
 from vention_printer_interface.vision.events import label_to_stage
 from vention_printer_interface.vision.frame_source import (
     AVFoundationFrameSource,
@@ -139,6 +140,7 @@ from vention_printer_interface.vision.registration import (
     save_calibration,
     undistort_points,
     validate_dimensions,
+    view_tilt_deg,
 )
 from vention_printer_interface.vision.store import read_manifest, write_overview_frame
 
@@ -950,6 +952,7 @@ def create_app(
         app.state.calib_session_spec = None
         app.state.calib_session_views = []
         app.state.calib_session_image_size = None
+        app.state.calib_session_cov = []
         app.state.backend = "none"
         app.state.default_heater_io = heater_io or DEFAULT_HEATER_IO
         app.state.axis_motion = _fresh_axis_motion()
@@ -2247,6 +2250,7 @@ def create_app(
             "n_views": len(views),
             "spec": dataclasses.asdict(spec) if spec is not None else None,
             "ready": len(views) >= _MIN_CALIB_VIEWS,
+            "coverage": dataclasses.asdict(coverage(app.state.calib_session_cov)),
         }
 
     @app.post("/api/vision/calibrate/session")
@@ -2256,6 +2260,7 @@ def create_app(
         app.state.calib_session_spec = spec
         app.state.calib_session_views = []
         app.state.calib_session_image_size = None
+        app.state.calib_session_cov = []
         return _calib_session_state()
 
     @app.get("/api/vision/calibrate/session")
@@ -2272,6 +2277,13 @@ def create_app(
         views: list[BoardDetection] = app.state.calib_session_views
         views.append(detection)
         app.state.calib_session_image_size = (int(image.shape[1]), int(image.shape[0]))
+        # Coverage descriptor for capture guidance: where in the frame + how tilted this view is.
+        centroid = np.asarray(detection.image_points, float).reshape(-1, 2).mean(axis=0)
+        app.state.calib_session_cov.append({
+            "centroid_px": (float(centroid[0]), float(centroid[1])),
+            "tilt_deg": view_tilt_deg(detection.image_points, detection.object_points),
+            "image_size": (int(image.shape[1]), int(image.shape[0])),
+        })
         return {
             "captured": True,
             "count": len(views),

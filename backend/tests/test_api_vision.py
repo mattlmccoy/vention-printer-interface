@@ -1523,6 +1523,42 @@ def test_calibrate_capture_upload_guards_empty_body_and_no_session(tmp_path: Pat
                       content=b"not an image").status_code == 400
 
 
+def test_view_tilt_deg_flat_vs_tilted() -> None:
+    import cv2
+
+    from vention_printer_interface.vision.registration import view_tilt_deg
+    obj = np.array([[x * 10.0, y * 10.0, 0.0] for y in range(4) for x in range(4)], np.float32)
+    # Fronto-parallel: image is a pure scale+offset of the board XY -> ~0 tilt.
+    flat = (obj[:, :2] * 5.0 + np.array([100.0, 100.0])).astype(np.float32)
+    assert view_tilt_deg(flat, obj) < 3.0
+    # Tilted: warp the board corners through an asymmetric perspective quad -> clear tilt.
+    src = np.array([[0, 0], [30, 0], [30, 30], [0, 30]], np.float32)
+    dst = np.array([[100, 100], [250, 120], [240, 240], [110, 230]], np.float32)
+    h = cv2.getPerspectiveTransform(src, dst)
+    warped = cv2.perspectiveTransform(obj[:, :2].reshape(-1, 1, 2), h)
+    img = warped.reshape(-1, 2).astype(np.float32)
+    assert view_tilt_deg(img, obj) > 5.0
+
+
+def test_calibrate_session_reports_coverage(tmp_path: Path) -> None:
+    # The session exposes a coverage summary that reflects the captured views (wiring test; the
+    # enough/gaps logic itself is unit-tested in test_coverage.py).
+    app = create_app(backend="none", experiments_root=tmp_path, poll_interval_s=0.05,
+                     print_min_wait_s=0.1, print_step_timeout_s=5.0)
+    with TestClient(app) as c:
+        c.post("/api/vision/calibrate/session", json={"spec": _SESSION_CHARUCO})
+        assert c.get("/api/vision/calibrate/session").json()["coverage"]["total_views"] == 0
+        n = 0
+        for i in range(6):
+            if c.post("/api/vision/calibrate/capture-upload",
+                      content=_charuco_png_bytes(seed=i)).json()["captured"]:
+                n += 1
+        cov = c.get("/api/vision/calibrate/session").json()["coverage"]
+        assert cov["total_views"] == n and n > 0
+        assert cov["cells_filled"] >= 1 and cov["tilt_bins_filled"] >= 1
+        assert "enough" in cov and isinstance(cov["gaps"], list)
+
+
 def test_calibrate_finalize_with_zero_views_returns_400(tmp_path: Path) -> None:
     app = _calib_app(tmp_path, _CharucoPoseSource())
     with TestClient(app) as c:
