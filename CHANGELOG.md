@@ -3,6 +3,15 @@
 Notable changes to the Vention Printer Interface. Versions follow semantic versioning; each entry
 corresponds to a tagged merge to `main`.
 
+## v0.11.1 — 2026-09-23
+
+### Added
+- **Powder budget before a print.** START checks the powder in the feed against what the print consumes. A short feed is refused with where it would stop ("stops after layer N of M"); a feed whose position can't be verified (not homed since power-on) needs an explicit confirmation. Starting anyway on a short feed stops the print safely when the powder runs out — the run-out guard now counts from the real feed position instead of assuming a full column.
+- The Print tab shows a live powder line: enough / short / can't verify (with the reason).
+
+### Fixed
+- **Priming fill depth** ("paired to job") now sizes on the print's feed demand + the thick precoats' feed + margin. It used the build's total thickness, which under-fills by about half (the feed rises more than the build drops each layer) — the 2026-09-22 pyramid run ran out at layer ~52 of 184.
+
 ## v0.11.0 — 2026-09-23
 
 ### Added

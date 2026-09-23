@@ -11,6 +11,10 @@ from vention_printer_interface.api.app import choose_jobs_root, create_app
 _SHARED = Path("/dropbox/binderjet/code/rfam-web/Hot Folder")
 _FALLBACK = Path("/repo/backend/jobs")
 
+# The simulator's feed is unhomed, so its powder column can't be verified; these tests are about
+# print mechanics, not the powder budget (tests/test_api_feed_budget.py), so they acknowledge it.
+START = {"accept_feed_risk": True}
+
 
 def test_env_var_overrides_everything() -> None:
     # The Windows print PC (a standalone clone OUTSIDE Dropbox) sets VPI_JOBS_ROOT so it
@@ -144,7 +148,7 @@ def test_status_job_tracks_current_layer_during_print(client: TestClient) -> Non
         time.sleep(0.02)
     client.post("/api/arm")
     client.post("/api/primed/capture")  # a print now requires a captured primed bed
-    assert client.post("/api/print/start", json={}).status_code == 200
+    assert client.post("/api/print/start", json=START).status_code == 200
     seen = set()
     for _ in range(600):
         s = client.get("/api/status").json()

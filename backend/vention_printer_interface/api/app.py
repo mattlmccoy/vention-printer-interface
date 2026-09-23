@@ -62,6 +62,11 @@ from vention_printer_interface.control.backlash_history import (
 from vention_printer_interface.control.backlash_routine import BacklashRoutine
 from vention_printer_interface.control.controller import REFERENCE_MATCH_TOL_MM, Controller
 from vention_printer_interface.control.events import EventLog
+from vention_printer_interface.control.feed_budget import (
+    feed_budget,
+    live_feed_available_mm,
+    print_feed_demand_mm,
+)
 from vention_printer_interface.control.heater_model import exposure
 from vention_printer_interface.control.limits_store import load_limits, save_limits
 from vention_printer_interface.control.macros import MACROS, macro_steps
@@ -413,6 +418,9 @@ class PrintStartBody(BaseModel):
     single_step: bool = False
     name: str = ""
     notes: str = ""
+    # The operator saw the powder-budget warning (feed short, or its position unverifiable) and
+    # chose to print anyway. A short feed then stops safely when the powder runs out.
+    accept_feed_risk: bool = False
 
 
 class AutoLogBody(BaseModel):
@@ -1148,6 +1156,9 @@ def create_app(
             "min_wait_s": print_min_wait_s,
             "total_layers": plan.total_layers,
             "total_thickness_mm": plan.total_thickness_mm,
+            # Feed powder the print itself consumes (feed/layer x layers). The priming depth must
+            # exceed this (plus the thick precoats' feed) or the powder runs out mid-print.
+            "feed_demand_mm": print_feed_demand_mm(plan),
             "exposure": {
                 "energy_j": ex.energy_j,
                 "time_s": ex.time_s,
@@ -1642,6 +1653,37 @@ def create_app(
         save_print_settings(root, plan)
         return print_settings_payload()
 
+    def _check_feed_budget(plan: PrintSettings, accept_risk: bool) -> float | None:
+        """Refuse a print the feed can't supply, unless the operator accepts the risk.
+
+        Returns the verified feed position to compile from (so the exhaustion guard counts down
+        from the REAL powder column), or None when it can't be verified and the operator accepted.
+        """
+        feed_mm, why = live_feed_available_mm(ctrl().snapshot())
+        if accept_risk:
+            return feed_mm
+        if feed_mm is None:
+            raise HTTPException(
+                409,
+                f"Can't check the powder in the feed: {why}. Home the feed before priming, "
+                "or start anyway if you know the feed is full enough.",
+            )
+        b = feed_budget(plan, feed_mm)
+        if b.sufficient is False:
+            raise HTTPException(
+                409,
+                f"Not enough powder in the feed: this print needs {b.demand_mm:.1f} mm of feed "
+                f"but the column holds {feed_mm:.1f} mm — it would stop safely after layer "
+                f"{b.layers_supported} of {b.layers_total}. Re-prime deeper, or start anyway "
+                "for a partial print.",
+            )
+        return feed_mm
+
+    @app.get("/api/print/feed-budget")
+    def print_feed_budget() -> dict[str, Any]:
+        feed_mm, why = live_feed_available_mm(ctrl().snapshot())
+        return {**feed_budget(app.state.print_settings, feed_mm).to_dict(), "unknown_reason": why}
+
     @app.post("/api/print/start")
     def print_start(body: PrintStartBody) -> dict[str, Any]:
         cal = backlash_routine()
@@ -1653,16 +1695,19 @@ def create_app(
                 "prime the bed first — no primed bed state; run priming and capture positions",
             )
         plan: PrintSettings = app.state.print_settings
+        # Report the basic problems (already printing / not armed / bad settings) before the
+        # powder budget, and all of them before an auto-log run is opened.
+        if printer().state in (PrintState.RUNNING, PrintState.PAUSED):
+            raise HTTPException(409, "a print is already running")
+        if not ctrl().armed:
+            raise HTTPException(409, "not armed — press ARM to take control of the printer")
+        reasons = plan.validate(ctrl().limits)
+        if reasons:
+            raise HTTPException(409, "print settings invalid: " + "; ".join(reasons))
+        feed_mm = _check_feed_budget(plan, body.accept_feed_risk)
         # Open the auto-log run BEFORE starting so the print's own start event lands in it.
         opened = False
         if app.state.auto_log and rec().active is None:
-            if printer().state in (PrintState.RUNNING, PrintState.PAUSED):
-                raise HTTPException(409, "a print is already running")
-            if not ctrl().armed:
-                raise HTTPException(409, "not armed — press ARM to take control of the printer")
-            reasons = plan.validate(ctrl().limits)
-            if reasons:
-                raise HTTPException(409, "print settings invalid: " + "; ".join(reasons))
             name = body.name or "print"
             job: JobInfo | None = app.state.job
             rec().start(
@@ -1685,7 +1730,7 @@ def create_app(
             app.state.auto_run_open = True
             opened = True
         try:
-            guarded(printer().start, plan, body.single_step)
+            guarded(printer().start, plan, body.single_step, feed_mm)
         except HTTPException:
             if opened:
                 app.state.auto_run_open = False

@@ -2,7 +2,7 @@ import { useEffect, useState } from "react";
 import { api } from "../../lib/api.ts";
 import { fmtMmAuto, type Gates } from "../../lib/format.ts";
 import type { StatusPayload } from "../../lib/telemetry.ts";
-import { fillDepthMm, cavityFillPct, FEED_TRAVEL_MM, type FillSource } from "../../lib/powder.ts";
+import { fillDepthMm, cavityFillPct, thickPrecoatFeedMm, FEED_TRAVEL_MM, type FillSource } from "../../lib/powder.ts";
 import { WALKTHROUGH_STEPS, stepHeading } from "../../lib/walkthrough.ts";
 import { PrimingFields, usePriming } from "../PrimingPanel.tsx";
 import type { Call } from "./types.ts";
@@ -40,7 +40,7 @@ export function PrimingView({ status, gates, call, onJob, onPrint }: { status: S
   const [nLayers, setNLayers] = useState("");
   const [layerThicknessMm, setLayerThicknessMm] = useState("");
   const [manualDepthMm, setManualDepthMm] = useState("");
-  const [jobThicknessMm, setJobThicknessMm] = useState<number | null>(null);
+  const [feedDemandMm, setFeedDemandMm] = useState<number | null>(null); // the print's feed consumption
   const [primed, setPrimed] = useState<{ part_mm: number; feed_mm: number; captured_at: number } | null>(null);
   const [jogStep, setJogStep] = useState("20"); // recoater jog step (mm) for the leveling step
   const [feedAmt, setFeedAmt] = useState(""); // editable feed-supply amount (mm); blank = saved default
@@ -50,7 +50,7 @@ export function PrimingView({ status, gates, call, onJob, onPrint }: { status: S
 
   useEffect(() => {
     let live = true;
-    api.printSettings().then((x) => live && setJobThicknessMm(x.total_thickness_mm)).catch(() => {});
+    api.printSettings().then((x) => live && setFeedDemandMm(x.feed_demand_mm ?? null)).catch(() => {});
     return () => { live = false; };
   }, [status?.job?.path]);
   useEffect(() => {
@@ -60,7 +60,10 @@ export function PrimingView({ status, gates, call, onJob, onPrint }: { status: S
   }, []);
 
   const n = (v: string) => { const x = Number(v); return Number.isFinite(x) ? x : 0; };
-  const depth = fillDepthMm({ source, totalThicknessMm: jobThicknessMm ?? 0, nLayers: n(nLayers), layerThicknessMm: n(layerThicknessMm), manualDepthMm: n(manualDepthMm), marginMm: n(marginMm) });
+  const target = (k: string): number | null => (s ? s[k] ?? null : null);
+  // Priming's thick precoats spend this much feed before the print starts (n x feed per precoat).
+  const thickFeedMm = thickPrecoatFeedMm(target("n_thick_precoats"), target("thick_feed_mm"));
+  const depth = fillDepthMm({ source, feedDemandMm: feedDemandMm ?? 0, thickPrecoatFeedMm: thickFeedMm, nLayers: n(nLayers), layerThicknessMm: n(layerThicknessMm), manualDepthMm: n(manualDepthMm), marginMm: n(marginMm) });
   const pct = cavityFillPct(depth);
 
   const num = (v: string, set: (s: string) => void, label: string) => (
@@ -72,7 +75,6 @@ export function PrimingView({ status, gates, call, onJob, onPrint }: { status: S
   const srcBtn = (value: FillSource, label: string) => (
     <button className={`small${source === value ? " on" : ""}`} aria-pressed={source === value} onClick={() => setSource(value)}>{label}</button>
   );
-  const target = (k: string): number | null => (s ? s[k] ?? null : null);
   const fmt = (mm: number | null) => fmtMmAuto(mm);
   const skip = () => setStep((x) => Math.min(WALKTHROUGH_STEPS.length - 1, x + 1));
   // Feed-supply amount for the level step: the editable field, else the saved feed/precoat default.
@@ -118,21 +120,22 @@ export function PrimingView({ status, gates, call, onJob, onPrint }: { status: S
             {cur.id === "amount" && (
               <>
                 <div className="hint" style={{ marginTop: 0 }}>How much powder should the feed cavity hold? Pick a source.</div>
-                <div className="seg">{srcBtn("job", "paired to job")}{srcBtn("layers", "layers × thickness")}{srcBtn("depth", "depth (mm)")}</div>
+                <div className="seg">{srcBtn("job", "paired to job")}{srcBtn("layers", "layers × feed")}{srcBtn("depth", "depth (mm)")}</div>
                 {source === "job" && (
                   <>
                     <div className="fields">
                       <span>selected job</span><span className="ro">{status?.job ? status.job.name : "none selected"}</span>
-                      <span>{status?.job ? "job total thickness" : "print-settings thickness"}</span><span className="ro">{fmt(jobThicknessMm)}</span>
+                      <span data-tip="Feed the print consumes: feed advance per layer × layers (thin precoats + printing + postcoat if on). The feed rises more than the build drops each layer.">{status?.job ? "job feed needed" : "print feed needed"}</span><span className="ro">{fmt(feedDemandMm)}</span>
+                      <span data-tip="Priming spends this before the print: thick precoats × feed per precoat.">thick precoats' feed</span><span className="ro">{target("n_thick_precoats") ?? "—"} × {fmt(target("thick_feed_mm"))} = {fmt(thickFeedMm)}</span>
                       {num(marginMm, setMarginMm, "margin")}
                     </div>
-                    {!status?.job && <div className="hint">No sliced job is loaded, so this uses the current print-settings thickness. Pick a job for an exact amount: <button className="linklike" onClick={onJob}>open the Job tab →</button></div>}
+                    {!status?.job && <div className="hint">No sliced job is loaded, so this uses the current print settings. Pick a job for an exact amount: <button className="linklike" onClick={onJob}>open the Job tab →</button></div>}
                   </>
                 )}
                 {source === "layers" && (
                   <>
-                    <div className="fields">{num(nLayers, setNLayers, "layers")}{num(layerThicknessMm, setLayerThicknessMm, "layer thickness")}{num(marginMm, setMarginMm, "margin")}</div>
-                    <div className="hint">Include the precoat layers (runway + build-piston fill), not just the part slices.</div>
+                    <div className="fields">{num(nLayers, setNLayers, "layers")}{num(layerThicknessMm, setLayerThicknessMm, "feed per layer")}{num(marginMm, setMarginMm, "margin")}</div>
+                    <div className="hint">Use the FEED advance per layer (larger than the layer thickness), count the precoat layers too, and add the thick precoats' feed to the margin.</div>
                   </>
                 )}
                 {source === "depth" && <div className="fields">{num(manualDepthMm, setManualDepthMm, "depth")}</div>}

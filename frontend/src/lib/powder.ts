@@ -3,7 +3,8 @@ export const FEED_TRAVEL_MM = 145; // safety.TRAVEL_MM[FEED]; the feed cavity ca
 export type FillSource = "job" | "layers" | "depth";
 export interface FillInput {
   source: FillSource;
-  totalThicknessMm?: number;   // source "job": PrintSettingsPayload.total_thickness_mm
+  feedDemandMm?: number;       // source "job": PrintSettingsPayload.feed_demand_mm (feed/layer x layers)
+  thickPrecoatFeedMm?: number; // source "job": feed priming's thick precoats spend first (thickPrecoatFeedMm)
   nLayers?: number;            // source "layers"
   layerThicknessMm?: number;   // source "layers"
   manualDepthMm?: number;      // source "depth"
@@ -14,7 +15,9 @@ export interface FillInput {
 const clamp = (v: number, lo: number, hi: number) => Math.min(Math.max(v, lo), hi);
 
 /** Feed-piston fill depth (mm) = how far DOWN to open the feed cavity so a print has enough powder.
- *  "job"    -> total print thickness consumed from the feed piston + margin (exact; incl. thick precoats).
+ *  "job"    -> the print's FEED demand + the thick precoats' feed + margin. The feed rises feed_thickness
+ *              per layer (not the build's layer thickness), and priming's thick precoats spend their
+ *              feed before the print starts — sizing on build thickness under-filled the 2026-09-22 run.
  *  "layers" -> nLayers x layerThickness + margin (operator must include the precoat layers).
  *  "depth"  -> operator's direct mm.
  *  Clamped to [0, feedTravel].
@@ -25,7 +28,7 @@ export function fillDepthMm(i: FillInput): number {
   const margin = i.marginMm ?? 0;
   const travel = i.feedTravelMm ?? FEED_TRAVEL_MM;
   let raw: number;
-  if (i.source === "job") raw = (i.totalThicknessMm ?? 0) + margin;
+  if (i.source === "job") raw = (i.feedDemandMm ?? 0) + (i.thickPrecoatFeedMm ?? 0) + margin;
   else if (i.source === "layers") raw = (i.nLayers ?? 0) * (i.layerThicknessMm ?? 0) + margin;
   else raw = i.manualDepthMm ?? 0;
   return clamp(raw, 0, travel);
@@ -44,4 +47,11 @@ export function pistonMaterialFrac(mm: number | null | undefined, travelMm: numb
   if (typeof mm !== "number" || !Number.isFinite(mm)) return 0;
   const travel = travelMm > 0 ? travelMm : 1;
   return clamp(1 - mm / travel, 0, 1);
+}
+
+/** Feed spent by priming's thick precoats before the print starts: each raises the feed
+ *  thick_feed_mm (control/priming.py compile_priming_setup). Missing values -> 0. */
+export function thickPrecoatFeedMm(nThickPrecoats: number | null | undefined, thickFeedMm: number | null | undefined): number {
+  if (typeof nThickPrecoats !== "number" || typeof thickFeedMm !== "number") return 0;
+  return Math.max(0, nThickPrecoats) * Math.max(0, thickFeedMm);
 }

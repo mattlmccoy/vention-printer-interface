@@ -74,8 +74,11 @@ export interface OffloadJob { state: "idle" | "running" | "done" | "cancelled" |
 export interface TimingConfig { print_min_wait_s: number; print_poll_interval_s: number; defaults: { print_min_wait_s: number; print_poll_interval_s: number } }
 export interface Discovery { candidates: Array<{ backend: string; ip: string | null; label?: string; reachable: boolean }>; connected: { backend: string } }
 export interface MeteorStatus { backend: string; available: boolean; ready: boolean; job_name: string | null; layers_ready: number; layers_expected: number; detail: string }
-export interface PrintSettingsPayload { plan: Record<string, unknown>; validation: string[]; n_steps: number; estimated_duration_s: number; min_wait_s: number; total_layers: number; total_thickness_mm: number; bounds: Record<string, unknown>; limits: Record<string, unknown>; exposure: { energy_j: number; time_s: number; sweep_speed_mm_s: number } }
+export interface PrintSettingsPayload { plan: Record<string, unknown>; validation: string[]; n_steps: number; estimated_duration_s: number; min_wait_s: number; total_layers: number; total_thickness_mm: number; feed_demand_mm: number; bounds: Record<string, unknown>; limits: Record<string, unknown>; exposure: { energy_j: number; time_s: number; sweep_speed_mm_s: number } }
 export interface AxisMotion { max_speed: number | null; max_accel: number | null; bounds: { max_speed: [number, number]; max_accel: [number, number] }; limit_speed: number; limit_accel: number }
+/** GET /api/print/feed-budget (control/feed_budget.py). available/sufficient/layers_supported are null
+ *  when the feed position can't be verified (not homed / no telemetry); unknown_reason says why. */
+export interface FeedBudgetPayload { demand_mm: number; available_mm: number | null; layers_total: number; layers_supported: number | null; sufficient: boolean | null; unknown_reason: string | null }
 export interface PrimingPayload { settings: Record<string, number>; validation: string[]; n_steps: number; n_thick_precoats: number; limits: Record<string, unknown> }
 export interface PrimedPayload { primed: { part_mm: number; feed_mm: number; captured_at: number } | null }
 export interface BacklashPositionResult { ref_mm: number; backlash_median_mm: number; backlash_mag_median_mm: number; reps_mm: number[] }
@@ -251,7 +254,8 @@ export const api = {
   heaterOff: () => req<StatusPayload>("POST", "/api/heater/off"),
   printSettings: () => req<PrintSettingsPayload>("GET", "/api/print-settings"),
   setPrintSettings: (patch: Record<string, unknown>) => req<PrintSettingsPayload>("PUT", "/api/print-settings", patch),
-  printStart: (body: { single_step: boolean; name?: string; notes?: string }) => req<StatusPayload["print"]>("POST", "/api/print/start", body),
+  printStart: (body: { single_step: boolean; name?: string; notes?: string; accept_feed_risk?: boolean }) => req<StatusPayload["print"]>("POST", "/api/print/start", body),
+  printFeedBudget: () => req<FeedBudgetPayload>("GET", "/api/print/feed-budget"),
   printPause: () => req<StatusPayload["print"]>("POST", "/api/print/pause"),
   printResume: () => req<StatusPayload["print"]>("POST", "/api/print/resume"),
   printStep: () => req<StatusPayload["print"]>("POST", "/api/print/step"),

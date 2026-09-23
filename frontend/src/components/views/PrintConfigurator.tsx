@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from "react";
-import { api, type MeteorStatus } from "../../lib/api.ts";
+import { api, type FeedBudgetPayload, type MeteorStatus } from "../../lib/api.ts";
+import { feedBudgetLine, type BudgetTone } from "../../lib/feed_budget.ts";
 import { estimateDurationS } from "../../lib/estimate.ts";
 import { cleanNum, fmtSecs, type Gates } from "../../lib/format.ts";
 import { CAPTURE_STAGES, CAPTURE_STAGE_LABEL, multipassMismatch, toggleCaptureStage, totalLayers, totalThickness, validate, type PrintSettings } from "../../lib/print_settings.ts";
@@ -9,6 +10,8 @@ import { Toggle } from "../Toggle.tsx";
 import { LAYER_HEIGHTS_MM, snapLayerHeightMm } from "../../lib/layer_height.ts";
 import { loadOverviewTimelapse, saveOverviewTimelapse } from "../../lib/timelapse_settings.ts";
 import type { Call } from "./types.ts";
+
+const BUDGET_LINE_CLASS: Record<BudgetTone, string> = { ok: "okline", warn: "warnline", bad: "errline" };
 
 const BUDGET = 145;
 function num(v: string, fb: number): number { const n = Number(v); return v !== "" && Number.isFinite(n) ? n : fb; }
@@ -25,6 +28,7 @@ export function PrintConfigurator({ status, gates, call, onStarted }: {
   const [name, setName] = useState("");
   const [meteor, setMeteor] = useState<MeteorStatus | null>(null);
   const [primed, setPrimed] = useState<boolean | null>(null); // null = unknown, else bed-primed?
+  const [budget, setBudget] = useState<FeedBudgetPayload | null>(null); // feed powder vs this print's demand
   const [mpDismissed, setMpDismissed] = useState(false); // dismissable multipass-mismatch warning (#7)
   const [minWait, setMinWait] = useState(0.25); // the operator's real wait floor, for a matching estimate (#6)
   const [overviewTl, setOverviewTl] = useState(() => loadOverviewTimelapse(typeof localStorage === "undefined" ? null : localStorage));
@@ -37,8 +41,13 @@ export function PrintConfigurator({ status, gates, call, onStarted }: {
     // A print is refused (409) until the bed is primed; fetch it so we can guide to Priming rather
     // than let START fail. The tab remounts this component, so a fresh capture is picked up on return.
     api.primed().then((r) => setPrimed(r.primed !== null)).catch(() => setPrimed(null));
+    api.printFeedBudget().then(setBudget).catch(() => setBudget(null));
   };
   useEffect(() => { refresh(); }, [gates.reachable, job?.path]);
+  // Re-check the powder budget when the feed moves or gets homed (jogging on this tab).
+  const tel = status?.controller?.telemetry;
+  const feedKey = `${tel?.positions?.["2"]?.toFixed(1) ?? "?"}|${tel?.referenced?.["2"] ?? "?"}`;
+  useEffect(() => { if (!running) api.printFeedBudget().then(setBudget).catch(() => setBudget(null)); }, [feedKey]);
 
   const edit = (patch: Partial<PrintSettings>) => plan && (setPlan({ ...plan, ...patch }), setDirty(true));
   const editOverviewTl = (patch: Partial<typeof overviewTl>) => {
@@ -55,7 +64,7 @@ export function PrintConfigurator({ status, gates, call, onStarted }: {
   // This form does NOT own the routine-only fields (multipass n_jet_passes, pre_heater_drop_mm) —
   // those live in Routine Parameters. Strip them from every save so configuring never clobbers them.
   const jobPatch = (p: PrintSettings): Record<string, unknown> => { const { n_jet_passes: _a, pre_heater_drop_mm: _b, ...rest } = p as unknown as Record<string, unknown>; return rest; };
-  const save = async () => { if (!plan) return; await call("save print_settings", () => api.setPrintSettings(jobPatch(plan)).then((r) => { setPlan(r.plan as unknown as PrintSettings); setDirty(false); })); };
+  const save = async () => { if (!plan) return; await call("save print_settings", () => api.setPrintSettings(jobPatch(plan)).then((r) => { setPlan(r.plan as unknown as PrintSettings); setDirty(false); return api.printFeedBudget().then(setBudget); })); };
   // Persist unsaved edits when leaving, so a configured print carries through to Priming and status.
   const planRef = useRef<PrintSettings | null>(null); const dirtyRef = useRef(false); const runningRef = useRef(false);
   useEffect(() => { planRef.current = plan; dirtyRef.current = dirty; runningRef.current = running; }, [plan, dirty, running]);
@@ -79,8 +88,13 @@ export function PrintConfigurator({ status, gates, call, onStarted }: {
     if (!plan) return;
     if (dirty) await save();
     const heat = plan.heater_enabled ? "HEATER ON — fires each printing layer" : "⚠ HEATER OFF — no in-situ heating";
-    if (!window.confirm(`Start ${job ? job.name : "the manual print"} on the machine?\n\n${heat}\n${layers} layers · ${total.toFixed(1)} mm · ~${fmtSecs(estimateDurationS(plan, minWait))}`)) return;
-    await call("start", () => api.printStart({ single_step: single, name: name || job?.name || "print" }).then(onStarted));
+    // Re-read the budget at START: the feed may have moved since this page loaded.
+    const b = await api.printFeedBudget().catch(() => null);
+    setBudget(b);
+    const powder = feedBudgetLine(b);
+    const risk = powder.tone === "ok" ? "" : "\n\n⚠ The powder budget isn't confirmed. Start anyway? A short feed stops the print safely when the powder runs out.";
+    if (!window.confirm(`Start ${job ? job.name : "the manual print"} on the machine?\n\n${heat}\n${layers} layers · ${total.toFixed(1)} mm · ~${fmtSecs(estimateDurationS(plan, minWait))}\npowder · ${powder.text}${risk}`)) return;
+    await call("start", () => api.printStart({ single_step: single, name: name || job?.name || "print", accept_feed_risk: powder.tone !== "ok" }).then(onStarted));
   };
 
   return (
@@ -173,6 +187,7 @@ export function PrintConfigurator({ status, gates, call, onStarted }: {
                   <label><input type="checkbox" checked={status?.auto_log ?? true} onChange={(e) => call("auto-log", () => api.setAutoLog(e.target.checked))} /> record</label>
                 </div>
                 <input type="text" placeholder={job?.name ?? "run name"} value={name} onChange={(e) => setName(e.target.value)} style={{ width: "100%" }} />
+                {!running && (() => { const l = feedBudgetLine(budget); return <div className={BUDGET_LINE_CLASS[l.tone]} data-tip="Feed powder this print consumes (feed per layer × layers) vs. the powder column in the feed piston now.">powder · {l.text}</div>; })()}
                 {primed === false && !running && (
                   <div className="errline" style={{ display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap" }}>
                     <span>⚠ bed not primed — prime it before printing</span>

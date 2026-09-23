@@ -439,12 +439,18 @@ _PART_DROP_PHASES = ("thin_precoat", "printing")
 CAPTURE_SEAT_MM = 0.1
 
 
-def compile_print(plan: PrintSettings) -> tuple[Step, ...]:
+def compile_print(plan: PrintSettings, feed_start_mm: float | None = None) -> tuple[Step, ...]:
     """Compile a plan into the faithful async-lab-script step sequence (fidelity spec 2026-09-10).
 
     Primed start: setup homes the two gantries ONLY (printhead, recoater); the part and feed pistons
     start from the captured primed bed, so no piston home and no feed pre-position move are emitted.
     Deterministic and unit-tested cycle-by-cycle against the script (``test_print_settings.py``).
+
+    ``feed_start_mm`` is how much powder the feed column REALLY holds at start (the feed piston's
+    referenced depth below flush). The feed-exhaustion guard counts down from it, so the print stops
+    safely when the powder runs out instead of pushing the feed piston up past the bed. ``None``
+    keeps the historical assumption of a full column (``plan.feed_end_mm``) — used only for
+    previews/estimates, never when the real position is known (see ``control/feed_budget.py``).
     """
     out: list[Step] = []
     height = 0.0
@@ -483,7 +489,7 @@ def compile_print(plan: PrintSettings) -> tuple[Step, ...]:
     # feed advance. Mirrors the script's ``current_feed_pos`` guard: when the next advance would
     # reach/cross FEED_FLOOR the powder cannot supply another layer, so we home the recoater, mark
     # "feed_exhausted", and stop compiling (a terminal safety stop; the operator re-primes).
-    feed_pos = plan.feed_end_mm
+    feed_pos = plan.feed_end_mm if feed_start_mm is None else feed_start_mm
 
     layer_no = 0
     print_layer = 0  # 1-based index of printing-phase layers (for the nozzle-purge schedule)
