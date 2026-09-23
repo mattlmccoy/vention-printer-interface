@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import { api, type MeteorStatus } from "../../lib/api.ts";
 import { estimateDurationS } from "../../lib/estimate.ts";
-import { fmtSecs, type Gates } from "../../lib/format.ts";
+import { cleanNum, fmtSecs, type Gates } from "../../lib/format.ts";
 import { CAPTURE_STAGES, CAPTURE_STAGE_LABEL, multipassMismatch, toggleCaptureStage, totalLayers, totalThickness, validate, type PrintSettings } from "../../lib/print_settings.ts";
 import type { StatusPayload } from "../../lib/telemetry.ts";
 import { NumberField } from "../NumberField.tsx";
@@ -94,7 +94,7 @@ export function PrintConfigurator({ status, gates, call, onStarted }: {
                 <div className="scale">{[0, 50, 100, 145].map((mm) => <span key={mm} style={{ bottom: pct(mm) }}>{mm}</span>)}</div>
                 <div className="col">
                   <div className={total > plan.feed_end_mm ? "over" : "thin"} style={{ bottom: 0, height: pct(thin) }}>{thin > 0 ? `precoat ${thin.toFixed(1)}` : ""}</div>
-                  <div className={total > plan.feed_end_mm ? "over" : "lay"} style={{ bottom: pct(thin), height: pct(pr) }}>{plan.printing.n_layers} × {plan.printing.layer_thickness_mm}</div>
+                  <div className={total > plan.feed_end_mm ? "over" : "lay"} style={{ bottom: pct(thin), height: pct(pr) }}>{plan.printing.n_layers} × {cleanNum(plan.printing.layer_thickness_mm)}</div>
                   {plan.postcoat_enabled && <div className={total > plan.feed_end_mm ? "over" : "post"} style={{ bottom: pct(thin + pr), height: pct(post) }}>{post > 0 ? `postcoat ${post.toFixed(1)}` : ""}</div>}
                 </div>
                 <div className="legend" style={{ lineHeight: 1.7, fontSize: 14 }}><b>{total.toFixed(1)} mm</b> of {plan.feed_end_mm}<br /><b>{layers}</b> layers<br />heater <b>{plan.heater_enabled ? `${plan.n_heater_passes}×` : "off"}</b></div>
@@ -104,7 +104,7 @@ export function PrintConfigurator({ status, gates, call, onStarted }: {
                 <span data-tip="Capping layers spread after the last printing layer to bury and protect the finished part. Toggle on, then count × thickness (mm).">postcoat</span><label className="row"><Toggle checked={plan.postcoat_enabled} disabled={running} onChange={(v) => edit({ postcoat_enabled: v })} />{plan.postcoat_enabled && <> · <NumberField value={plan.postcoat.n_layers} disabled={running} onChange={(v) => editPh("postcoat", { n_layers: v })} style={{ width: 56 }} /> × <NumberField step="0.1" value={plan.postcoat.layer_thickness_mm} disabled={running} onChange={(v) => editPh("postcoat", { layer_thickness_mm: snapLayerHeightMm(v) })} style={{ width: 72 }} /> mm</>}</label>
                 <span data-tip="Printed layer thickness (mm) — how far the build piston drops before each printing layer. Match the slicer's layer height; the segmented buttons are the common presets.">layer height</span><label className="row">
                   <span className="seg">{LAYER_HEIGHTS.map((h) => <button key={h} type="button" className={`small${Math.abs(plan.printing.layer_thickness_mm - h) < 1e-6 ? " on" : ""}`} aria-pressed={Math.abs(plan.printing.layer_thickness_mm - h) < 1e-6} disabled={running} onClick={() => editPh("printing", { layer_thickness_mm: h })}>{h}</button>)}</span>
-                  <input type="number" step="0.1" min="0.1" value={plan.printing.layer_thickness_mm} disabled={running} onChange={(e) => editPh("printing", { layer_thickness_mm: snapLayerHeightMm(num(e.target.value, plan.printing.layer_thickness_mm)) })} style={{ width: 72 }} /> mm{job ? <span className="hint" style={{ marginLeft: 6 }}>slicer: {job.layer_height_mm} mm</span> : null}
+                  <input type="number" step="0.1" min="0.1" value={plan.printing.layer_thickness_mm} disabled={running} onChange={(e) => editPh("printing", { layer_thickness_mm: snapLayerHeightMm(num(e.target.value, plan.printing.layer_thickness_mm)) })} style={{ width: 72 }} /> mm{job ? <span className="hint" style={{ marginLeft: 6 }}>slicer: {cleanNum(job.layer_height_mm)} mm</span> : null}
                 </label>
                 {!job && <><span data-tip="Number of printing layers to run (manual print only — a sliced job sets this from its layer count).">print layers</span><input type="number" value={plan.printing.n_layers} disabled={running} onChange={(e) => editPh("printing", { n_layers: num(e.target.value, plan.printing.n_layers) })} /></>}
                 <span data-tip="Fire the IR heater after each printing layer to drive off binder solvent. Set how many heater sweeps per layer.">heater</span><label className="row"><Toggle checked={plan.heater_enabled} disabled={running} onChange={(v) => edit({ heater_enabled: v })} /> <span className="hint">fire the IR heater each printing layer,</span> <input type="number" value={plan.n_heater_passes} disabled={running || !plan.heater_enabled} onChange={(e) => edit({ n_heater_passes: num(e.target.value, plan.n_heater_passes) })} style={{ width: 56 }} /> pass(es)</label>
@@ -137,10 +137,10 @@ export function PrintConfigurator({ status, gates, call, onStarted }: {
               <h3>job → motion</h3>
               <div className="job-map" style={{ marginTop: 0 }}>
                 <span data-tip="Number of printed layers in the selected slicer job. Flagged if it doesn't match the print's layer count.">layers</span><span className={mismatch ? "warnv" : ""}>{job.layer_count}{mismatch ? " ≠ print" : ""}</span>
-                <span data-tip="Per-layer thickness the slicer used (informational — the print uses the layer height you set above).">slicer layer height</span><span>{job.layer_height_mm} mm</span>
-                <span data-tip="Total part height from the slicer (layers × slicer layer height).">part height</span><span>{job.height_mm} mm</span>
-                <span data-tip="Part bounding-box footprint on the bed (X × Y, mm).">footprint</span><span>{job.bbox_mm.x} × {job.bbox_mm.y} mm</span>
-                <span data-tip="What THIS print is set to run: printing layers × layer height. Flagged if it differs from the job.">print_settings</span><span className={mismatch ? "warnv" : ""}>{plan.printing.n_layers} × {plan.printing.layer_thickness_mm} mm{mismatch ? " ≠ job" : ""}</span>
+                <span data-tip="Per-layer thickness the slicer used (informational — the print uses the layer height you set above).">slicer layer height</span><span>{cleanNum(job.layer_height_mm)} mm</span>
+                <span data-tip="Total part height from the slicer (layers × slicer layer height).">part height</span><span>{cleanNum(job.height_mm)} mm</span>
+                <span data-tip="Part bounding-box footprint on the bed (X × Y, mm).">footprint</span><span>{cleanNum(job.bbox_mm.x)} × {cleanNum(job.bbox_mm.y)} mm</span>
+                <span data-tip="What THIS print is set to run: printing layers × layer height. Flagged if it differs from the job.">print_settings</span><span className={mismatch ? "warnv" : ""}>{plan.printing.n_layers} × {cleanNum(plan.printing.layer_thickness_mm)} mm{mismatch ? " ≠ job" : ""}</span>
                 <span data-tip="Whether MetPrint (the printhead RIP) has this job's layers staged in the hot folder and is ready to fire.">MetPrint firing</span>{meteor
                   ? <span className={meteor.ready ? "okv" : "warnv"} data-tip={meteor.detail}>{meteor.ready
                       ? `ready · ${meteor.layers_expected} layers in the hot folder`

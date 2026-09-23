@@ -3,7 +3,7 @@ import { api, type BacklashHistoryItem, type BacklashRecord, type BacklashSessio
 import { captureScienceStillOnce } from "../../lib/science_still.ts";
 import { BacklashPlot } from "../BacklashPlot.tsx";
 import { verifyVerdict, type Verdict } from "../../lib/backlash_verify.ts";
-import type { Gates } from "../../lib/format.ts";
+import { cleanNum, type Gates } from "../../lib/format.ts";
 import type { StatusPayload } from "../../lib/telemetry.ts";
 import { loadRoleMap } from "../../lib/camera_roles.ts";
 import { loadCameraSettings, videoConstraints } from "../../lib/overview_settings.ts";
@@ -12,6 +12,7 @@ import { CameraRoleAssigner } from "../CameraRoleAssigner.tsx";
 import { CameraInventoryPanel } from "../CameraInventoryPanel.tsx";
 import { CameraSettingsPanel } from "../CameraSettingsPanel.tsx";
 import { CalibrationWizard } from "../CalibrationWizard.tsx";
+import { parseFinalizeInputs } from "../../lib/calib_finalize.ts";
 import { ValidationPanel } from "../ValidationPanel.tsx";
 import { PlotExportButtons } from "../PlotExportButtons.tsx";
 import { pistonMaxPatch, type PistonField } from "../../lib/pistons.ts";
@@ -243,14 +244,12 @@ function CalibrationForm({ call, disabled }: { call: Call; disabled: boolean }) 
     try {
       const image_points = parsePoints(imagePts);
       const world_points_mm = parsePoints(worldPts);
-      const extent = bedExtent.split(",").map(Number);
       if (image_points.some(([x, y]) => !Number.isFinite(x) || !Number.isFinite(y))) throw new Error("bad image point");
       if (world_points_mm.some(([x, y]) => !Number.isFinite(x) || !Number.isFinite(y))) throw new Error("bad world point");
       if (image_points.length !== world_points_mm.length || image_points.length < 4) throw new Error("need >= 4 matched image/world points");
-      if (extent.length !== 4 || extent.some((v) => !Number.isFinite(v))) throw new Error("bed extent needs 4 numbers: x0,y0,x1,y1");
-      const mm = Number(mmPerPx);
-      if (!Number.isFinite(mm) || mm <= 0) throw new Error("mm/px must be a positive number");
-      body = { image_points, world_points_mm, mm_per_px: mm, bed_extent_mm: extent as [number, number, number, number] };
+      const raster = parseFinalizeInputs(mmPerPx, bedExtent); // same bed-image bounds as the backend
+      if (!raster.ok) throw new Error(raster.error);
+      body = { image_points, world_points_mm, mm_per_px: raster.mmPerPx, bed_extent_mm: raster.extent };
     } catch (e) {
       setParseErr(e instanceof Error ? e.message : String(e));
       return;
@@ -269,7 +268,7 @@ function CalibrationForm({ call, disabled }: { call: Call; disabled: boolean }) 
         <span>mm / px</span>
         <input type="number" step="0.01" value={mmPerPx} onChange={(e) => setMmPerPx(e.target.value)} />
         <span>bed extent (mm)</span>
-        <input type="text" placeholder="x0,y0,x1,y1" value={bedExtent} onChange={(e) => setBedExtent(e.target.value)} />
+        <input type="text" placeholder="left,top,right,bottom" value={bedExtent} onChange={(e) => setBedExtent(e.target.value)} />
       </div>
       {parseErr && <div className="errline">{parseErr}</div>}
       <div className="actions one tight">
@@ -424,7 +423,7 @@ function CaptureCalibration({ status, gates, call }: { status: StatusPayload | n
       </div>
       <div className="kv" style={{ marginTop: 8 }}>
         <span>recoater now</span><span>{typeof rc === "number" ? `${rc.toFixed(1)} mm` : "—"}</span>
-        <span>saved capture pose</span><span>{pose != null && pose > 0 ? `${pose} mm` : "not set"}</span>
+        <span>saved capture pose</span><span>{pose != null && pose > 0 ? `${cleanNum(pose)} mm` : "not set"}</span>
       </div>
       <div className="actions one tight" style={{ marginTop: 10 }}>
         <button className="cta primary" disabled={!ok || typeof rc !== "number"} onClick={savePose}>Set capture pose = {typeof rc === "number" ? `${rc.toFixed(1)} mm` : "?"}</button>

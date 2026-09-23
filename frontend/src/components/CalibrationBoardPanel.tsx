@@ -1,19 +1,78 @@
-import { useState } from "react";
-import { BOARD_PRESETS, DEFAULT_BOARD, boardConfigError, boardQuery, type BoardConfig } from "../lib/board.ts";
+import { useEffect, useState } from "react";
+import {
+  BOARD_PRESETS, DEFAULT_BOARD, boardConfigError, boardGeometry, boardQuery, fetchBoardPreview, markersNeeded, pickArucoDict,
+  type BoardConfig,
+} from "../lib/board.ts";
+import { boardDefFromConfig, saveBoardDef } from "../lib/board_def.ts";
+
+const storage = typeof localStorage === "undefined" ? null : localStorage;
+/** Wait this long after the last edit before fetching a preview: typing "12" must not fire a
+ *  board generation for "1" (a 1-wide board can crash cv2) and one per keystroke. */
+const PREVIEW_DEBOUNCE_MS = 400;
+
+type PreviewState =
+  | { status: "idle" }
+  | { status: "loading"; url: string }
+  | { status: "ok"; url: string; src: string; dict: string | null }
+  | { status: "error"; url: string; error: string };
+
+/** `value`, but only after it has stopped changing for `ms`. */
+function useDebounced<T>(value: T, ms: number): T {
+  const [settled, setSettled] = useState(value);
+  useEffect(() => {
+    const t = setTimeout(() => setSettled(value), ms);
+    return () => clearTimeout(t);
+  }, [value, ms]);
+  return settled;
+}
 
 /** Calibration-board download panel (A8 GET /api/vision/board, wired into the Cameras view for
  *  A7). Picks a preset (or CUSTOM geometry) + file format for the true-vector ChArUco board the
  *  operator laser-engraves onto dual-color ABS — see backend api/app.py's vision_board. A plain
- *  download link handles the file; a live inline SVG preview (rendered, never saved) lets the
- *  operator confirm the board before committing it to the laser. */
+ *  download link handles the file; a debounced inline SVG preview (fetched, never saved) lets the
+ *  operator confirm the board before committing it to the laser, and shows the backend's error
+ *  text when the board is invalid. The selected board is saved for the Calibrate page
+ *  (lib/board_def.ts) so calibration uses the same geometry + ArUco dictionary. */
 export function CalibrationBoardPanel({ base }: { base: string }) {
   const [cfg, setCfg] = useState<BoardConfig>(DEFAULT_BOARD);
   const [showPreview, setShowPreview] = useState(false);
+  const [preview, setPreview] = useState<PreviewState>({ status: "idle" });
   const set = (patch: Partial<BoardConfig>) => setCfg((c) => ({ ...c, ...patch }));
 
   const err = boardConfigError(cfg);
   const downloadHref = `${base}/api/vision/board?${boardQuery(cfg)}`;
   const previewHref = `${base}/api/vision/board?${boardQuery(cfg, "svg")}`; // always SVG for the render
+  const settledPreviewHref = useDebounced(previewHref, PREVIEW_DEBOUNCE_MS);
+
+  const geom = boardGeometry(cfg);
+  const serverDict = preview.status === "ok" && preview.url === previewHref ? preview.dict : null;
+  const dict = serverDict ?? (err ? null : pickArucoDict(geom.squaresX, geom.squaresY));
+
+  // Hand the selected board to the Calibrate page whenever it changes (valid boards only).
+  useEffect(() => {
+    const def = boardDefFromConfig(cfg, serverDict);
+    if (def) saveBoardDef(storage, def);
+  }, [cfg, serverDict]);
+
+  // Fetch the preview only once edits settle; abort a stale in-flight one.
+  useEffect(() => {
+    if (!showPreview || err) return;
+    const ctrl = new AbortController();
+    let objectUrl: string | null = null;
+    setPreview({ status: "loading", url: settledPreviewHref });
+    fetchBoardPreview(settledPreviewHref, ctrl.signal).then((r) => {
+      if (ctrl.signal.aborted) return;
+      if (!r.ok) { setPreview({ status: "error", url: settledPreviewHref, error: r.error }); return; }
+      objectUrl = URL.createObjectURL(new Blob([r.svg], { type: "image/svg+xml" }));
+      setPreview({ status: "ok", url: settledPreviewHref, src: objectUrl, dict: r.dict });
+    }).catch(() => { /* aborted: a newer preview replaced this one */ });
+    return () => {
+      ctrl.abort();
+      if (objectUrl) URL.revokeObjectURL(objectUrl);
+    };
+    // Keyed on the SETTLED url only: while the operator is still typing, the last good preview
+    // stays up (marked "updating") instead of being torn down per keystroke.
+  }, [showPreview, settledPreviewHref, err]);
 
   return (
     <>
@@ -29,8 +88,8 @@ export function CalibrationBoardPanel({ base }: { base: string }) {
         {cfg.preset === "custom" && <>
           <span title="Number of chessboard SQUARES across (X) and down (Y).">grid (squares)</span>
           <span className="row" style={{ gap: 6 }}>
-            <input type="number" min={1} max={40} value={cfg.squaresX} onChange={(e) => set({ squaresX: Number(e.target.value) })} style={{ width: 60 }} /> ×
-            <input type="number" min={1} max={40} value={cfg.squaresY} onChange={(e) => set({ squaresY: Number(e.target.value) })} style={{ width: 60 }} />
+            <input type="number" min={2} max={40} value={cfg.squaresX} onChange={(e) => set({ squaresX: Number(e.target.value) })} style={{ width: 60 }} /> ×
+            <input type="number" min={2} max={40} value={cfg.squaresY} onChange={(e) => set({ squaresY: Number(e.target.value) })} style={{ width: 60 }} />
           </span>
           <span title="Side length of each chessboard square (mm).">square (mm)</span>
           <input type="number" min={0} step={0.5} value={cfg.squareMm} onChange={(e) => set({ squareMm: Number(e.target.value) })} style={{ width: 80 }} />
@@ -54,6 +113,12 @@ export function CalibrationBoardPanel({ base }: { base: string }) {
         </label>
       </div>
       {err && <div className="errline">{err}</div>}
+      {!err && dict && (
+        <div className="hint" style={{ marginTop: 10 }}>
+          ArUco dictionary: <b>{dict}</b> ({markersNeeded(geom.squaresX, geom.squaresY)} markers on a {geom.squaresX}×{geom.squaresY} board)
+          {" "}— the Calibrate page uses this same board.
+        </div>
+      )}
       <div className="actions one tight" style={{ gap: 8 }}>
         <button className="cta" disabled={!!err} onClick={() => setShowPreview((s) => !s)}>{showPreview ? "hide preview" : "preview board"}</button>
         <a className={`cta primary${err ? " disabled" : ""}`} href={err ? undefined : downloadHref} download aria-disabled={!!err}>download board ({cfg.format.toUpperCase()})</a>
@@ -61,9 +126,13 @@ export function CalibrationBoardPanel({ base }: { base: string }) {
       {showPreview && !err && (
         <div className="board-preview" style={{ marginTop: 12, padding: 12, background: "#fff", borderRadius: 8, textAlign: "center" }}>
           {/* Rendered, never saved — a live SVG render of the exact board the download produces. */}
-          <img src={previewHref} alt="ChArUco board preview" style={{ maxWidth: "100%", height: "auto" }} onError={(e) => { (e.currentTarget as HTMLImageElement).style.display = "none"; }} />
+          {preview.status === "ok" && <img src={preview.src} alt="ChArUco board preview" style={{ maxWidth: "100%", height: "auto" }} />}
+          {(preview.status === "loading" || preview.status === "idle" || (preview.status === "ok" && preview.url !== previewHref)) && (
+            <div className="hint" style={{ color: "#555" }}>updating preview…</div>
+          )}
         </div>
       )}
+      {showPreview && !err && preview.status === "error" && <div className="errline">preview failed: {preview.error}</div>}
     </>
   );
 }

@@ -1866,3 +1866,138 @@ def test_cannot_ignore_the_bound_science_camera(
                       headers=_H).status_code == 200
     r = client.put("/api/vision/ignored-cameras", json={"unique_ids": [_ELP_A_UID]}, headers=_H)
     assert r.status_code == 400
+
+
+# ---- fix/charuco-board-calibrate: dictionary auto-pick, 1-wide guard, session + finalize ----
+_CUSTOM_9X12 = {"format": "svg", "squares_x": 9, "squares_y": 12, "square_mm": 8.0,
+                "marker_mm": 5.0}
+
+
+def test_board_endpoint_auto_picks_a_dictionary_big_enough_for_a_9x12_board(
+    client: TestClient,
+) -> None:
+    # 9x12 needs 54 markers; DICT_4X4_50 is too small, so the endpoint picks DICT_4X4_100.
+    r = client.get("/api/vision/board", params=_CUSTOM_9X12)
+    assert r.status_code == 200, r.text
+    assert r.headers["x-board-dict"] == "DICT_4X4_100"
+    assert "DICT_4X4_100 9x12" in r.text  # the engraved label names the dictionary
+
+
+def test_board_endpoint_preset_reports_its_dictionary(client: TestClient) -> None:
+    r = client.get("/api/vision/board", params={"format": "svg", "preset": "medium_5x7"})
+    assert r.status_code == 200
+    assert r.headers["x-board-dict"] == "DICT_4X4_50"
+
+
+def test_board_endpoint_preset_with_grid_override_auto_picks(client: TestClient) -> None:
+    r = client.get("/api/vision/board",
+                   params={"format": "svg", "preset": "medium_5x7", "squares_x": 9,
+                           "squares_y": 12})
+    assert r.status_code == 200, r.text
+    assert r.headers["x-board-dict"] == "DICT_4X4_100"
+
+
+def test_board_endpoint_explicit_too_small_dict_returns_400_naming_the_count(
+    client: TestClient,
+) -> None:
+    r = client.get("/api/vision/board", params={**_CUSTOM_9X12, "dict": "DICT_4X4_50"})
+    assert r.status_code == 400
+    assert "54" in r.json()["detail"]
+
+
+@pytest.mark.parametrize(("sx", "sy"), [(1, 12), (12, 1), (1, 1)])
+def test_board_endpoint_one_wide_grid_returns_400_not_500(
+    client: TestClient, sx: int, sy: int
+) -> None:
+    r = client.get("/api/vision/board",
+                   params={**_CUSTOM_9X12, "squares_x": sx, "squares_y": sy})
+    assert r.status_code == 400
+    assert "at least 2" in r.json()["detail"]
+
+
+def test_board_dict_header_is_readable_cross_origin(client: TestClient) -> None:
+    r = client.get("/api/vision/board", params=_CUSTOM_9X12,
+                   headers={"Origin": "http://localhost:5173"})
+    assert r.status_code == 200
+    exposed = r.headers.get("access-control-expose-headers", "").lower()
+    assert "x-board-dict" in exposed
+
+
+def _session_spec(**overrides: Any) -> dict[str, Any]:
+    return {**_SESSION_CHARUCO, **overrides}
+
+
+@pytest.mark.parametrize(
+    "spec",
+    [
+        _session_spec(squares_x=1),
+        _session_spec(squares_y=1),
+        _session_spec(squares_x=9, squares_y=12, aruco_dict="DICT_4X4_50"),
+        _session_spec(marker_length_mm=25.0),
+        _session_spec(aruco_dict="DICT_NOPE"),
+    ],
+)
+def test_calibrate_session_rejects_an_invalid_charuco_board(
+    tmp_path: Path, spec: dict[str, Any]
+) -> None:
+    app = _calib_app(tmp_path, _CharucoPoseSource())
+    with TestClient(app) as c:
+        r = c.post("/api/vision/calibrate/session", json={"spec": spec})
+        assert r.status_code == 400, r.text
+        assert app.state.calib_session_spec is None  # nothing half-started
+
+
+def test_calibrate_session_without_a_dict_auto_picks_like_the_board_endpoint(
+    tmp_path: Path,
+) -> None:
+    spec = {k: v for k, v in _SESSION_CHARUCO.items() if k != "aruco_dict"}
+    spec.update(squares_x=9, squares_y=12, square_length_mm=8.0, marker_length_mm=5.0)
+    app = _calib_app(tmp_path, _CharucoPoseSource())
+    with TestClient(app) as c:
+        r = c.post("/api/vision/calibrate/session", json={"spec": spec})
+        assert r.status_code == 200, r.text
+        assert r.json()["spec"]["aruco_dict"] == "DICT_4X4_100"
+
+
+def test_calibrate_session_keeps_an_explicit_adequate_dict(tmp_path: Path) -> None:
+    app = _calib_app(tmp_path, _CharucoPoseSource())
+    with TestClient(app) as c:
+        r = c.post("/api/vision/calibrate/session", json={"spec": _SESSION_CHARUCO})
+        assert r.status_code == 200
+        assert r.json()["spec"]["aruco_dict"] == "DICT_5X5_100"
+
+
+@pytest.mark.parametrize(
+    ("mm_per_px", "extent", "fragment"),
+    [
+        (0.5, [100.0, 0.0, 100.0, 80.0], "x1"),
+        (0.5, [0.0, 80.0, 120.0, 10.0], "y1"),
+        (0.0, [0.0, 0.0, 120.0, 80.0], "positive"),
+        (-0.5, [0.0, 0.0, 120.0, 80.0], "positive"),
+        (0.01, [0.0, 0.0, 200.0, 200.0], "20000x20000"),
+    ],
+)
+def test_calibrate_finalize_rejects_a_bad_bed_raster(
+    tmp_path: Path, mm_per_px: float, extent: list[float], fragment: str
+) -> None:
+    app = _calib_app(tmp_path, _CharucoPoseSource())
+    with TestClient(app) as c:
+        c.post("/api/vision/calibrate/session", json={"spec": _SESSION_CHARUCO})
+        c.post("/api/vision/calibrate/capture")
+        r = c.post("/api/vision/calibrate/finalize",
+                   json={"mm_per_px": mm_per_px, "bed_extent_mm": extent,
+                         "use_last_capture_as_bed": True})
+        assert r.status_code == 400, r.text
+        assert fragment in r.json()["detail"]
+        assert not (tmp_path / ".vision_calibration.json").exists()
+
+
+def test_legacy_calibrate_rejects_an_oversized_bed_raster(client: TestClient) -> None:
+    r = client.post("/api/vision/calibrate", json={
+        "image_points": [[0, 0], [100, 0], [100, 80], [0, 80]],
+        "world_points_mm": [[0, 0], [100, 0], [100, 80], [0, 80]],
+        "mm_per_px": 0.01,
+        "bed_extent_mm": [0.0, 0.0, 200.0, 200.0],
+    })
+    assert r.status_code == 400
+    assert "20000x20000" in r.json()["detail"]

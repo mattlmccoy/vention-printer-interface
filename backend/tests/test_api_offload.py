@@ -138,3 +138,24 @@ def test_restore_guards_local_only_and_missing_and_bad(
     # a run present on BOTH local and drive can't overwrite local -> 409
     (drive / "vpi-runs" / "20260101_000000_a").mkdir()
     assert client.post("/api/recordings/20260101_000000_a/restore").status_code == 409
+
+
+def test_reveal_works_for_a_run_on_a_drive(
+    env: tuple[TestClient, Path], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # "reveal on disk: 400 bad run" for offloaded runs: reveal must resolve across mounted drives.
+    import vention_printer_interface.api.app as appmod
+
+    client, tmp = env
+    drive = tmp / "SSD"
+    dr = drive / "vpi-runs" / "20260909_000000_z"
+    dr.mkdir(parents=True)
+    (dr / "metadata.json").write_text("{}")
+    monkeypatch.setenv("VPI_FAKE_DRIVES", str(drive))
+    calls: list[tuple[object, ...]] = []
+    monkeypatch.setattr(appmod.subprocess, "run", lambda *a, **k: calls.append(a))
+    r = client.post("/api/recordings/20260909_000000_z/reveal")
+    assert r.status_code == 200, r.text
+    body = r.json()
+    assert body["path"] == str((dr / "metadata.json").resolve())  # on the drive, not local
+    assert body["revealed"] is True and calls

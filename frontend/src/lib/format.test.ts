@@ -79,3 +79,24 @@ test("height mismatch and cycle index", () => {
   assert.equal(cycleIndex({ kind: "move_abs", axis: 4, value: 600, phase: "printing" }, plan), 6);
   assert.equal(cycleIndex({ kind: "home", axis: null, value: null, phase: "setup" }, plan), 0);
 });
+
+// ---- float-noise-free display (the "55.99999999999999 mm" sig-fig bug) -----------------------
+import { cleanNum, fmtMmAuto } from "./format.ts";
+
+test("cleanNum strips floating-point noise and trailing zeros", () => {
+  assert.equal(cleanNum(55.99999999999999), "56");
+  assert.equal(cleanNum(0.19999999999999996), "0.2");
+  assert.equal(cleanNum(10.600000000000001), "10.6");
+  assert.equal(cleanNum(457.3744967412675), "457.37");
+  assert.equal(cleanNum(0.05), "0.05");
+  assert.equal(cleanNum(-0.0000001), "0"); // never "-0"
+  assert.equal(cleanNum(145), "145");
+  assert.equal(cleanNum(1.23456, 3), "1.235");
+});
+
+test("fmtMmAuto adds the unit and shows unknown as a dash", () => {
+  assert.equal(fmtMmAuto(55.99999999999999), "56 mm");
+  assert.equal(fmtMmAuto(null), "—");
+  assert.equal(fmtMmAuto(undefined), "—");
+  assert.equal(fmtMmAuto(Number.NaN), "—");
+});

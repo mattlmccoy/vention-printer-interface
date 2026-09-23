@@ -499,3 +499,45 @@ def test_rigid_transform_2d_does_not_absorb_scale():
     aligned = src @ r_fit.T + t_fit
     residual = np.sqrt(((aligned - dst) ** 2).sum(axis=1)).mean()
     assert residual > 1.0  # scale NOT removed by a rigid fit
+
+
+# ---- bed-raster bounds (fix/charuco-board-calibrate) -----------------------------------------
+def test_bed_raster_error_accepts_a_sane_raster() -> None:
+    from vention_printer_interface.vision.registration import bed_raster_error, bed_raster_size
+
+    assert bed_raster_size(0.5, (0.0, 0.0, 200.0, 200.0)) == (400, 400)
+    assert bed_raster_error(0.5, (0.0, 0.0, 200.0, 200.0)) is None
+    assert bed_raster_error(0.05, (0.0, 0.0, 200.0, 200.0)) is None  # 4000x4000 = 16 MP
+
+
+def test_bed_raster_error_rejects_reversed_or_empty_extent() -> None:
+    from vention_printer_interface.vision.registration import bed_raster_error
+
+    assert "x1" in (bed_raster_error(0.5, (10.0, 0.0, 10.0, 80.0)) or "")
+    assert "y1" in (bed_raster_error(0.5, (0.0, 80.0, 100.0, 0.0)) or "")
+
+
+def test_bed_raster_error_rejects_non_positive_scale() -> None:
+    from vention_printer_interface.vision.registration import bed_raster_error
+
+    for bad in (0.0, -1.0, float("nan"), float("inf")):
+        assert "positive" in (bed_raster_error(bad, (0.0, 0.0, 100.0, 100.0)) or "")
+
+
+def test_bed_raster_error_explains_an_oversized_raster_and_the_minimum_scale() -> None:
+    from vention_printer_interface.vision.registration import MAX_BED_IMAGE_PX, bed_raster_error
+
+    assert MAX_BED_IMAGE_PX == 25_000_000
+    msg = bed_raster_error(0.01, (0.0, 0.0, 200.0, 200.0))
+    assert msg is not None
+    assert "20000x20000" in msg and "400" in msg  # size in px and megapixels
+    assert "0.04" in msg  # smallest mm/px that fits the 25 MP cap on a 200x200 mm bed
+
+
+def test_warp_to_bed_refuses_an_oversized_raster_instead_of_allocating_it() -> None:
+    """A calibration saved before the finalize bounds existed must not OOM every capture."""
+    import pytest
+
+    img = np.zeros((48, 64, 3), np.uint8)
+    with pytest.raises(ValueError, match="20000x20000"):
+        warp_to_bed(img, np.eye(3), mm_per_px=0.01, bed_extent_mm=(0, 0, 200, 200))
