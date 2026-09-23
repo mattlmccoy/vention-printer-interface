@@ -1,16 +1,20 @@
-import { useEffect, useState } from "react";
+import { useEffect, useState, type ReactElement } from "react";
 import { api } from "../../lib/api.ts";
 import { fmtMmAuto, type Gates } from "../../lib/format.ts";
 import type { StatusPayload } from "../../lib/telemetry.ts";
 import { fillDepthMm, cavityFillPct, thickPrecoatFeedMm, FEED_TRAVEL_MM, type FillSource } from "../../lib/powder.ts";
 import { WALKTHROUGH_STEPS, stepHeading } from "../../lib/walkthrough.ts";
+import { primingBudget, primingStatusLine, stepMoves, type StepMove } from "../../lib/priming_page.ts";
+import type { PrimeStatus } from "../../lib/print_flow.ts";
 import { PrimingFields, usePriming } from "../PrimingPanel.tsx";
 import type { Call } from "./types.ts";
 
-/** Priming tab: the mockup's clean two-panel guided flow — a Steps rail (left) + the current
- *  step's content (right). The live machine + overview are watched in the persistent dock, so no
- *  machine is duplicated here. The walkthrough shows its OWN step position ("Step 3 of 6"), never
- *  the compiled priming macro's raw step count. RUN PRIMING (auto) + ABORT stay available. */
+/** Priming tab: a Steps rail (left) + the current step (right). Every step uses the same shape —
+ *  the step-5 pattern — a numbered row of the physical moves it runs, each target editable inline
+ *  and run in place. Pinned on every step: the powder budget (needed vs in the feed) and ONE
+ *  status line for the machine/macro (no banners appearing and disappearing); Back/Next pinned at
+ *  the bottom. The walkthrough shows its own position ("Step 3 of 6"), never the macro's raw count.
+ *  RUN PRIMING (auto) + ABORT stay available below. */
 const STEP_SUB: Record<string, string> = {
   amount: "feed-cavity target",
   "build-up": "raise build to the bed",
@@ -19,14 +23,21 @@ const STEP_SUB: Record<string, string> = {
   level: "pack the bed",
   finish: "capture & go to Print",
 };
+const STEP_INTRO: Record<string, string> = {
+  amount: "How much powder the feed cavity must hold: the print's feed, the thick precoats' feed and a margin.",
+  "build-up": "Raise the build (part) piston to the top so the recoater can spread over it.",
+  "open-feed": "Lower the feed piston to open a powder cavity of the depth you set.",
+  load: "Pour powder into the open feed cavity until it is full and level with the bed. No motor moves here.",
+  level: "Each thick precoat runs these three moves in order; the build piston stays fixed. Change the feed per coat as the bed fills, and repeat until the bed is even.",
+  finish: "When the bed is evenly primed, capture the primed piston positions. The Print tab starts from them — for this plan only.",
+};
+const LEVEL_STEP = WALKTHROUGH_STEPS.findIndex((w) => w.id === "level");
+const CIRCLED = ["①", "②", "③", "④"];
 
 export function PrimingView({ status, gates, call, onJob, onPrint }: { status: StatusPayload | null; gates: Gates; call: Call; onJob: () => void; onPrint: () => void }) {
   const { p, s, invalid, edit, setEdit, save, setParam } = usePriming(call);
   const ok = gates.controllable && !gates.printActive;
   const r = status?.print ?? null;
-  const paused = r?.state === "paused";
-  const macroRunning = r?.macro === "priming" && (r.state === "running" || r.state === "paused");
-  const macroPct = r && r.n_steps ? Math.round((100 * r.step_index) / r.n_steps) : 0;
 
   const [step, setStep] = useState(() => {
     const raw = typeof location !== "undefined" ? new URLSearchParams(location.search).get("step") : null;
@@ -42,8 +53,10 @@ export function PrimingView({ status, gates, call, onJob, onPrint }: { status: S
   const [manualDepthMm, setManualDepthMm] = useState("");
   const [feedDemandMm, setFeedDemandMm] = useState<number | null>(null); // the print's feed consumption
   const [primed, setPrimed] = useState<{ part_mm: number; feed_mm: number; captured_at: number } | null>(null);
+  const [primeStatus, setPrimeStatus] = useState<PrimeStatus | null>(null);
+  const [targets, setTargets] = useState<Record<string, string>>({}); // inline target edits, by setting key
   const [jogStep, setJogStep] = useState("20"); // recoater jog step (mm) for the leveling step
-  const [feedAmt, setFeedAmt] = useState(""); // editable feed-supply amount (mm); blank = saved default
+  const [feedAmt, setFeedAmt] = useState(""); // per-coat feed amount (mm); blank = saved default
   const [rcSpeed, setRcSpeed] = useState("");
   const [rcAccel, setRcAccel] = useState("");
   const am4 = status?.axis_motion?.["4"]; // recoater current max speed/accel
@@ -53,18 +66,26 @@ export function PrimingView({ status, gates, call, onJob, onPrint }: { status: S
     api.printSettings().then((x) => live && setFeedDemandMm(x.feed_demand_mm ?? null)).catch(() => {});
     return () => { live = false; };
   }, [status?.job?.path]);
-  useEffect(() => {
-    let live = true;
-    api.primed().then((x) => live && setPrimed(x.primed)).catch(() => {});
-    return () => { live = false; };
-  }, []);
+  const loadPrimed = () => api.primed().then((x) => { setPrimed(x.primed); setPrimeStatus(x.status ?? null); }).catch(() => {});
+  useEffect(() => { loadPrimed(); }, []);
 
   const n = (v: string) => { const x = Number(v); return Number.isFinite(x) ? x : 0; };
   const target = (k: string): number | null => (s ? s[k] ?? null : null);
-  // Priming's thick precoats spend this much feed before the print starts (n x feed per precoat).
   const thickFeedMm = thickPrecoatFeedMm(target("n_thick_precoats"), target("thick_feed_mm"));
   const depth = fillDepthMm({ source, feedDemandMm: feedDemandMm ?? 0, thickPrecoatFeedMm: thickFeedMm, nLayers: n(nLayers), layerThicknessMm: n(layerThicknessMm), manualDepthMm: n(manualDepthMm), marginMm: n(marginMm) });
   const pct = cavityFillPct(depth);
+  const fmt = (mm: number | null) => fmtMmAuto(mm);
+
+  // pinned: powder budget + one status line
+  const tel = status?.controller?.telemetry;
+  const budget = primingBudget({
+    feedDemandMm, thickFeedMm, marginMm: n(marginMm),
+    feedPosMm: tel?.positions?.["2"] ?? null, feedReferenced: tel?.referenced?.["2"] === true,
+    afterPrecoats: step >= LEVEL_STEP,
+  });
+  const barPct = (mm: number | null) => (mm == null ? 0 : Math.min(100, (100 * mm) / FEED_TRAVEL_MM));
+  const line = primingStatusLine(r, gates.connected);
+  const capture = () => call("capture primed", () => api.primedCapture().then((x) => { setPrimed(x.primed); setPrimeStatus(x.status ?? null); }));
 
   const num = (v: string, set: (s: string) => void, label: string) => (
     <>
@@ -75,10 +96,40 @@ export function PrimingView({ status, gates, call, onJob, onPrint }: { status: S
   const srcBtn = (value: FillSource, label: string) => (
     <button className={`small${source === value ? " on" : ""}`} aria-pressed={source === value} onClick={() => setSource(value)}>{label}</button>
   );
-  const fmt = (mm: number | null) => fmtMmAuto(mm);
-  const skip = () => setStep((x) => Math.min(WALKTHROUGH_STEPS.length - 1, x + 1));
-  // Feed-supply amount for the level step: the editable field, else the saved feed/precoat default.
-  const feedSupplyMm = n(feedAmt) > 0 ? n(feedAmt) : (target("thick_feed_mm") ?? 0);
+  const next = () => setStep((x) => Math.min(WALKTHROUGH_STEPS.length - 1, x + 1));
+  const feedOverride = n(feedAmt) > 0 ? n(feedAmt) : null;
+
+  // One numbered move: its target inline and a Run button.
+  const moveRow = (m: StepMove) => {
+    const isFeedCoat = m.key === "thick_feed_mm";
+    const shown = isFeedCoat ? feedAmt : (targets[m.key] ?? (m.value == null ? "" : String(m.value)));
+    // The target the operator typed (absolute moves) stays in the field — it is exactly what Run
+    // moves to (WYSIWYG) and it is saved to the priming settings on blur/Enter. Never cleared on
+    // blur: clicking Run blurs first, and a cleared edit would let the click run the OLD target.
+    const edited = !isFeedCoat && targets[m.key] !== undefined && targets[m.key] !== "" && Number.isFinite(Number(targets[m.key]))
+      ? Number(targets[m.key]) : null;
+    const commit = () => { if (edited != null && edited !== target(m.key)) setParam({ [m.key]: edited }, `set ${m.key}`); };
+    const runValue = edited ?? m.value;
+    return (
+      <span className="seq-feed" key={m.n}>
+        <b>{CIRCLED[m.n - 1]}</b> {m.label}
+        <input type="number" inputMode="decimal" style={{ width: 72 }} aria-label={`${m.label} (mm)`}
+          value={shown} placeholder={isFeedCoat && target("thick_feed_mm") != null ? String(target("thick_feed_mm")) : "mm"}
+          onChange={(e) => (isFeedCoat ? setFeedAmt(e.target.value) : setTargets((t) => ({ ...t, [m.key]: e.target.value })))}
+          onBlur={() => { if (!isFeedCoat) commit(); }} onKeyDown={(e) => { if (e.key === "Enter" && !isFeedCoat) commit(); }} />
+        <span className="hint" style={{ marginTop: 0 }}>mm</span>
+        <button className="cta primary" disabled={!ok || runValue == null}
+          title={edited != null ? "saves this target, then runs the move" : undefined}
+          onClick={() => { if (edited != null) commit(); call(m.label, () => api.move(m.axis, m.mode, runValue as number)); }}>
+          {isFeedCoat ? "▲ supply" : "Run"}
+        </button>
+        {isFeedCoat && <button className="cta" disabled={!ok || m.value == null} title="Lower the feed piston by the amount shown (retract)." onClick={() => call("lower feed", () => api.move(2, "rel", -(m.value as number)))}>▼ down</button>}
+      </span>
+    );
+  };
+  const moves = stepMoves(cur.id, s, feedOverride);
+  const arrow = (k: string) => <span className="seq-arrow" aria-hidden="true" key={k}>→</span>;
+  const row = (items: ReactElement[]) => <div className="seq">{items.flatMap((el, i) => (i ? [arrow(`a${i}`), el] : [el]))}</div>;
 
   return (
     <div className="view fixed-page priming-view">
@@ -96,30 +147,26 @@ export function PrimingView({ status, gates, call, onJob, onPrint }: { status: S
           </ol>
         </div>
 
-        <div className="card">
-          {macroRunning && (
-            <div className={`banner ${paused ? "warn" : ""}`} style={{ marginBottom: 12 }}>
-              <b>PRIMING {paused ? "PAUSED" : "RUNNING"}</b>
-              <span className="reason">{paused ? (r?.reason || "load powder into the feed cavity, then Resume") : `step ${r?.step_index ?? 0} of ${r?.n_steps ?? 0} · ${macroPct}%`}</span>
-              {paused && <button className="small" disabled={!gates.connected} style={{ marginLeft: "auto" }} onClick={() => call("resume priming", api.printResume)}>Resume</button>}
-              <button className="small" disabled={!gates.connected} style={{ marginLeft: paused ? 6 : "auto" }} onClick={() => call("abort", api.printAbort)}>Abort</button>
+        <div className="card prime-card">
+          <div className="prime-pinned">
+            <div className="prime-budget" data-tip="Feed powder needed vs. the powder column in the feed piston now (its depth below flush). Before the thick precoats the need includes their feed and your margin.">
+              <div className="bar"><i className={`b-${budget.tone}`} style={{ width: `${barPct(budget.haveMm)}%` }} />{budget.needMm != null && <span className="need-mark" style={{ left: `${barPct(budget.needMm)}%` }} />}</div>
+              <div className={`bar-lbl tone-${budget.tone}`}>powder · {budget.text}</div>
             </div>
-          )}
-          {r?.macro === "priming" && r.state === "done" && (
-            <div className="banner" style={{ marginBottom: 12 }}>
-              <b>PRIMING COMPLETE</b>
-              <span className="reason">capture the primed bed, then start printing</span>
-              <button className="cta primary small" disabled={!gates.controllable} style={{ marginLeft: "auto" }}
-                onClick={() => call("capture primed", () => api.primedCapture().then((x) => { setPrimed(x.primed); onPrint(); }))}>Capture &amp; go to Print →</button>
+            <div className={`prime-status tone-${line.tone}`} role="status">
+              <span className="txt">{line.text}</span>
+              {line.actions.includes("resume") && <button className="small" disabled={!gates.connected} onClick={() => call("resume priming", api.printResume)}>Resume</button>}
+              {line.actions.includes("capture") && <button className="small primary" disabled={!gates.controllable} onClick={() => { capture().then(() => setStep(WALKTHROUGH_STEPS.length - 1)); }}>Capture primed bed</button>}
+              {line.actions.includes("abort") && <button className="small" disabled={!gates.connected} onClick={() => call("abort", api.printAbort)}>Abort</button>}
             </div>
-          )}
+          </div>
 
-          <h3>{stepHeading(step)}<span className="num" style={{ color: "var(--faint)", textTransform: "none", letterSpacing: 0 }}>{step + 1} / {WALKTHROUGH_STEPS.length}</span></h3>
-
+          <h3>{stepHeading(step)}</h3>
           <div className="grid-gap cap">
+            <div className="hint" style={{ marginTop: 0 }}>{STEP_INTRO[cur.id]}</div>
+
             {cur.id === "amount" && (
               <>
-                <div className="hint" style={{ marginTop: 0 }}>How much powder should the feed cavity hold? Pick a source.</div>
                 <div className="seg">{srcBtn("job", "paired to job")}{srcBtn("layers", "layers × feed")}{srcBtn("depth", "depth (mm)")}</div>
                 {source === "job" && (
                   <>
@@ -139,75 +186,26 @@ export function PrimingView({ status, gates, call, onJob, onPrint }: { status: S
                   </>
                 )}
                 {source === "depth" && <div className="fields">{num(manualDepthMm, setManualDepthMm, "depth")}</div>}
-                <div className="kv"><span>feed-cavity fill depth</span><span>{depth.toFixed(1)} mm</span></div>
-                <div className="bar"><i style={{ width: `${pct}%` }} /></div>
-                <div className="bar-lbl">{pct}% of {FEED_TRAVEL_MM} mm feed travel</div>
-                <div className="kv"><span>saved feed cavity</span><span>{fmt(target("feed_cavity_mm"))}</span></div>
-                <div className="btnrow">
-                  <button className="cta primary" disabled={!ok || depth <= 0} onClick={() => setParam({ feed_cavity_mm: depth }, "set feed cavity")}>Set as feed cavity</button>
-                  <button className="cta" onClick={skip}>Next →</button>
-                </div>
+                {row([
+                  <span className="seq-feed" key="d"><b>①</b> fill depth <b className="num">{depth.toFixed(1)} mm</b><span className="hint" style={{ marginTop: 0 }}>{pct}% of {FEED_TRAVEL_MM} mm travel</span></span>,
+                  <span className="seq-feed" key="s"><b>②</b> <button className="cta primary" disabled={!ok || depth <= 0} onClick={() => setParam({ feed_cavity_mm: depth }, "set feed cavity")}>Set as feed cavity</button><span className="hint" style={{ marginTop: 0 }}>saved: {fmt(target("feed_cavity_mm"))}</span></span>,
+                ])}
               </>
             )}
 
-            {cur.id === "build-up" && (
-              <>
-                <div className="hint" style={{ marginTop: 0 }}>Raise the build (part) piston to the top so the recoater can spread over it.</div>
-                <div className="kv"><span>target · part top</span><span>{fmt(target("part_top_mm"))}</span></div>
-                <div className="btnrow">
-                  <button className="cta primary" disabled={!ok || target("part_top_mm") === null} onClick={() => call("build up", () => api.move(1, "abs", target("part_top_mm") as number))}>Run this step</button>
-                  <button className="cta" onClick={skip}>Skip →</button>
-                </div>
-              </>
-            )}
+            {(cur.id === "build-up" || cur.id === "open-feed") && row(moves.map(moveRow))}
 
-            {cur.id === "open-feed" && (
-              <>
-                <div className="hint" style={{ marginTop: 0 }}>Lower the feed piston to open a powder cavity of the depth you set.</div>
-                <div className="kv"><span>target · feed cavity</span><span>{fmt(target("feed_cavity_mm"))}</span></div>
-                <div className="btnrow">
-                  <button className="cta primary" disabled={!ok || target("feed_cavity_mm") === null} onClick={() => call("open feed cavity", () => api.move(2, "abs", target("feed_cavity_mm") as number))}>Run this step</button>
-                  <button className="cta" onClick={skip}>Skip →</button>
-                </div>
-              </>
-            )}
-
-            {cur.id === "load" && (
-              <>
-                <div className="hint" style={{ marginTop: 0 }}>Pour powder into the open feed cavity until it is full and level with the bed. No motor moves here — this is a hold.</div>
-                {paused && <div className="lock">A priming macro is paused for this hold. Resume it once powder is loaded.</div>}
-                <div className="btnrow">
-                  <button className="cta primary" onClick={skip}>Powder loaded — next →</button>
-                  {paused && <button className="cta" disabled={!gates.connected} onClick={() => call("resume priming", api.printResume)}>Resume paused macro</button>}
-                </div>
-              </>
-            )}
+            {cur.id === "load" && row([
+              <span className="seq-feed" key="p"><b>①</b> pour powder until full and level</span>,
+              <span className="seq-feed" key="c"><b>②</b> <button className="cta primary" onClick={next}>Powder loaded ✓</button></span>,
+            ])}
 
             {cur.id === "level" && (
               <>
-                <div className="hint" style={{ marginTop: 0 }}>Each thick precoat runs three moves in order — the build piston stays fixed. The feed amount in ② is editable (defaults to the saved feed / precoat); change it per coat as the bed fills. Repeat until even.</div>
-                <div className="kv">
-                  <span>thick precoats</span><span>{target("n_thick_precoats") ?? "—"}</span>
-                  <span>feed / precoat</span><span>{fmt(target("thick_feed_mm"))}</span>
-                  <span>start (past feed)</span><span>{fmt(target("level_recoat_start_mm"))}</span>
-                  <span>spread to</span><span>{fmt(target("level_recoat_end_mm"))}</span>
+                <div className="kv" style={{ marginTop: 0 }}>
+                  <span>thick precoats</span><span>{target("n_thick_precoats") ?? "—"} × {fmt(target("thick_feed_mm"))} feed</span>
                 </div>
-                {/* the primary 3-move precoat sequence, IN ORDER: recoater clear of feed → raise powder
-                    → spread. Step ② carries an EDITABLE feed amount (▲ supply / ▼ down) for real control. */}
-                <div className="seq">
-                  <button className="cta primary" disabled={!ok || target("level_recoat_start_mm") === null} title="① Move the recoater past the feed piston to the start position, clear of the powder about to be raised." onClick={() => call("move to start", () => api.move(4, "abs", target("level_recoat_start_mm") as number))}><b>①</b> Move to start</button>
-                  <span className="seq-arrow" aria-hidden="true">→</span>
-                  <span className="seq-feed">
-                    <b>②</b> Feed
-                    <input type="number" inputMode="decimal" value={feedAmt} placeholder={target("thick_feed_mm") != null ? String(target("thick_feed_mm")) : "mm"} onChange={(e) => setFeedAmt(e.target.value)} style={{ width: 64 }} aria-label="feed supply amount (mm)" />
-                    <span className="hint" style={{ marginTop: 0 }}>mm</span>
-                    <button className="cta primary" disabled={!ok || feedSupplyMm <= 0} title="Raise the feed piston by the amount shown to supply powder above the bed." onClick={() => call("advance feed", () => api.move(2, "rel", -feedSupplyMm))}>▲ supply</button>
-                    <button className="cta" disabled={!ok || feedSupplyMm <= 0} title="Lower the feed piston by the amount shown (retract)." onClick={() => call("lower feed", () => api.move(2, "rel", feedSupplyMm))}>▼ down</button>
-                  </span>
-                  <span className="seq-arrow" aria-hidden="true">→</span>
-                  <button className="cta primary" disabled={!ok || target("level_recoat_end_mm") === null} title="③ Sweep the recoater across the bed, dragging the raised powder to fill the runway and build cavity." onClick={() => call("spread", () => api.move(4, "abs", target("level_recoat_end_mm") as number))}><b>③</b> Spread ▶</button>
-                </div>
-                {/* recoater fine adjustment — tucked away so the sequence stays clear */}
+                {row(moves.map(moveRow))}
                 <details className="params" style={{ marginTop: 16 }}>
                   <summary>fine adjust · recoater jog &amp; rates</summary>
                   <div className="body">
@@ -232,23 +230,25 @@ export function PrimingView({ status, gates, call, onJob, onPrint }: { status: S
 
             {cur.id === "finish" && (
               <>
-                <div className="hint" style={{ marginTop: 0 }}>When the bed is evenly primed, capture the primed piston positions. The Print tab then starts from these.</div>
-                <div className="btnrow">
-                  <button className="cta primary" disabled={!ok} onClick={() => call("capture primed", () => api.primedCapture().then((x) => setPrimed(x.primed)))}>Bed is primed — capture</button>
-                </div>
+                {row([
+                  <span className="seq-feed" key="c"><b>①</b> <button className="cta primary" disabled={!ok} onClick={capture}>Bed is primed — capture</button></span>,
+                  <span className="seq-feed" key="g"><b>②</b> <button className="cta primary" disabled={!primed} onClick={onPrint}>Go to Print →</button></span>,
+                ])}
                 {primed ? (
-                  <>
-                    <div className="kv"><span>captured part</span><span>{fmtMmAuto(primed.part_mm)}</span><span>captured feed</span><span>{fmtMmAuto(primed.feed_mm)}</span></div>
-                    <div className="btnrow"><button className="cta primary" onClick={onPrint}>Priming complete — go to Print →</button></div>
-                  </>
+                  <div className="kv">
+                    <span>captured part</span><span>{fmtMmAuto(primed.part_mm)}</span>
+                    <span>captured feed</span><span>{fmtMmAuto(primed.feed_mm)}</span>
+                    <span>for the print</span><span className={primeStatus?.state === "ready" ? "" : "warn-text"}>{primeStatus?.reason ?? "the operator didn't report which plan"}</span>
+                  </div>
                 ) : <div className="hint">No primed bed captured yet. The Print tab starts from the captured bed.</div>}
               </>
             )}
           </div>
 
-          <div className="step-nav">
+          <div className="step-nav prime-nav">
             <button className="small" disabled={step === 0} onClick={() => setStep((x) => Math.max(0, x - 1))}>Back</button>
-            <button className="small" disabled={step === WALKTHROUGH_STEPS.length - 1} onClick={skip}>Next</button>
+            <span className="hint" style={{ marginTop: 0 }}>{step + 1} / {WALKTHROUGH_STEPS.length}</span>
+            <button className="small" disabled={step === WALKTHROUGH_STEPS.length - 1} onClick={next}>Next</button>
           </div>
 
           <details className="params">

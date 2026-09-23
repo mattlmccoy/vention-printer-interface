@@ -72,7 +72,13 @@ from vention_printer_interface.control.heater_model import exposure
 from vention_printer_interface.control.limits_store import load_limits, save_limits
 from vention_printer_interface.control.macros import MACROS, macro_steps
 from vention_printer_interface.control.meteor import HotFolderMeteorAdapter
-from vention_printer_interface.control.primed_state import PrimedState, load_primed, save_primed
+from vention_printer_interface.control.primed_state import (
+    PrimedState,
+    load_primed,
+    plan_fingerprint,
+    primed_status,
+    save_primed,
+)
 from vention_printer_interface.control.priming import PrimingSettings, compile_priming_setup
 from vention_printer_interface.control.priming_store import load_priming, save_priming
 from vention_printer_interface.control.print_controller import PrintController, PrintState
@@ -423,6 +429,9 @@ class PrintStartBody(BaseModel):
     # The operator saw the powder-budget warning (feed short, or its position unverifiable) and
     # chose to print anyway. A short feed then stops safely when the powder runs out.
     accept_feed_risk: bool = False
+    # The operator chose to print on a bed that isn't ready for THIS plan (primed for another plan,
+    # already used by a print, or captured before plans were recorded). Never-primed stays refused.
+    accept_prime_risk: bool = False
 
 
 class AutoLogBody(BaseModel):
@@ -1709,6 +1718,13 @@ def create_app(
         reasons = plan.validate(ctrl().limits)
         if reasons:
             raise HTTPException(409, "print settings invalid: " + "; ".join(reasons))
+        prime = primed_status(app.state.primed, plan)
+        if prime["state"] != "ready" and not body.accept_prime_risk:
+            raise HTTPException(
+                409,
+                f"The primed bed isn't ready for this print: {prime['reason']}. Re-prime the bed, "
+                "or start anyway if you know it's right.",
+            )
         feed_mm = _check_feed_budget(plan, body.accept_feed_risk)
         # Open the auto-log run BEFORE starting so the print's own start event lands in it.
         opened = False
@@ -1741,6 +1757,10 @@ def create_app(
                 app.state.auto_run_open = False
                 rec().stop()
             raise
+        # The print is now spreading on this primed bed: it can't be started from again as-is.
+        used = dataclasses.replace(app.state.primed, consumed_at=time.time())
+        save_primed(root, used)
+        app.state.primed = used
         return printer().snapshot()
 
     @app.post("/api/print/pause")
@@ -1948,7 +1968,10 @@ def create_app(
     @app.get("/api/primed")
     def get_primed() -> dict[str, Any]:
         primed: PrimedState | None = app.state.primed
-        return {"primed": primed.to_dict() if primed is not None else None}
+        return {
+            "primed": primed.to_dict() if primed is not None else None,
+            "status": primed_status(primed, app.state.print_settings),
+        }
 
     @app.post("/api/primed/capture")
     def capture_primed() -> dict[str, Any]:
@@ -1958,13 +1981,15 @@ def create_app(
             raise HTTPException(
                 409, "connect and read positions before capturing the primed bed state"
             )
+        plan: PrintSettings = app.state.print_settings
         state = PrimedState(
-            part_mm=positions["1"], feed_mm=positions["2"], captured_at=time.time()
+            part_mm=positions["1"], feed_mm=positions["2"], captured_at=time.time(),
+            plan_fingerprint=plan_fingerprint(plan),
         )
         save_primed(root, state)
         app.state.primed = state
         ev("primed_captured", state.to_dict())
-        return {"primed": state.to_dict()}
+        return {"primed": state.to_dict(), "status": primed_status(state, plan)}
 
     @app.get("/api/events")
     def get_events() -> dict[str, Any]:

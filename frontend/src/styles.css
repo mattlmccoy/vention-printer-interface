@@ -252,6 +252,34 @@ button.small { height: 34px; padding: 0 12px; border: 1px solid var(--line-contr
 .srail .t { font-weight: 600; font-size: 14px; color: var(--fg-strong); }
 .srail li:not(.on):not(.done) .t { color: var(--muted); }
 .srail .sd { font-size: 11.5px; color: var(--faint); margin-top: 1px; }
+/* Priming (P3): powder budget + one status line pinned at the top of the step card, Back/Next
+   pinned at the bottom; the card's own background keeps them opaque over scrolled content. */
+.prime-pinned { position: sticky; top: -24px; z-index: 2; background: var(--panel); margin: -16px -16px 12px; padding: 12px 16px 10px; border-bottom: 1px solid var(--line); border-radius: 12px 12px 0 0; }
+.prime-budget .bar { margin: 0 0 6px; overflow: visible; }
+.prime-budget .bar i.b-ok { background: var(--live); }
+.prime-budget .bar i.b-warn { background: var(--warn); }
+.prime-budget .bar i.b-bad { background: var(--err); }
+.prime-budget .need-mark { position: absolute; top: -4px; bottom: -4px; width: 2px; background: var(--fg-strong); transform: translateX(-1px); }
+.bar-lbl.tone-bad, .warn-text.tone-bad { color: var(--err); }
+.bar-lbl.tone-warn { color: var(--warn); }
+.prime-status { display: flex; align-items: center; gap: 8px; min-height: 30px; margin-top: 8px; font: 12.5px var(--font-mono); color: var(--muted); }
+.prime-status .txt { flex: 1; min-width: 0; overflow-wrap: anywhere; }
+.prime-status.tone-warn { color: var(--warn); }
+.prime-status.tone-ok { color: var(--fg); }
+.prime-nav { position: sticky; bottom: -24px; z-index: 2; background: var(--panel); margin: 18px -16px 0; padding: 10px 16px; border-top: 1px solid var(--line); align-items: center; justify-content: space-between; }
+.warn-text { color: var(--warn); }
+.seq .num { font-variant-numeric: tabular-nums; }
+/* Configure → Prime → Start (Print tab): the step rail laid out horizontally. */
+.flow-strip { list-style: none; margin: 0 0 14px; padding: 0; display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 8px; }
+.flow-strip li { display: flex; gap: 10px; align-items: flex-start; padding: 8px 10px; border: 1px solid var(--line); border-radius: var(--radius); min-width: 0; }
+.flow-strip li.current { background: var(--bg-deep); }
+.flow-strip .n { flex: 0 0 22px; height: 22px; border-radius: 50%; display: grid; place-items: center; font: 12px var(--font-mono); border: 1px solid var(--line-control); color: var(--muted); }
+.flow-strip li.current .n { background: var(--accent); color: var(--accent-ink); border-color: transparent; }
+.flow-strip li.done .n { background: var(--live); color: var(--bg); border-color: transparent; }
+.flow-strip .t { font-weight: 600; font-size: 13px; color: var(--fg-strong); }
+.flow-strip li.todo .t { color: var(--muted); }
+.flow-strip .sd { font-size: 11.5px; color: var(--faint); margin-top: 1px; overflow-wrap: anywhere; }
+@media (max-width: 640px) { .flow-strip { grid-template-columns: minmax(0, 1fr); } }
 .card { background: var(--panel); border: 1px solid var(--line); border-radius: 12px; padding: 16px; min-width: 0; }
 /* softer, rounder surfaces to match the mockup (cards 12, sub-cards 10; controls stay --radius=8) */
 .cmdbar, .rp-drawer, .cam-panel, .dock-machine, .dock-print, .setup-help,

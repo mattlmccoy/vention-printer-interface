@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import { api, type FeedBudgetPayload, type MeteorStatus } from "../../lib/api.ts";
 import { feedBudgetLine, type BudgetTone } from "../../lib/feed_budget.ts";
+import { printFlow, type PrimeStatus } from "../../lib/print_flow.ts";
 import { estimateDurationS } from "../../lib/estimate.ts";
 import { cleanNum, fmtSecs, type Gates } from "../../lib/format.ts";
 import { CAPTURE_STAGES, CAPTURE_STAGE_LABEL, multipassMismatch, toggleCaptureStage, totalLayers, totalThickness, validate, type PrintSettings } from "../../lib/print_settings.ts";
@@ -27,7 +28,11 @@ export function PrintConfigurator({ status, gates, call, onStarted }: {
   const [single, setSingle] = useState(false);
   const [name, setName] = useState("");
   const [meteor, setMeteor] = useState<MeteorStatus | null>(null);
-  const [primed, setPrimed] = useState<boolean | null>(null); // null = unknown, else bed-primed?
+  // Is the captured bed ready for THIS plan? null = the operator didn't say (never "ready").
+  const [prime, setPrime] = useState<PrimeStatus | null>(null);
+  const refreshPrime = () => api.primed()
+    .then((r) => setPrime(r.status ?? (r.primed ? null : { state: "none", reason: "the bed hasn't been primed" })))
+    .catch(() => setPrime(null));
   const [budget, setBudget] = useState<FeedBudgetPayload | null>(null); // feed powder vs this print's demand
   const [mpDismissed, setMpDismissed] = useState(false); // dismissable multipass-mismatch warning (#7)
   const [minWait, setMinWait] = useState(0.25); // the operator's real wait floor, for a matching estimate (#6)
@@ -38,9 +43,9 @@ export function PrintConfigurator({ status, gates, call, onStarted }: {
   const refresh = () => {
     api.printSettings().then((r) => { setPlan(r.plan as unknown as PrintSettings); setMinWait(r.min_wait_s ?? 0.25); setDirty(false); }).catch(() => undefined);
     api.meteorStatus().then(setMeteor).catch(() => setMeteor(null));
-    // A print is refused (409) until the bed is primed; fetch it so we can guide to Priming rather
-    // than let START fail. The tab remounts this component, so a fresh capture is picked up on return.
-    api.primed().then((r) => setPrimed(r.primed !== null)).catch(() => setPrimed(null));
+    // A print is refused (409) unless the bed is primed for THIS plan; fetch it so we can guide to
+    // Priming rather than let START fail. The tab remounts, so a fresh capture is picked up on return.
+    refreshPrime();
     api.printFeedBudget().then(setBudget).catch(() => setBudget(null));
   };
   useEffect(() => { refresh(); }, [gates.reachable, job?.path]);
@@ -64,7 +69,7 @@ export function PrintConfigurator({ status, gates, call, onStarted }: {
   // This form does NOT own the routine-only fields (multipass n_jet_passes, pre_heater_drop_mm) —
   // those live in Routine Parameters. Strip them from every save so configuring never clobbers them.
   const jobPatch = (p: PrintSettings): Record<string, unknown> => { const { n_jet_passes: _a, pre_heater_drop_mm: _b, ...rest } = p as unknown as Record<string, unknown>; return rest; };
-  const save = async () => { if (!plan) return; await call("save print_settings", () => api.setPrintSettings(jobPatch(plan)).then((r) => { setPlan(r.plan as unknown as PrintSettings); setDirty(false); return api.printFeedBudget().then(setBudget); })); };
+  const save = async () => { if (!plan) return; await call("save print_settings", () => api.setPrintSettings(jobPatch(plan)).then((r) => { setPlan(r.plan as unknown as PrintSettings); setDirty(false); refreshPrime(); return api.printFeedBudget().then(setBudget); })); };
   // Persist unsaved edits when leaving, so a configured print carries through to Priming and status.
   const planRef = useRef<PrintSettings | null>(null); const dirtyRef = useRef(false); const runningRef = useRef(false);
   useEffect(() => { planRef.current = plan; dirtyRef.current = dirty; runningRef.current = running; }, [plan, dirty, running]);
@@ -75,6 +80,7 @@ export function PrintConfigurator({ status, gates, call, onStarted }: {
   }, []);
 
   const reasons = plan ? validate(plan) : [];
+  const flow = printFlow({ planValid: !!plan && reasons.length === 0, dirty, prime });
   const total = plan ? totalThickness(plan) : 0;
   const layers = plan ? totalLayers(plan) : 0;
   const pct = (mm: number) => `${Math.min(100, (100 * mm) / BUDGET)}%`;
@@ -92,9 +98,14 @@ export function PrintConfigurator({ status, gates, call, onStarted }: {
     const b = await api.printFeedBudget().catch(() => null);
     setBudget(b);
     const powder = feedBudgetLine(b);
+    // Re-read the primed bed AFTER the save: the save can change the plan it must match.
+    const ps = await api.primed().then((r) => r.status ?? null).catch(() => null);
+    setPrime(ps);
+    const primeOk = ps?.state === "ready";
+    const primeRisk = primeOk ? "" : `\n\n⚠ Primed bed: ${ps?.reason ?? "the operator didn't report it"}. Start anyway?`;
     const risk = powder.tone === "ok" ? "" : "\n\n⚠ The powder budget isn't confirmed. Start anyway? A short feed stops the print safely when the powder runs out.";
-    if (!window.confirm(`Start ${job ? job.name : "the manual print"} on the machine?\n\n${heat}\n${layers} layers · ${total.toFixed(1)} mm · ~${fmtSecs(estimateDurationS(plan, minWait))}\npowder · ${powder.text}${risk}`)) return;
-    await call("start", () => api.printStart({ single_step: single, name: name || job?.name || "print", accept_feed_risk: powder.tone !== "ok" }).then(onStarted));
+    if (!window.confirm(`Start ${job ? job.name : "the manual print"} on the machine?\n\n${heat}\n${layers} layers · ${total.toFixed(1)} mm · ~${fmtSecs(estimateDurationS(plan, minWait))}\npowder · ${powder.text}${risk}${primeRisk}`)) return;
+    await call("start", () => api.printStart({ single_step: single, name: name || job?.name || "print", accept_feed_risk: powder.tone !== "ok", accept_prime_risk: !primeOk }).then(onStarted).finally(refreshPrime));
   };
 
   return (
@@ -180,6 +191,16 @@ export function PrintConfigurator({ status, gates, call, onStarted }: {
             <h3>start</h3>
             {plan ? (
               <>
+                {!running && (
+                  <ol className="flow-strip" aria-label="configure, prime, start">
+                    {flow.steps.map((st, i) => (
+                      <li key={st.id} className={st.state} aria-current={st.state === "current" ? "step" : undefined}>
+                        <span className="n">{st.state === "done" ? "✓" : i + 1}</span>
+                        <div><div className="t">{st.label}</div><div className="sd">{st.note}</div></div>
+                      </li>
+                    ))}
+                  </ol>
+                )}
                 <div className="est" style={{ gridTemplateColumns: "1fr 1fr" }}><div><div className="l">about</div><div className="v" style={{ fontSize: 26 }}>{fmtSecs(estimateDurationS(plan, minWait))}</div></div><div><div className="l">layers</div><div className="v" style={{ fontSize: 26 }}>{layers}</div></div></div>
                 <div className="chk" style={{ margin: "16px 0" }}>
                   <label data-tip="Fires the IR heater during the printing layers (after the precoats)."><Toggle label="heater" danger checked={plan.heater_enabled} disabled={running} onChange={(v) => edit({ heater_enabled: v })} /></label>
@@ -188,14 +209,14 @@ export function PrintConfigurator({ status, gates, call, onStarted }: {
                 </div>
                 <input type="text" placeholder={job?.name ?? "run name"} value={name} onChange={(e) => setName(e.target.value)} style={{ width: "100%" }} />
                 {!running && (() => { const l = feedBudgetLine(budget); return <div className={BUDGET_LINE_CLASS[l.tone]} data-tip="Feed powder this print consumes (feed per layer × layers) vs. the powder column in the feed piston now.">powder · {l.text}</div>; })()}
-                {primed === false && !running && (
-                  <div className="errline" style={{ display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap" }}>
-                    <span>⚠ bed not primed — prime it before printing</span>
-                    <button className="cta sm" onClick={() => { window.location.hash = "priming"; }}>Go to Priming →</button>
+                {!running && flow.startMode !== "go" && flow.steps[1].state === "current" && (
+                  <div className={flow.startMode === "blocked" ? "errline" : "warnline"} style={{ display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap" }}>
+                    <span>{flow.startMode === "blocked" ? "⚠ " : ""}{flow.steps[1].note}</span>
+                    <button className="cta sm" onClick={async () => { if (dirty) await save(); window.location.hash = "priming"; }}>{prime?.state === "none" ? "Prime the bed →" : "Re-prime →"}</button>
                   </div>
                 )}
                 <div className="actions one tight">
-                  <button className="cta primary" disabled={!gates.controllable || reasons.length > 0 || running || primed === false} onClick={start}>START PRINT</button>
+                  <button className="cta primary" disabled={!gates.controllable || running || flow.startMode === "blocked"} onClick={start}>{flow.startMode === "override" ? "START ANYWAY…" : "START PRINT"}</button>
                   {dirty && <button className="cta" disabled={running} onClick={save}>SAVE CHANGES</button>}
                 </div>
                 {!gates.controllable && <div className="lock">{gates.connected ? "read-only · take control from the connection pill" : "connect a controller to start"}</div>}

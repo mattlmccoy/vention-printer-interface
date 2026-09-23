@@ -31,7 +31,8 @@ def connect(c: TestClient) -> None:
 
 
 def test_primed_get_none_when_unsaved(client: TestClient) -> None:
-    assert client.get("/api/primed").json() == {"primed": None}
+    r = client.get("/api/primed").json()
+    assert r["primed"] is None and r["status"]["state"] == "none"
 
 
 def test_capture_requires_controller(client: TestClient) -> None:

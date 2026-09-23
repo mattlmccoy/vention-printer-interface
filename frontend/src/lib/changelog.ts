@@ -11,6 +11,17 @@ export interface Release {
 
 export const CHANGELOG: Release[] = [
   {
+    version: "0.12.0",
+    date: "2026-09-23",
+    changes: [
+      "Camera controls on the Mac: the operator reads and sets the camera's own controls (exposure, gain, brightness, white balance, focus and more) with their real ranges and factory defaults — the Mac browser exposes none of them.",
+      "Reset camera settings to default: clears saved capture settings and sliders, returns browser controls to auto and, on the Mac, restores the camera's factory settings.",
+      "Configure → Prime → Start: a primed bed belongs to the plan it was primed for and is used up by a print; START is blocked until primed and asks before printing on a bed primed for a different plan.",
+      "Priming page redesign: numbered move rows with inline targets on every step, a pinned powder bar and status line, pinned Back/Next.",
+      "Fixed: a priming move run right after typing a new target could use the old target.",
+    ],
+  },
+  {
     version: "0.11.1",
     date: "2026-09-23",
     changes: [
