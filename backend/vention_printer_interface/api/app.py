@@ -2085,8 +2085,13 @@ def create_app(
         browser isn't possible (headless/remote). The ``open`` call is best-effort glue: a failure
         (or a non-desktop host) still returns the path with ``revealed: false`` and a reason.
         """
+        # Resolve across the local root AND mounted drives, so an offloaded run reveals on its drive
+        # (was a 400 "bad run" for any run not under the local experiments root).
+        run_dir = _run_dir_opt(run)
+        if run_dir is None:
+            raise HTTPException(400, "bad run")
         try:
-            target = _run_reveal_target(root, run)
+            target = _run_reveal_target(run_dir.parent, run)
         except ValueError as exc:
             raise HTTPException(400, str(exc)) from exc
         revealed, note = False, ""
