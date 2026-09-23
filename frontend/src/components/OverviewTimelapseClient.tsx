@@ -1,4 +1,6 @@
-import { useEffect, useRef } from "react";
+import { useEffect, useRef, useState } from "react";
+import { cameraBus } from "../lib/camera_bus.ts";
+import { useLiveCamera } from "./useLiveCamera.ts";
 import { api } from "../lib/api.ts";
 import type { StatusPayload } from "../lib/telemetry.ts";
 import { loadRoleMap } from "../lib/camera_roles.ts";
@@ -26,9 +28,13 @@ export function OverviewTimelapseClient({ status }: { status: StatusPayload | nu
     if (videoRef.current) videoRef.current.srcObject = null;
   };
 
+  const [reopen, setReopen] = useState(0);
+  const live = useLiveCamera(stop, () => setReopen((n) => n + 1));
+
   // Hold the overview camera open (hidden) only while a recorded print is running + enabled.
   useEffect(() => {
     if (!active || !deviceId) { stop(); return; }
+    if (cameraBus.paused()) return; // a science still has the bus; reopened on resume
     const md = typeof navigator !== "undefined" ? navigator.mediaDevices : undefined;
     if (!md?.getUserMedia) return;
     let cancelled = false;
@@ -38,10 +44,12 @@ export function OverviewTimelapseClient({ status }: { status: StatusPayload | nu
         if (cancelled) { stream.getTracks().forEach((t) => t.stop()); return; }
         streamRef.current = stream;
         if (videoRef.current) videoRef.current.srcObject = stream;
+        live.watch(stream.getVideoTracks()[0] ?? null);
       } catch { /* overview busy/unavailable — no timelapse this run */ }
     })();
     return () => { cancelled = true; stop(); };
-  }, [active, deviceId]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [active, deviceId, reopen]);
 
   // Grab + upload one frame every intervalS while active.
   useEffect(() => {

@@ -11,6 +11,15 @@ export interface Release {
 
 export const CHANGELOG: Release[] = [
   {
+    version: "0.13.0",
+    date: "2026-09-23",
+    changes: [
+      "Lightweight camera mode (Settings → Camera settings, on by default on Windows): live views at 1280×720 @ 15 fps, and every science still taken at full resolution, lossless, with that camera alone — the other views pause for a moment. For cameras that share a slow USB path.",
+      "Camera views reconnect by themselves when a stream drops, with a visible message.",
+      "The print now waits at each capture pose until that science still is stored (up to 10 s, then it continues and records the miss). Prints without a capturing camera are never held.",
+    ],
+  },
+  {
     version: "0.12.1",
     date: "2026-09-23",
     changes: [

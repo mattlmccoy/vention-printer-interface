@@ -7,6 +7,8 @@ import { loadIgnoreSet } from "../lib/camera_ignore.ts";
 import { ignoreCameraHere, useIgnoreVersion } from "../lib/camera_ignore_sync.ts";
 import { clampZoom, cropStyle, loadCrop, NO_CROP, panOrigin, saveCrop, type Crop } from "../lib/crop.ts";
 import { applyPayload, numericControls, type NumericControl } from "../lib/track_settings.ts";
+import { cameraBus } from "../lib/camera_bus.ts";
+import { useLiveCamera } from "./useLiveCamera.ts";
 import { loadOverviewSettings, videoConstraints } from "../lib/overview_settings.ts";
 import { CameraTiles } from "./CameraTiles.tsx";
 import { CameraAccessPrompt } from "./CameraAccessPrompt.tsx";
@@ -84,9 +86,12 @@ export function OverviewCameraPanel({ view }: { base?: string; view: View }) {
     };
   }, [visible, scan, ignoreVersion]);
 
+  const live = useLiveCamera(() => stop(), () => setReloadNonce((n) => n + 1));
+
   // Open the selected camera and feed the <video>.
   useEffect(() => {
     if (!visible || !selectedId) return;
+    if (cameraBus.paused()) return; // a full-res science still has the bus; reopened on resume
     const md = navigator.mediaDevices;
     let cancelled = false;
     (async () => {
@@ -104,6 +109,7 @@ export function OverviewCameraPanel({ view }: { base?: string; view: View }) {
         setCrop(loadCrop(storage, selectedId));
         const track = stream.getVideoTracks()[0] ?? null;
         trackRef.current = track;
+        live.watch(track);
         // Apply the persisted manual controls (exposure, etc.) tuned on the setup page.
         for (const [key, value] of Object.entries(s.manual)) {
           track?.applyConstraints(applyPayload(key, value)).catch(() => {});
@@ -223,6 +229,11 @@ export function OverviewCameraPanel({ view }: { base?: string; view: View }) {
               style={{ display: "block", width: "100%", ...cropStyle(crop) }}
             />
           </div>
+          {(live.paused || live.dropped) && (
+            <div className="hint" role="status" style={{ marginTop: 4 }}>
+              {live.paused ? "paused for a full-resolution science still…" : "camera disconnected — reconnecting…"}
+            </div>
+          )}
           {status === "live" && (
             <div className="row cam-crop-ctl" style={{ gap: 8, alignItems: "center", marginTop: 4 }}>
               <span className="hint">zoom</span>
