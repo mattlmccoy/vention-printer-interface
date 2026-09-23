@@ -40,3 +40,12 @@ test("TIMELINE_NOISE hides bookkeeping steps", () => {
   assert.ok(TIMELINE_NOISE.has("set_speed") && TIMELINE_NOISE.has("set_accel") && TIMELINE_NOISE.has("wait"));
   assert.ok(!TIMELINE_NOISE.has("move_abs") && !TIMELINE_NOISE.has("dwell"));
 });
+
+test("timeline numbers carry no floating-point noise (the 2026-09-23 layer-27 screenshot)", () => {
+  // Absolute seat heights accumulate float error: the live timeline showed these raw values.
+  assert.equal(phrase(S(524, "printing", 27, "seat_part", 1, 7.5000000000000036), plan), "build seat → 7.5 mm (abs)");
+  assert.equal(phrase(S(526, "printing", 27, "seat_part", 1, 7.400000000000004), plan), "build seat → 7.4 mm (abs)");
+  assert.equal(phrase(S(5, "printing", 3, "move_rel", 2, -0.30000000000000004), plan), "feed piston up 0.3 mm");
+  assert.equal(phrase(S(6, "printing", 3, "move_rel", 1, 0.19999999999999996), plan), "build piston down 0.2 mm");
+  assert.equal(phrase(S(7, "printing", 3, "move_abs", 2, 55.99999999999999), plan), "feed piston to 56 mm");
+});

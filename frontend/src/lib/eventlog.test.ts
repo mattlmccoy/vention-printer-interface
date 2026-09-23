@@ -22,3 +22,8 @@ test("move + heater + connect read naturally", () => {
 test("unknown labels fall back to the raw summary", () => {
   assert.match(describeEvent({ host_timestamp_ns: 0, label: "custom_thing", data: { a: 1 } }), /custom_thing/);
 });
+
+test("a computed move distance carries no floating-point noise", () => {
+  assert.equal(describeEvent({ host_timestamp_ns: 0, label: "move", data: { axis: 2, applied_mm: -0.30000000000000004 } }),
+    "Moved Feed Piston -0.3 mm");
+});
