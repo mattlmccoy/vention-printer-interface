@@ -92,6 +92,7 @@ def write_capture(
     always the authoritative, computed values regardless of what `meta` contains.
     """
     import cv2
+    import numpy as np
 
     d = capture_dir(base, layer)
     d.mkdir(parents=True, exist_ok=True)
@@ -106,30 +107,44 @@ def write_capture(
     webp_lossless = [cv2.IMWRITE_WEBP_QUALITY, 101]
     if not cv2.imwrite(str(raw_path), raw, webp_lossless):
         raise RuntimeError(f"failed to write {raw_path} (is OpenCV built with WebP?)")
-    if not cv2.imwrite(str(registered_path), registered, webp_lossless):
-        raise RuntimeError(f"failed to write {registered_path} (is OpenCV built with WebP?)")
 
-    checksum = hashlib.sha256(registered_path.read_bytes()).hexdigest()
+    # `registered` is a bed-plane warp of `raw`. With no science-cam calibration, register_frame is
+    # a passthrough, so registered == raw and writing it again just doubles storage (~36% of all
+    # run bytes). Only write a separate registered image when it genuinely differs; otherwise skip
+    # it and point `images.registered` at the raw file (same pixels, half the disk).
+    distinct = registered is not None and not (
+        registered is raw or np.array_equal(np.asarray(raw), np.asarray(registered))
+    )
+    if distinct:
+        if not cv2.imwrite(str(registered_path), registered, webp_lossless):
+            raise RuntimeError(f"failed to write {registered_path} (is OpenCV built with WebP?)")
+        stored_registered = registered_path
+    else:
+        registered_path.unlink(missing_ok=True)  # drop any stale duplicate from an earlier write
+        stored_registered = raw_path
+
+    checksum = hashlib.sha256(stored_registered.read_bytes()).hexdigest()
 
     sidecar = _deep_merge(_SIDECAR_TEMPLATE, meta)
     sidecar["layer"] = layer
     sidecar["stage"] = stage
-    sidecar["images"] = {"raw": raw_path.name, "registered": registered_path.name}
+    sidecar["images"] = {"raw": raw_path.name, "registered": stored_registered.name}
     sidecar["checksum_sha256"] = checksum
 
     sidecar_path.write_text(json.dumps(sidecar, indent=2), encoding="utf-8")
 
     return {
         "raw": str(raw_path),
-        "registered": str(registered_path),
+        "registered": str(stored_registered),
         "sidecar": str(sidecar_path),
     }
 
 
-def write_overview_frame(base: Path, image: Any, quality: int = 85) -> Path:
+def write_overview_frame(base: Path, image: Any, quality: int = 70) -> Path:
     """Append one overview timelapse frame to ``<run>/overview/<NNNNNN>.webp`` (time-ordered by a
     zero-padded sequence). Overview frames feed a visual whole-print timelapse, not metrology, so a
-    space-saving WebP quality is used (not the lossless 101 of science stills)."""
+    space-saving WebP quality is used (not the lossless 101 of science stills). q70 is tuned
+    below the former q85: overview was ~27% of run storage and playback tolerates it."""
     import cv2
 
     d = Path(base) / "overview"

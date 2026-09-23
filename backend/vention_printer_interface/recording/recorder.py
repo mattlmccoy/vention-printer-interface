@@ -399,8 +399,12 @@ def summarize_run(d: Path, active: Path | None = None) -> dict[str, Any]:
         if not f.is_file():
             continue
         size += f.stat().st_size
-        if f.suffix in (".png", ".webp") and f.relative_to(d).parts[0] == "vision" \
-                and not f.name.endswith(".raw.webp"):
+        # One capture == one stage. Count each stage's PRIMARY image once: the always-present
+        # ``<stage>.raw.webp`` (or an old ``.png``). The registered ``<stage>.webp`` is a derived
+        # copy — often deduped away entirely — so it must not add to the count.
+        if f.relative_to(d).parts[0] == "vision" and (
+            f.name.endswith(".raw.webp") or f.suffix == ".png"
+        ):
             captures += 1
     meta = _read_run_meta(d)
     raw_experiment = meta.get("experiment")

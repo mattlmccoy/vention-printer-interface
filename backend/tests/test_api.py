@@ -89,9 +89,17 @@ def test_recordings_report_capture_count(client: TestClient, tmp_path: Path) -> 
     nocaps = tmp_path / "20260101_000001_nocaps"
     nocaps.mkdir(parents=True)
     (nocaps / "telemetry.csv").write_text("host_timestamp_ns\n1\n")
+    # A real (deduped) run stores one `<stage>.raw.webp` per capture and no separate registered copy
+    # when uncalibrated — each raw counts once; a registered `.webp`, when present, must NOT add.
+    dd = tmp_path / "20260101_000002_dedup" / "vision" / "layer_0001"
+    dd.mkdir(parents=True)
+    (dd / "pre_jet.raw.webp").write_bytes(b"RIFFwebp")
+    (dd / "post_jet.raw.webp").write_bytes(b"RIFFwebp")
+    (dd / "post_jet.webp").write_bytes(b"RIFFwebp")  # registered copy: not a new capture
     runs = {r["run"]: r for r in client.get("/api/recordings").json()["runs"]}
     assert runs["20260101_000000_withcaps"]["capture_count"] == 2
     assert runs["20260101_000001_nocaps"]["capture_count"] == 0
+    assert runs["20260101_000002_dedup"]["capture_count"] == 2  # 2 raw captures, registered ignored
 
 
 def test_recording_reveal_returns_path_and_invokes_opener(
