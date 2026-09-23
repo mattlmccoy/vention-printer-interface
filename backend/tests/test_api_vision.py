@@ -377,7 +377,7 @@ def test_vision_capture_event_writes_file_under_active_run_dir(
     )
     app.state.vision.drain(timeout=2.0)
 
-    captured = tmp_path / run_name / "vision" / "layer_0001" / "post_jet.webp"
+    captured = tmp_path / run_name / "vision" / "layer_0001" / "post_jet.raw.webp"  # deduped
     assert captured.exists()
 
     client.post("/api/recording/stop")
@@ -403,7 +403,7 @@ def test_science_capture_endpoint_stores_a_client_upload(
         headers={"content-type": "image/webp"},
     )
     assert resp.status_code == 200 and resp.json()["stored"] is True
-    assert (tmp_path / run_name / "vision" / "layer_0007" / "post_jet.webp").exists()
+    assert (tmp_path / run_name / "vision" / "layer_0007" / "post_jet.raw.webp").exists()
 
     records = client.get("/api/vision/captures", params={"run": run_name}).json()
     assert any(
@@ -425,7 +425,7 @@ def test_capture_signal_in_status_and_client_guard_skips_server_grab(
     app.state.vision.drain(timeout=2.0)
 
     # server grab skipped -> no server-written file for this mark
-    assert not (tmp_path / run / "vision" / "layer_0005" / "post_jet.webp").exists()
+    assert not (tmp_path / run / "vision" / "layer_0005" / "post_jet.raw.webp").exists()
     # but the signal is on the status for the browser to act on
     st = client.get("/api/status").json()
     assert st["capture_request"]["stage"] == "post_jet"
@@ -445,7 +445,7 @@ def test_science_client_fallback_requeues_the_current_capture(
     client.post("/api/vision/science/client-heartbeat")
     app.state.events.append("capture:post_jet", {"layer": 5, "print_layer": 2})
     app.state.vision.drain(timeout=2.0)
-    target = tmp_path / run / "vision" / "layer_0005" / "post_jet.webp"
+    target = tmp_path / run / "vision" / "layer_0005" / "post_jet.raw.webp"  # deduped
     assert not target.exists()
 
     seq = client.get("/api/status").json()["capture_request"]["seq"]
@@ -571,7 +571,7 @@ def test_vision_captures_enriches_records_with_url_and_sidecar_url(
     app, client = app_and_client
     _run_name, record = _capture_one_run(app, client, "vision-url-e2e")
 
-    assert record["registered"] == "vision/layer_0001/post_jet.webp"
+    assert record["registered"] == "vision/layer_0001/post_jet.raw.webp"  # deduped -> raw
     assert isinstance(record.get("url"), str) and record["url"]
     assert isinstance(record.get("sidecar_url"), str) and record["sidecar_url"]
     assert "/api/vision/runs/" in record["url"]

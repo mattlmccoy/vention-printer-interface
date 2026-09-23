@@ -221,7 +221,12 @@ def _vision_file_url(run: str, rel_path: str) -> str:
 
 def _sidecar_rel_path(registered_rel_path: str) -> str:
     """The sidecar JSON's run-relative path for a registered image's run-relative path
-    (vision/store.py writes both `<stage>.png` and `<stage>.json` in the same directory)."""
+    (vision/store.py writes the image and `<stage>.json` in the same directory). A deduped
+    (uncalibrated) capture's `registered` is the raw `<stage>.raw.webp`; its sidecar is still
+    `<stage>.json`, so the `.raw` infix must be stripped too."""
+    raw_suffix = ".raw.webp"
+    if registered_rel_path.endswith(raw_suffix):
+        return f"{registered_rel_path[: -len(raw_suffix)]}.json"
     stem, _, _ext = registered_rel_path.rpartition(".")
     return f"{stem or registered_rel_path}.json"
 

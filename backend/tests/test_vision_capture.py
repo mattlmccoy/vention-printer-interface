@@ -97,7 +97,8 @@ def test_capture_event_writes_files(tmp_path):
     svc.start()
     svc.on_event("capture:post_jet", {"layer": 2, "axis_positions_mm": {"build": 0.0}})
     svc.drain(timeout=2.0)
-    assert (tmp_path / "vision" / "layer_0002" / "post_jet.webp").exists()
+    # No calibration -> registered == raw -> duplicate post_jet.webp deduped away; raw kept.
+    assert not (tmp_path / "vision" / "layer_0002" / "post_jet.webp").exists()
     assert (tmp_path / "vision" / "layer_0002" / "post_jet.raw.webp").exists()
     svc.stop()
 
@@ -130,7 +131,7 @@ def test_capture_opens_then_closes_the_source_and_writes(tmp_path):
     assert src.grab_count >= 1
     assert src.close_count == src.open_count  # every open paired with a close
     assert not src.is_open
-    assert (tmp_path / "vision" / "layer_0001" / "post_jet.webp").exists()
+    assert (tmp_path / "vision" / "layer_0001" / "post_jet.raw.webp").exists()  # deduped (no calib)
 
 
 def test_science_source_not_held_open_when_idle(tmp_path):
@@ -235,7 +236,7 @@ def test_worker_uses_grab_fresh_not_grab(tmp_path):
     svc.start()
     svc.on_event("capture:pre_jet", {"layer": 1})
     svc.drain(timeout=2.0)
-    assert (tmp_path / "vision" / "layer_0001" / "pre_jet.webp").exists()
+    assert (tmp_path / "vision" / "layer_0001" / "pre_jet.raw.webp").exists()  # deduped (no calib)
     svc.stop()
 
 
@@ -255,7 +256,7 @@ def test_capture_event_appends_manifest_record(tmp_path):
     assert record["layer"] == 2
     assert record["stage"] == "post_jet"
     assert record["run_id"] == tmp_path.name
-    assert record["registered"] == "vision/layer_0002/post_jet.webp"
+    assert record["registered"] == "vision/layer_0002/post_jet.raw.webp"  # deduped -> points at raw
     assert record["host_timestamp_ns"] == 555
 
 
@@ -277,7 +278,7 @@ def test_store_uploaded_writes_a_client_still_sidecar_and_manifest(tmp_path):
         host_timestamp_ns=123,
     )
     assert paths is not None
-    assert (tmp_path / "vision" / "layer_0008" / "post_jet.webp").exists()
+    assert (tmp_path / "vision" / "layer_0008" / "post_jet.raw.webp").exists()  # deduped (no calib)
     sidecar = json.loads((tmp_path / "vision" / "layer_0008" / "post_jet.json").read_text())
     assert sidecar["cad_layer"] == 3
     assert sidecar["axis_positions_mm"] == {"recoater": 454.5}
@@ -493,7 +494,7 @@ def test_worker_logs_warning_when_still_stale_after_regrab(tmp_path, caplog):
     assert source.calls == 2  # re-grabbed once, still older than the event
     assert any("stale" in record.message.lower() for record in caplog.records)
     # the capture must still be written -- staleness is recorded, never silently dropped
-    assert (tmp_path / "vision" / "layer_0001" / "pre_jet.webp").exists()
+    assert (tmp_path / "vision" / "layer_0001" / "pre_jet.raw.webp").exists()  # deduped (no calib)
 
 
 def test_worker_skips_staleness_check_when_event_has_no_host_timestamp(tmp_path):

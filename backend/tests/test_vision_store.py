@@ -34,13 +34,51 @@ def test_write_capture_lays_out_files(tmp_path):
 def test_write_capture_is_lossless(tmp_path):
     import cv2
 
-    # A non-trivial image (gradient + noise) so a lossy codec would change pixels.
+    # A non-trivial image (gradient + noise) so a lossy codec would change pixels. raw is always
+    # written, so verify losslessness on it (registered may be deduped away when identical to raw).
     rng = np.random.default_rng(0)
     reg = rng.integers(0, 256, size=(64, 96, 3), dtype=np.uint8)
     write_capture(tmp_path, layer=2, stage="post_jet", raw=reg, registered=reg, meta={})
-    back = cv2.imread(str(capture_dir(tmp_path, 2) / "post_jet.webp"))
+    back = cv2.imread(str(capture_dir(tmp_path, 2) / "post_jet.raw.webp"))
     assert back is not None, "WebP was not written/decoded — is OpenCV built with WebP?"
     assert np.array_equal(back, reg), "WebP capture must be bit-exact (lossless)"
+
+
+def test_write_capture_dedups_registered_identical_to_raw(tmp_path):
+    # No science-cam calibration -> register_frame is a passthrough, so `registered` equals `raw`.
+    # Writing it again just doubles storage: skip the separate file and point `registered` at raw.
+    img = np.zeros((8, 8, 3), np.uint8)
+    img[2, 2] = (10, 20, 30)
+    paths = write_capture(tmp_path, layer=3, stage="post_jet", raw=img, registered=img, meta={})
+    d = capture_dir(tmp_path, 3)
+    assert (d / "post_jet.raw.webp").exists()
+    assert not (d / "post_jet.webp").exists()  # the identical duplicate is NOT written
+    assert paths["registered"].endswith("post_jet.raw.webp")  # points at the raw image
+    sidecar = json.loads((d / "post_jet.json").read_text())
+    assert sidecar["images"] == {"raw": "post_jet.raw.webp", "registered": "post_jet.raw.webp"}
+    expected = hashlib.sha256((d / "post_jet.raw.webp").read_bytes()).hexdigest()
+    assert sidecar["checksum_sha256"] == expected  # checksum tracks the stored image
+
+
+def test_overview_frame_uses_space_saving_quality(tmp_path):
+    from vention_printer_interface.vision.store import write_overview_frame
+
+    rng = np.random.default_rng(1)
+    img = rng.integers(0, 256, size=(720, 1280, 3), dtype=np.uint8)  # noisy: size tracks quality
+    default_path = write_overview_frame(tmp_path / "a", img)          # default (space-saving)
+    q85_path = write_overview_frame(tmp_path / "b", img, quality=85)  # the previous default
+    # overview is playback, not metrology: the default is tuned BELOW the old q85 to save disk.
+    assert default_path.stat().st_size < q85_path.stat().st_size
+
+
+def test_write_capture_keeps_registered_when_it_differs(tmp_path):
+    raw = np.zeros((8, 8, 3), np.uint8)
+    reg = np.ones((8, 8, 3), np.uint8)  # genuinely different (a real bed-plane warp)
+    write_capture(tmp_path, layer=4, stage="post_jet", raw=raw, registered=reg, meta={})
+    d = capture_dir(tmp_path, 4)
+    assert (d / "post_jet.webp").exists() and (d / "post_jet.raw.webp").exists()
+    sidecar = json.loads((d / "post_jet.json").read_text())
+    assert sidecar["images"] == {"raw": "post_jet.raw.webp", "registered": "post_jet.webp"}
 
 
 def test_write_capture_sidecar_matches_data_model_shape(tmp_path):

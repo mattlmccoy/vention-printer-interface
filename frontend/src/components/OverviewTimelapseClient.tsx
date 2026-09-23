@@ -71,7 +71,7 @@ export function OverviewTimelapseClient({ status }: { status: StatusPayload | nu
         if (!ctx) { bmp?.close(); return; }
         ctx.drawImage(source, 0, 0, outW, outH);
         bmp?.close();
-        const blob = await new Promise<Blob | null>((res) => canvas.toBlob((b) => res(b), "image/webp", 0.85));
+        const blob = await new Promise<Blob | null>((res) => canvas.toBlob((b) => res(b), "image/webp", 0.7));
         if (blob) await api.overviewTimelapseUpload(blob).catch(() => {});
       } finally { busy = false; }
     };
