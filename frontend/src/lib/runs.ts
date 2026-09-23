@@ -24,3 +24,14 @@ const UNKNOWN: RunChip = { key: "unknown", label: "run", color: "var(--faint)", 
 export function runStatusChip(status: string | undefined | null): RunChip {
   return (status && CHIPS[status]) || UNKNOWN;
 }
+
+/** Badge text for where a run's data lives, or null to show nothing (local-only is the default and
+ *  needs no badge). Drive-resident (offloaded, freed locally) reads "on <drive>"; present in both
+ *  reads "local + <drive>". Mirrors the backend `locations` union (recording/libraries.merge_runs). */
+export function runLocationLabel(locations: string[] | undefined): string | null {
+  const locs = locations ?? [];
+  const drives = locs.filter((l) => l !== "local");
+  if (drives.length === 0) return null; // local-only (or unknown) — no badge
+  if (locs.includes("local")) return `local + ${drives.join(" + ")}`;
+  return `on ${drives.join(" + ")}`;
+}

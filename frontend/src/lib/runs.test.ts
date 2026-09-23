@@ -1,6 +1,18 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { runStatusChip } from "./runs.ts";
+import { runStatusChip, runLocationLabel } from "./runs.ts";
+
+test("runLocationLabel: local-only or unknown gets no badge", () => {
+  assert.equal(runLocationLabel(undefined), null);
+  assert.equal(runLocationLabel([]), null);
+  assert.equal(runLocationLabel(["local"]), null);
+});
+
+test("runLocationLabel: drive-resident and both-locations get a badge", () => {
+  assert.equal(runLocationLabel(["FLIR SSD"]), "on FLIR SSD");         // offloaded, freed locally
+  assert.equal(runLocationLabel(["local", "FLIR SSD"]), "local + FLIR SSD"); // copied, in both
+  assert.equal(runLocationLabel(["SSD-A", "SSD-B"]), "on SSD-A + SSD-B");
+});
 
 test("finished maps to the live (green) success token", () => {
   const c = runStatusChip("finished");

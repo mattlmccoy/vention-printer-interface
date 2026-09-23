@@ -108,7 +108,12 @@ from vention_printer_interface.paths_config import (
     save_persistent_paths,
 )
 from vention_printer_interface.protocol import routes as r
-from vention_printer_interface.recording.recorder import Recorder
+from vention_printer_interface.recording.libraries import (
+    merge_runs,
+    resolve_run_across,
+    run_roots,
+)
+from vention_printer_interface.recording.recorder import Recorder, list_runs_in
 from vention_printer_interface.timing_config import TimingConfig, load_timing, save_timing
 from vention_printer_interface.vision.avfoundation import list_avf_cameras
 from vention_printer_interface.vision.board_gen import (
@@ -1490,7 +1495,7 @@ def create_app(
     def plot_layer_accuracy(run: str, fmt: str) -> Response:
         """Cumulative commanded-vs-actual build height for one run's ``layer_accuracy.csv``."""
         _check_plot_fmt(fmt)
-        run_dir = _resolve_run_dir(root, run)
+        run_dir = _run_dir_404(run)
         csv_path = run_dir / "layer_accuracy.csv"
         if not csv_path.exists():
             raise HTTPException(404, "run has no layer_accuracy.csv")
@@ -1904,18 +1909,56 @@ def create_app(
         recording: dict[str, Any] = status_payload()["recording"]
         return recording
 
+    def _scan_drives() -> list[Any]:
+        """Mounted offload drives to include when enumerating/resolving runs. Disabled by
+        ``VPI_DISABLE_DRIVE_SCAN`` so tests stay hermetic (never see the dev's real drives)."""
+        if os.environ.get("VPI_DISABLE_DRIVE_SCAN"):
+            return []
+        return list_drives()
+
+    def _run_dir_opt(run: str) -> Path | None:
+        """Resolve a run's directory across the local root AND every mounted drive's vpi-runs/
+        folder (local-first), or None when no location has it. Raises HTTP 400 on a bad/traversing
+        name. Lets an offloaded run stay reachable by every run route."""
+        try:
+            found = resolve_run_across(run_roots(root, _scan_drives()), run)
+        except ValueError as exc:
+            raise HTTPException(400, "bad run") from exc
+        return found[0] if found is not None else None
+
+    def _run_dir(run: str) -> Path:
+        """Resolve across roots; 400 "bad run" when the run exists nowhere. Preserves the contract
+        of the run-file / archive / timelapse / delete routes (a bad/missing run is a 400)."""
+        d = _run_dir_opt(run)
+        if d is None:
+            raise HTTPException(400, "bad run")
+        return d
+
+    def _run_dir_404(run: str) -> Path:
+        """Resolve across roots; 404 "unknown run" when the run exists nowhere. Preserves the
+        contract of the plots / meta / analysis / vision-file routes (missing run is a 404)."""
+        d = _run_dir_opt(run)
+        if d is None:
+            raise HTTPException(404, "unknown run")
+        return d
+
     @app.get("/api/recordings")
     def recordings() -> dict[str, Any]:
-        return {"runs": rec().list_runs()}
+        # Union runs across the local experiments root AND every mounted drive's vpi-runs/ folder,
+        # so an offloaded run stays visible in the browser (FLIR-parity). Deduped by name; each row
+        # carries `locations` (e.g. ["local"], ["FLIR SSD"], or both).
+        active = rec().active
+        labeled = [
+            (lib, list_runs_in(r, active=active)) for lib, r in run_roots(root, _scan_drives())
+        ]
+        return {"runs": merge_runs(labeled)}
 
     @app.get("/api/recordings/{run}/archive.zip")
     def recording_archive(run: str) -> Response:
         """Stream a zip of the whole run directory (telemetry, motion_profiles, events, manifest,
         layers, metadata, and any nested vision/ stills+sidecars). Same run-name validation as the
         run-file route: the resolved directory must sit directly under ``root`` (no traversal)."""
-        run_dir = (root / run).resolve()
-        if run_dir.parent != root.resolve() or not run_dir.is_dir():
-            raise HTTPException(400, "bad run")
+        run_dir = _run_dir(run)
         buffer = io.BytesIO()
         with zipfile.ZipFile(buffer, "w", zipfile.ZIP_DEFLATED) as zf:
             for path in sorted(run_dir.rglob("*")):
@@ -1936,9 +1979,7 @@ def create_app(
         science stills for one ``stage`` (defaults to the fullest); ``source=overview`` uses the
         time-ordered wide-view overview frames. 404 when the run has no frames for that source. GIF
         so it plays inline in an <img> with no codec dependency."""
-        run_dir = (root / run).resolve()
-        if run_dir.parent != root.resolve() or not run_dir.is_dir():
-            raise HTTPException(400, "bad run")
+        run_dir = _run_dir(run)
         from vention_printer_interface.vision.timelapse import (
             best_stage,
             build_overview_timelapse_gif,
@@ -1970,9 +2011,7 @@ def create_app(
     def recording_delete(run: str) -> dict[str, Any]:
         """Delete a run directory (telemetry, stills, everything). Refuses the run currently being
         recorded (409). Same run-name validation as the archive/file routes (no traversal)."""
-        run_dir = (root / run).resolve()
-        if run_dir.parent != root.resolve() or not run_dir.is_dir():
-            raise HTTPException(400, "bad run")
+        run_dir = _run_dir(run)
         active = rec().current_run_dir
         if active is not None and active.resolve() == run_dir:
             raise HTTPException(409, "cannot delete the run that is currently recording")
@@ -1986,7 +2025,7 @@ def create_app(
         Writes the same ``experiment.name`` / ``experiment.notes`` keys the recorder writes at
         start and the recordings list reads back, so an edit round-trips through the list.
         """
-        run_dir = _resolve_run_dir(root, run)
+        run_dir = _run_dir_404(run)
         meta_path = run_dir / "metadata.json"
         try:
             loaded = json.loads(meta_path.read_text())
@@ -2037,8 +2076,9 @@ def create_app(
     def recording_file(run: str, name: str) -> FileResponse:
         if name not in RUN_FILES:
             raise HTTPException(404, "unknown file")
-        target = (root / run / name).resolve()
-        if target.parent.parent != root.resolve() or not target.exists():
+        run_dir = _run_dir(run)  # local or a mounted drive
+        target = (run_dir / name).resolve()
+        if target.parent != run_dir.resolve() or not target.exists():
             raise HTTPException(400, "bad run")
         return FileResponse(target)
 
@@ -2851,10 +2891,8 @@ def create_app(
 
     @app.get("/api/vision/captures")
     def vision_captures(run: str) -> list[dict[str, Any]]:
-        target = (root / run).resolve()
-        if target.parent != root.resolve():
-            raise HTTPException(400, "bad run")
-        records = read_manifest(target)
+        target = _run_dir_opt(run)  # local or a mounted drive; None -> no run yet -> empty list
+        records = read_manifest(target) if target is not None else []
         for record in records:
             registered = record.get("registered")
             if isinstance(registered, str) and registered:
@@ -2996,7 +3034,7 @@ def create_app(
         are honest 200 reports, not HTTP errors; only a bad run name (400) or unknown run
         (404) are errors, via the shared run-path validation.
         """
-        run_dir = _resolve_run_dir(root, run)
+        run_dir = _run_dir_404(run)
         req = body or DimensionalAnalyzeRequest()
         nominals = {**DEFAULTS, **req.nominals} if req.nominals else DEFAULTS
         report = analyze_run(
@@ -3012,7 +3050,7 @@ def create_app(
     @app.get("/api/analysis/{run}/dimensional")
     def analysis_dimensional_get(run: str) -> dict[str, Any]:
         """Return a run's persisted dimensional report, or {status: "not_run"} if absent."""
-        run_dir = _resolve_run_dir(root, run)
+        run_dir = _run_dir_404(run)
         report = load_report(run_dir)
         if report is None:
             return {"status": "not_run", "run": run}
@@ -3028,7 +3066,7 @@ def create_app(
         unknown job folder (404) are errors. NOTE: the two outlines are centroid-aligned, so this
         reports shape+size deviation independent of bed placement; registration scale still wants
         validation on real captures."""
-        run_dir = _resolve_run_dir(root, run)
+        run_dir = _run_dir_404(run)
         cap = _select_capture(read_manifest(run_dir), layer, stage)
         if cap is None:
             return {"status": "no_capture", "run": run, "layer": layer, "stage": stage}
@@ -3062,9 +3100,7 @@ def create_app(
         real path is checked to still be inside this run's vision/ directory before anything
         is read from disk — this rejects `..` escapes, absolute-path overrides, and symlink
         escapes alike (Path.resolve() follows symlinks to their real target)."""
-        run_root = (root / run).resolve()
-        if run_root.parent != root.resolve():
-            raise HTTPException(400, "bad run")
+        run_root = _run_dir_404(run)  # local or a mounted drive
         vision_root = run_root / "vision"
         try:
             vision_root_resolved = vision_root.resolve()

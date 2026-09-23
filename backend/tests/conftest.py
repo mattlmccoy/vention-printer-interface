@@ -14,6 +14,9 @@ def _isolate_user_config(tmp_path_factory: pytest.TempPathFactory,
     test that needs its own config still overrides this via its own monkeypatch.setenv."""
     cfg = tmp_path_factory.mktemp("xdg_config")
     monkeypatch.setenv("XDG_CONFIG_HOME", str(Path(cfg)))
+    # Never enumerate the developer's real mounted drives during a test — run listings/resolution
+    # must see only the test's own experiments root (the cross-drive union is unit-tested directly).
+    monkeypatch.setenv("VPI_DISABLE_DRIVE_SCAN", "1")
 
 
 def pytest_addoption(parser: pytest.Parser) -> None:
