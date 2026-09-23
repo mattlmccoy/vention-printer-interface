@@ -124,7 +124,10 @@ export const DEFAULT_PLAN: PrintSettings = {
   capture_recoater_mm: 0, capture_settle_s: 0.5, capture_hold_s: 2,
 };
 
-export type StepKind = "home" | "set_speed" | "set_accel" | "move_abs" | "move_rel" | "seat_part" | "wait" | "dwell" | "heater" | "mark";
+export type StepKind = "home" | "set_speed" | "set_accel" | "move_abs" | "move_rel" | "seat_part" | "wait" | "dwell" | "await_capture" | "heater" | "mark";
+
+/** Longest the print holds at the capture pose for one still (backend control/capture_gate.py). */
+export const CAPTURE_TIMEOUT_S = 10;
 export interface Step {
   index: number;
   phase: string;
@@ -293,6 +296,8 @@ export function compilePrint(plan: PrintSettings): Step[] {
         }
         add(name, layerNo, "mark", null, null, `capture:${stage}`);
         if (plan.capture_hold_s > 0) add(name, layerNo, "dwell", null, plan.capture_hold_s, "camera capture hold");
+        // then hold until the operator has STORED the still (or the timeout) — mirrors the backend
+        add(name, layerNo, "await_capture", null, CAPTURE_TIMEOUT_S, "wait for science still");
       };
       if (capStages.includes("pre_jet")) addCapture("pre_jet");
       // Nozzle-purge schedule (firing is external; we only DWELL at the start position so the
@@ -382,6 +387,7 @@ export function describeStep(s: Step | null | undefined): string {
     case "seat_part": return `${ax} seat → ${n(s.value)} mm (abs)`;
     case "wait": return "wait for motion";
     case "dwell": return `dwell ${n(s.value)}s`;
+    case "await_capture": return `wait for science still (≤ ${n(s.value)}s)`;
     case "heater": return s.value ? "heater ON" : "heater off";
     case "mark": return s.label === "layer_start" ? `layer ${s.layer} start` : s.label === "feed_exhausted" ? "feed exhausted — stopped" : `layer ${s.layer} done`;
   }

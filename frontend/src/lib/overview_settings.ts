@@ -1,3 +1,4 @@
+import { lightweightEnabled, liveConstraints } from "./camera_mode.ts";
 // Persistent capture settings for the OVERVIEW camera (client-side getUserMedia).
 //
 // Resolution + frame rate are chosen up front and applied when the stream opens (a resolution change
@@ -80,14 +81,15 @@ export function streamableRes(key: string): string {
 /** getUserMedia video constraints for a device at these settings (ideal, so the browser negotiates
  *  down when the camera/hub can't do it). The preview is capped to a streamable size so the camera
  *  opens even when the chosen snapshot resolution is a still-only 20 MP. */
-export function videoConstraints(deviceId: string, s: OverviewSettings): MediaTrackConstraints {
+export function videoConstraints(deviceId: string, s: OverviewSettings, light: boolean = lightweightEnabled()): MediaTrackConstraints {
   const { width, height } = resolutionWH(streamableRes(s.resolution));
-  return {
+  // Lightweight camera mode (shared USB bus, e.g. the Windows PC) caps every live view at 1280x720@15.
+  return liveConstraints({
     deviceId: { exact: deviceId },
     width: { ideal: width },
     height: { ideal: height },
     frameRate: { ideal: s.frameRate },
-  };
+  }, light);
 }
 
 /** Load a role's settings, merged over that role's defaults (a partial saved blob keeps defaults). */

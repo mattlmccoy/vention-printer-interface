@@ -47,6 +47,8 @@ test("science stages stop at the calibrated pose and hold after each trigger", (
     assert.equal(steps[i - 2].kind, "wait");
     assert.equal(steps[i - 1].label, "camera settle");
     assert.equal(steps[i + 1].label, "camera capture hold");
+    // then hold until the operator has STORED the still (mirrors backend compile_print)
+    assert.deepEqual([steps[i + 2].kind, steps[i + 2].value, steps[i + 2].label], ["await_capture", 10, "wait for science still"]);
   }
 });
 

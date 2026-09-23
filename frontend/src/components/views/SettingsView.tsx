@@ -11,6 +11,7 @@ import { CalibrationBoardPanel } from "../CalibrationBoardPanel.tsx";
 import { CameraRoleAssigner } from "../CameraRoleAssigner.tsx";
 import { CameraInventoryPanel } from "../CameraInventoryPanel.tsx";
 import { CameraSettingsPanel } from "../CameraSettingsPanel.tsx";
+import { LightweightCameraToggle } from "../LightweightCameraToggle.tsx";
 import { CalibrationWizard } from "../CalibrationWizard.tsx";
 import { parseFinalizeInputs } from "../../lib/calib_finalize.ts";
 import { ValidationPanel } from "../ValidationPanel.tsx";
@@ -699,6 +700,7 @@ export function SettingsView({ status, gates, call, base, onOpenQuickStart }: {
           )}
           {sel === "camset" && (
             <div className="grid-gap">
+              <LightweightCameraToggle />
               <div className="hint" style={{ marginTop: 0 }}>One panel per camera: live preview, a resolution dropdown, an fps slider on the mode's real scale, an exposure slider read from the camera (in ms), and the YUY2/MJPG format for recorded stills (YUY2 = lossless for CAD). Assign the cameras first; settings are remembered per camera.</div>
               <div className="cols-2">
                 <CameraSettingsPanel role="overview" />

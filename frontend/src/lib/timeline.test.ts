@@ -49,3 +49,7 @@ test("timeline numbers carry no floating-point noise (the 2026-09-23 layer-27 sc
   assert.equal(phrase(S(6, "printing", 3, "move_rel", 1, 0.19999999999999996), plan), "build piston down 0.2 mm");
   assert.equal(phrase(S(7, "printing", 3, "move_abs", 2, 55.99999999999999), plan), "feed piston to 56 mm");
 });
+
+test("the capture wait reads plainly on the timeline", () => {
+  assert.equal(phrase(S(9, "printing", 3, "await_capture", null, 10), plan), "waiting for the science still");
+});

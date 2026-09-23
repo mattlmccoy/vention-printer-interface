@@ -22,6 +22,7 @@ export function phrase(step: Step | null, plan: PrintSettings | null): string {
       if (step.axis === 2) return `feed piston to ${cleanNum(v, 3)} mm`;
       return `build piston to ${cleanNum(v, 3)} mm`;
     case "dwell": return "settling";
+    case "await_capture": return "waiting for the science still";
     case "heater": return v ? "heater on" : "heater off";
     case "wait": return "waiting for motion";
     default: return describeStep(step);
