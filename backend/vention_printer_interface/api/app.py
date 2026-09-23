@@ -2031,7 +2031,8 @@ def create_app(
     def recording_restore(run: str) -> dict[str, Any]:
         """Move an offloaded run from its drive back to the local experiments root (copy -> verify
         -> delete the drive copy), the reverse of a Move offload. 400 bad name, 404 when the run
-        isn't on any mounted drive, 409 when it's already present locally (a restore can't overwrite)."""
+        isn't on any mounted drive, 409 when it is already present locally (so a restore can't
+        overwrite)."""
         try:
             src = restore_source(run_roots(root, _scan_drives()), run)
         except ValueError as exc:
