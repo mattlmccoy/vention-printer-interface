@@ -11,6 +11,14 @@ export interface Release {
 
 export const CHANGELOG: Release[] = [
   {
+    version: "0.11.1",
+    date: "2026-09-23",
+    changes: [
+      "Powder budget: START checks the powder in the feed against what the print needs. A short feed is refused with where it would stop; an unhomed feed needs confirmation; starting anyway stops safely when the powder runs out. The Print tab shows a live powder line.",
+      "Priming: the 'paired to job' fill depth now counts the print's feed (not the build thickness) plus the thick precoats' feed — the old amount under-filled by about half.",
+    ],
+  },
+  {
     version: "0.11.0",
     date: "2026-09-23",
     changes: [
