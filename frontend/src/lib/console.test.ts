@@ -57,3 +57,14 @@ test("sizes round-trip and drop malformed entries", () => {
   st.setItem("vpi.console.v1", JSON.stringify({ sizes: { print: { a: { w: 500 } }, junk: { x: { w: 1, h: 1 } }, control: { m: { w: 1, h: 1 } } } }));
   assert.deepEqual(loadConsole(st).sizes, { control: { m: { w: 240, h: 120 } } });
 });
+
+test("5 mm is a jog step on the Controls page, and a saved 5 mm step survives a reload", async () => {
+  const { JOG_STEPS } = await import("./console.ts");
+  assert.ok((JOG_STEPS as readonly number[]).includes(5));
+  const mem = new Map<string, string>();
+  const storage = { getItem: (k: string) => mem.get(k) ?? null, setItem: (k: string, v: string) => void mem.set(k, v) } as unknown as Storage;
+  saveConsole(storage, { ...DEFAULT_CONSOLE, gantryStep: 5, pistonStep: 5 });
+  const back = loadConsole(storage);
+  assert.equal(back.gantryStep, 5);
+  assert.equal(back.pistonStep, 5);
+});

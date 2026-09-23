@@ -1,5 +1,6 @@
 import { api } from "../lib/api.ts";
 import type { JobSnap } from "../lib/telemetry.ts";
+import { cleanNum } from "../lib/format.ts";
 
 /** The current (or chosen) layer's ink pattern from the sliced job, letterboxed. */
 export function CrossSection({ job, layer, caption }: { job: JobSnap | null; layer: number; caption?: string }) {
@@ -8,7 +9,7 @@ export function CrossSection({ job, layer, caption }: { job: JobSnap | null; lay
   return (
     <div className="xsec">
       <img src={api.jobLayerUrl(n, job.folder)} alt={`layer ${n} cross-section`} />
-      <div className="cap">{caption ?? <><b>{job.name}</b> · layer {n} of {job.layer_count} · {job.bbox_mm.x} × {job.bbox_mm.y} mm at {job.dpi} dpi</>}</div>
+      <div className="cap">{caption ?? <><b>{job.name}</b> · layer {n} of {job.layer_count} · {cleanNum(job.bbox_mm.x)} × {cleanNum(job.bbox_mm.y)} mm at {job.dpi} dpi</>}</div>
     </div>
   );
 }

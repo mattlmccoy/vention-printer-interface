@@ -28,6 +28,20 @@ export function gates(status: StatusPayload | null, reachable: boolean): Gates {
   };
 }
 
+/** A number for display with floating-point noise removed: rounded to at most `maxDp` decimals and
+ *  trailing zeros dropped (55.99999999999999 -> "56", 0.19999999999999996 -> "0.2"). Use this for any
+ *  value the machine/plan COMPUTED (sums, conversions); use a fixed `toFixed` only where a column of
+ *  numbers must line up. Never renders "-0". */
+export function cleanNum(v: number, maxDp = 2): string {
+  const r = Number(v.toFixed(maxDp));
+  return String(Object.is(r, -0) ? 0 : r);
+}
+
+/** `cleanNum` + " mm", or "—" for unknown (null/undefined/NaN never renders as a number). */
+export function fmtMmAuto(v: number | null | undefined, maxDp = 2): string {
+  return v === null || v === undefined || Number.isNaN(v) ? "—" : `${cleanNum(v, maxDp)} mm`;
+}
+
 export function fmtMm(v: number | null | undefined, digits = 2): string {
   return v === null || v === undefined || Number.isNaN(v) ? "—" : `${v.toFixed(digits)} mm`;
 }

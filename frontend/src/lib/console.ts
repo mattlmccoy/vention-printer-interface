@@ -4,7 +4,7 @@
 // "cameras" is an auxiliary view (live/science imagery + calibration), appended last.
 export const VIEWS = ["control", "job", "priming", "print", "runs", "analysis", "cameras", "settings"] as const;
 export type View = (typeof VIEWS)[number];
-export const JOG_STEPS = [0.1, 1, 10, 100] as const;
+export const JOG_STEPS = [0.1, 1, 5, 10, 100] as const;
 export interface ModuleSize { w: number; h: number }
 export interface ConsoleState {
   view: View;
