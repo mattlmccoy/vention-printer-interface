@@ -76,10 +76,10 @@ export function JobView({ status, gates, call, onGoPrint }: {
                 Archive job
               </button>
             )}
-            <button className="cta primary" disabled={running} onClick={onGoPrint}>Configure &amp; start on Print →</button>
+            <button className="cta primary" disabled={running} onClick={onGoPrint}>Configure → prime → start on Print →</button>
           </>
         ) : (
-          <span className="hint" style={{ marginTop: 0 }}>Select a job to queue it, then configure and start it on the <b>Print</b> tab. (Or “manual print” to run without a sliced job.)</span>
+          <span className="hint" style={{ marginTop: 0 }}>Select a job to queue it, then configure it, prime the bed for it and start it from the <b>Print</b> tab. (Or “manual print” to run without a sliced job.)</span>
         )}
       </div>
     </div>

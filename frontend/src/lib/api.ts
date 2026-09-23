@@ -80,7 +80,11 @@ export interface AxisMotion { max_speed: number | null; max_accel: number | null
  *  when the feed position can't be verified (not homed / no telemetry); unknown_reason says why. */
 export interface FeedBudgetPayload { demand_mm: number; available_mm: number | null; layers_total: number; layers_supported: number | null; sufficient: boolean | null; unknown_reason: string | null }
 export interface PrimingPayload { settings: Record<string, number>; validation: string[]; n_steps: number; n_thick_precoats: number; limits: Record<string, unknown> }
-export interface PrimedPayload { primed: { part_mm: number; feed_mm: number; captured_at: number } | null }
+export interface PrimedPayload {
+  primed: { part_mm: number; feed_mm: number; captured_at: number; plan_fingerprint?: string | null; consumed_at?: number | null } | null;
+  /** Is the captured bed ready for the CURRENT plan? Absent from operators older than 0.12. */
+  status?: import("./print_flow.ts").PrimeStatus;
+}
 export interface BacklashPositionResult { ref_mm: number; backlash_median_mm: number; backlash_mag_median_mm: number; reps_mm: number[] }
 export interface BacklashResult { axis: number; recommended_mm: number; cancelled: boolean; positions: BacklashPositionResult[] }
 export interface BacklashSession { state: "idle" | "running" | "done" | "cancelled" | "error"; axis: number | null; progress: { done: number; total: number }; current_ref_mm: number | null; partial_positions?: BacklashPositionResult[]; result: BacklashResult | null; error: string | null }
@@ -254,7 +258,7 @@ export const api = {
   heaterOff: () => req<StatusPayload>("POST", "/api/heater/off"),
   printSettings: () => req<PrintSettingsPayload>("GET", "/api/print-settings"),
   setPrintSettings: (patch: Record<string, unknown>) => req<PrintSettingsPayload>("PUT", "/api/print-settings", patch),
-  printStart: (body: { single_step: boolean; name?: string; notes?: string; accept_feed_risk?: boolean }) => req<StatusPayload["print"]>("POST", "/api/print/start", body),
+  printStart: (body: { single_step: boolean; name?: string; notes?: string; accept_feed_risk?: boolean; accept_prime_risk?: boolean }) => req<StatusPayload["print"]>("POST", "/api/print/start", body),
   printFeedBudget: () => req<FeedBudgetPayload>("GET", "/api/print/feed-budget"),
   printPause: () => req<StatusPayload["print"]>("POST", "/api/print/pause"),
   printResume: () => req<StatusPayload["print"]>("POST", "/api/print/resume"),

@@ -40,6 +40,7 @@ test("every route: method + path + body locked", async () => {
     [() => api.setPrintSettings({ heater_enabled: true }), "PUT", "/api/print-settings", { heater_enabled: true }],
     [() => api.printStart({ single_step: false }), "POST", "/api/print/start", { single_step: false }],
     [() => api.printStart({ single_step: false, accept_feed_risk: true }), "POST", "/api/print/start", { single_step: false, accept_feed_risk: true }],
+    [() => api.printStart({ single_step: false, accept_prime_risk: true }), "POST", "/api/print/start", { single_step: false, accept_prime_risk: true }],
     [() => api.printFeedBudget(), "GET", "/api/print/feed-budget", undefined],
     [() => api.printPause(), "POST", "/api/print/pause", undefined],
     [() => api.printResume(), "POST", "/api/print/resume", undefined],
