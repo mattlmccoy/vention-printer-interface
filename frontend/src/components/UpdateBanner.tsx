@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 import { api } from "../lib/api.ts";
-import { detectOs, operatorBehind, updateCommand } from "../lib/update.ts";
+import { detectOs, inPlaceUpdateCommand, operatorBehind, osFromPlatform } from "../lib/update.ts";
 
 const SITE_VERSION = __APP_VERSION__;  // baked from the backend __version__ at build time
 const POLL_MS = 30_000;
@@ -11,13 +11,14 @@ const POLL_MS = 30_000;
  *  Dismissal is remembered per site version, so a newer release re-surfaces it. */
 export function UpdateBanner() {
   const [opVersion, setOpVersion] = useState<string | null>(null);
+  const [opPlatform, setOpPlatform] = useState<string | null>(null);
   const [dismissed, setDismissed] = useState(false);
   const [copied, setCopied] = useState(false);
 
   useEffect(() => {
     let alive = true;
     const tick = () => api.health()
-      .then((h) => { if (alive) setOpVersion(h.version ?? null); })
+      .then((h) => { if (alive) { setOpVersion(h.version ?? null); setOpPlatform(h.platform ?? null); } })
       .catch(() => {});
     tick();
     const id = setInterval(tick, POLL_MS);
@@ -30,7 +31,9 @@ export function UpdateBanner() {
   }, [key]);
 
   if (dismissed || !operatorBehind(opVersion, SITE_VERSION)) return null;
-  const { label, command } = updateCommand(detectOs(navigator.userAgent));
+  // In-place update for an installed operator, for the OPERATOR's OS. (The install one-liner would
+  // regenerate the macOS LaunchAgent plist and drop flags added to it.)
+  const { label, command } = inPlaceUpdateCommand(osFromPlatform(opPlatform) ?? detectOs(navigator.userAgent));
   const dismiss = () => { setDismissed(true); try { localStorage.setItem(key, "1"); } catch { /* */ } };
   const copy = () => {
     navigator.clipboard?.writeText(command).then(() => { setCopied(true); setTimeout(() => setCopied(false), 1500); }).catch(() => {});

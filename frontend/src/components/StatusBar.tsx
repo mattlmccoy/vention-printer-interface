@@ -2,6 +2,7 @@ import { useState } from "react";
 import { fmtSecs, tri } from "../lib/format.ts";
 import { ChangelogModal } from "./ChangelogModal.tsx";
 import { versionLabel } from "../lib/version_label.ts";
+import { VersionSkewPopover } from "./VersionSkewPopover.tsx";
 
 const SITE_VERSION = typeof __APP_VERSION__ === "string" ? __APP_VERSION__ : "0.0.0";
 const BUILD_ID = typeof __BUILD_ID__ === "string" ? __BUILD_ID__ : "";
@@ -9,12 +10,13 @@ const BUILD_ID = typeof __BUILD_ID__ === "string" ? __BUILD_ID__ : "";
 export interface StatusBarProps {
   state: string; backend: string; pollHz: number | null; reachable: boolean;
   estop: boolean | null; drivesReady: boolean | null; heaterOn: boolean | null; heaterOnS: number; heaterMaxS: number;
-  recActive: boolean; recRun: string | null; printState: string; version: string | null; build?: string | null;
+  recActive: boolean; recRun: string | null; printState: string; version: string | null; build?: string | null; platform?: string | null;
 }
 
 /** Bottom status bar (family rule): never shows green; faults red, unknowns amber. */
 export function StatusBar(p: StatusBarProps) {
   const [showLog, setShowLog] = useState(false);
+  const [showSkew, setShowSkew] = useState(false);
   const unknown = p.estop === null || p.drivesReady === null;
   return (
     <footer className="statusbar">
@@ -30,16 +32,20 @@ export function StatusBar(p: StatusBarProps) {
         {(() => {
           const v = versionLabel({ siteVersion: SITE_VERSION, siteBuild: BUILD_ID, opVersion: p.version, opBuild: p.build ?? null });
           const tip = v.buildsDiffer
-            ? "The console and the operator are built from different commits — if something new doesn't work, update the operator. Click for the changelog."
+            ? "The console and the operator are built from different commits — click for what to do (and the update command)."
             : "console + operator versions — click for the changelog";
           return (
-            <button className="ver-badge" title={tip} onClick={() => setShowLog(true)}
+            <button className="ver-badge" title={tip} onClick={() => (v.buildsDiffer ? setShowSkew(true) : setShowLog(true))}
               style={{ background: "none", border: "none", padding: 0, cursor: "pointer", color: "inherit", font: "inherit" }}>
               <span className={v.buildsDiffer ? "warnv" : "muted"}>{v.text}{v.buildsDiffer ? " ≠" : ""}</span>
             </button>
           );
         })()}
       </span>
+      {showSkew && (
+        <VersionSkewPopover siteVersion={SITE_VERSION} siteBuild={BUILD_ID} opVersion={p.version} opBuild={p.build ?? null}
+          platform={p.platform ?? null} onChangelog={() => { setShowSkew(false); setShowLog(true); }} onClose={() => setShowSkew(false)} />
+      )}
       {showLog && <ChangelogModal siteVersion={SITE_VERSION} buildId={BUILD_ID} operatorVersion={p.version} onClose={() => setShowLog(false)} />}
     </footer>
   );
