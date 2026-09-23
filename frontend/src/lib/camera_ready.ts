@@ -1,4 +1,4 @@
-import { contentStats, type ContentStats } from "./capture_diagnostics.ts";
+import { contentStats, truncationReason, type ContentStats } from "./capture_diagnostics.ts";
 
 /** Wait until a video has decoded a real frame. A resolved getUserMedia promise alone is not
  * enough: overloaded UVC cameras can return a live MediaStream that never produces pixels. */
@@ -62,6 +62,22 @@ export function cameraSourceStats(source: CanvasImageSource, width: number, heig
     if (!ctx) return null;
     ctx.drawImage(source, 0, 0, canvas.width, canvas.height);
     return contentStats(ctx.getImageData(0, 0, canvas.width, canvas.height).data);
+  } catch {
+    return null;
+  }
+}
+
+/** Why a camera source looks truncated (its bottom never arrived), from a 64×96 downsample; null when
+ *  it looks whole or can't be drawn. */
+export function cameraSourceTruncation(source: CanvasImageSource): string | null {
+  try {
+    const canvas = document.createElement("canvas");
+    canvas.width = 64;
+    canvas.height = 96;
+    const ctx = canvas.getContext("2d", { willReadFrequently: true });
+    if (!ctx) return null;
+    ctx.drawImage(source, 0, 0, canvas.width, canvas.height);
+    return truncationReason(ctx.getImageData(0, 0, canvas.width, canvas.height).data, canvas.width, canvas.height);
   } catch {
     return null;
   }

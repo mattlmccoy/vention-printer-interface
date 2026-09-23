@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from "react";
 import { api } from "../lib/api.ts";
 import {
   cameraSourceStats,
+  cameraSourceTruncation,
   SCIENCE_CAPTURE_STREAM_CONSTRAINTS,
   SETUP_PREVIEW_CONSTRAINTS,
   waitForCameraFrame,
@@ -38,6 +39,8 @@ export async function grabScienceStill(
     ctx.drawImage(source, 0, 0, w, h);
     const stats = cameraSourceStats(canvas, w, h);
     if (!stats?.ok) { attempts.push(`${path}: ${stats ? blankReason(stats) : "could not be read"} at ${w}x${h}`); return Promise.resolve(null); }
+    const cut = cameraSourceTruncation(canvas);
+    if (cut) { attempts.push(`${path}: ${cut} at ${w}x${h}`); return Promise.resolve(null); }
     return new Promise((resolve) => canvas.toBlob((b) => {
       if (!b) attempts.push(`${path}: PNG encode failed`);
       resolve(b);
@@ -60,10 +63,11 @@ export async function grabScienceStill(
         });
         const bitmap = await createImageBitmap(photo);
         const stats = cameraSourceStats(bitmap, bitmap.width, bitmap.height);
+        const cut = stats?.ok ? cameraSourceTruncation(bitmap) : null;
         const size = `${bitmap.width}x${bitmap.height}`;
         bitmap.close();
-        if (stats?.ok) return { blob: photo, attempts };
-        attempts.push(`photo: ${stats ? blankReason(stats) : "could not be read"} at ${size}`);
+        if (stats?.ok && !cut) return { blob: photo, attempts };
+        attempts.push(`photo: ${cut ?? (stats ? blankReason(stats) : "could not be read")} at ${size}`);
       } catch (e) { attempts.push(`photo ${requested.width}x${requested.height}: ${why(e)}`); }
     } else attempts.push("photo: takePhoto unsupported");
     try {

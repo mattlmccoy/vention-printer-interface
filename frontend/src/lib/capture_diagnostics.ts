@@ -41,3 +41,28 @@ export function captureFailureMessage(i: { layer: number; attempts: string[]; up
     : `browser: ${i.attempts.length ? i.attempts.join("; ") : "no reason recorded"}`;
   return `Science capture failed for layer ${i.layer} · ${browser} · operator fallback: ${i.fallback}`;
 }
+
+/** A frame whose transfer stopped partway (USB bandwidth): the bottom band never arrived, so its rows
+ *  all average the same colour, that colour is strongly green (unfilled YUY2 data), and there is a
+ *  real image above it. Same rule and thresholds as the operator's
+ *  backend/vention_printer_interface/vision/frame_integrity.py (measured on the real frame). Such a
+ *  frame has plenty of contrast, so the blank check alone would accept it. RGBA, row-major. */
+export function truncationReason(px: Uint8ClampedArray, w: number, h: number): string | null {
+  if (w < 2 || h < 20 || px.length < w * h * 4) return null;
+  const k = Math.max(2, Math.floor(h * 0.05));
+  const rowMean = (y: number) => {
+    const m = [0, 0, 0];
+    for (let x = 0; x < w; x++) { const i = (y * w + x) * 4; m[0] += px[i]; m[1] += px[i + 1]; m[2] += px[i + 2]; }
+    return m.map((v) => v / w);
+  };
+  const rows = Array.from({ length: k }, (_, j) => rowMean(h - k + j));
+  const band = [0, 1, 2].map((c) => rows.reduce((s, r) => s + r[c], 0) / k);
+  const drift = Math.max(...[0, 1, 2].map((c) => Math.sqrt(rows.reduce((s, r) => s + (r[c] - band[c]) ** 2, 0) / k)));
+  const green = band[1] - Math.max(band[0], band[2]);
+  const upperRows = Array.from({ length: Math.floor(h / 2) }, (_, y) => rowMean(y));
+  const upper = [0, 1, 2].map((c) => upperRows.reduce((s, r) => s + r[c], 0) / upperRows.length);
+  const aboveDiffers = Math.max(...[0, 1, 2].map((c) => Math.abs(upper[c] - band[c]))) >= 10;
+  return drift < 0.5 && green >= 30 && aboveDiffers
+    ? "frame truncated: the bottom never arrived (unfilled green band), likely USB bandwidth"
+    : null;
+}
