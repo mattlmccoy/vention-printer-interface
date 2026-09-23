@@ -295,15 +295,82 @@ def _is_assignable_camera(model_id: str | None) -> bool:
     return model_id.startswith("0x") or "VendorID_" in model_id
 
 
+# Windows: UVC webcams register under PnP class "Camera" (Win10 1709+) or, on older drivers, "Image"
+# — which scanners and printers also use, so those are dropped by name.
+_WIN_CAMERA_CLASSES = ("Camera", "Image")
+_WIN_NOT_A_CAMERA = re.compile(r"scan|printer|fax|\bmfp\b", re.IGNORECASE)
+_WIN_BUILTIN = re.compile(r"integrated|built-?in|internal", re.IGNORECASE)
+_WIN_VID_PID = re.compile(r"VID_([0-9A-Fa-f]{4})&PID_([0-9A-Fa-f]{4})")
+_WIN_CAMERA_QUERY = (
+    "[Console]::OutputEncoding=[Text.Encoding]::UTF8; "
+    "Get-CimInstance Win32_PnPEntity | Where-Object { $_.PNPClass -eq 'Camera' -or "
+    "$_.PNPClass -eq 'Image' } | Select-Object Name,PNPDeviceID,PNPClass,Status | "
+    "ConvertTo-Json -Compress"
+)
+
+
+def _windows_vid_pid(pnp_device_id: Any) -> str | None:
+    """``VendorID:ProductID`` in DECIMAL from a PnP id like ``USB\\VID_32E4&PID_2020&MI_00\\…`` —
+    decimal to match the macOS form (``VendorID_13028``) so the identical-model guard compares the
+    same value on either OS. None when there is no USB VID/PID (not a USB camera)."""
+    if not isinstance(pnp_device_id, str):
+        return None
+    m = _WIN_VID_PID.search(pnp_device_id)
+    return f"{int(m.group(1), 16)}:{int(m.group(2), 16)}" if m else None
+
+
+def _parse_windows_cameras(data: Any) -> list[dict[str, Any]]:
+    """Parse ``Get-CimInstance Win32_PnPEntity`` JSON (Camera/Image class) into device records.
+
+    Pure (no I/O). Accepts a list or the bare object PowerShell emits for a single match. Identity
+    ONLY — no camera is opened (no light, and no fight with a browser holding the camera). The PnP
+    instance path is the stable id: it survives reboots and tells two identical ELPs apart. `index`
+    is enumeration order, ASSUMED to match DirectShow's `cv2.VideoCapture` index (unverified; the
+    operator confirms roles in the quick-start wizard, exactly as on macOS).
+    """
+    records = data if isinstance(data, list) else [data] if isinstance(data, dict) else []
+    out: list[dict[str, Any]] = []
+    for rec in records:
+        if not isinstance(rec, dict) or rec.get("PNPClass") not in _WIN_CAMERA_CLASSES:
+            continue
+        raw_name = rec.get("Name")
+        name = raw_name if isinstance(raw_name, str) and raw_name.strip() else None
+        if name and _WIN_NOT_A_CAMERA.search(name):
+            continue  # an Image-class scanner/printer, not a camera
+        index = len(out)
+        pnp = rec.get("PNPDeviceID")
+        vid_pid = _windows_vid_pid(pnp)
+        builtin = bool(name and _WIN_BUILTIN.search(name))
+        stable_id = f"win-pnp:{pnp}" if isinstance(pnp, str) and pnp else f"idx:{index}"
+        out.append({"index": index,
+                    "stable_id": stable_id,
+                    "name": name, "vid_pid": vid_pid,
+                    "assignable": vid_pid is not None and not builtin,
+                    "status": rec.get("Status"),
+                    "has_frame": None, "probed": False})
+    return out
+
+
 def _metadata_devices() -> list[dict[str, Any]]:
     """Identify cameras from OS metadata WITHOUT opening them (so no camera activates/lights up).
 
     macOS: `system_profiler SPCameraDataType -json`. Linux: `/sys/class/video4linux/video*/name`
-    plus `/dev/v4l/by-id` for a stable id. Returns [] on any other OS or on failure (caller then
-    falls back to the cv2 probe). Never raises.
+    plus `/dev/v4l/by-id` for a stable id. Windows: PowerShell `Get-CimInstance Win32_PnPEntity`
+    (Camera/Image class) for names + PnP instance ids. Returns [] on any other OS or on failure
+    (caller then falls back to the cv2 probe). Never raises.
     """
     system = platform.system()
     try:
+        if system == "Windows":
+            proc = subprocess.run(
+                ["powershell", "-NoProfile", "-NonInteractive", "-Command", _WIN_CAMERA_QUERY],
+                capture_output=True, text=True, encoding="utf-8", errors="replace",
+                timeout=10, check=False,
+                creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),  # no console flash
+            )
+            if proc.returncode != 0 or not proc.stdout.strip():
+                return []
+            return _parse_windows_cameras(json.loads(proc.stdout))
         if system == "Darwin":
             proc = subprocess.run(
                 ["system_profiler", "SPCameraDataType", "-json"],

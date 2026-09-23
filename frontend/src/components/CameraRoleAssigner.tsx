@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react";
 import { CameraTile } from "./CameraTiles.tsx";
+import { CameraAccessPrompt } from "./CameraAccessPrompt.tsx";
 import { labelCandidates, overviewCandidates, videoInputs, type VideoInput } from "../lib/webcam.ts";
 import { assignRole, loadRoleMap, roleOf, saveRoleMap, type RoleChoice } from "../lib/camera_roles.ts";
 
@@ -12,6 +13,8 @@ const storage = typeof localStorage === "undefined" ? null : localStorage;
  * is how you tell them apart. Assignments are saved immediately on change. */
 export function CameraRoleAssigner() {
   const [inputs, setInputs] = useState<VideoInput[]>([]);
+  const [devices, setDevices] = useState<MediaDeviceInfo[]>([]); // raw list: tells "hidden" from "none"
+  const [scan, setScan] = useState(0); // bumped after a permission grant to re-enumerate
   const [map, setMap] = useState(() => loadRoleMap(storage));
 
   useEffect(() => {
@@ -20,17 +23,17 @@ export function CameraRoleAssigner() {
     let cancelled = false;
     (async () => {
       try {
-        // Never call getUserMedia({video:true}) to unlock labels: macOS may select and wake an
-        // iPhone Continuity Camera. Existing site permission exposes labels; otherwise we show the
-        // permission hint without opening any unspecified device.
+        // Never call getUserMedia({video:true}) automatically to unlock labels: macOS may select and
+        // wake an iPhone Continuity Camera. Existing site permission exposes labels; otherwise
+        // CameraAccessPrompt offers an explicit, user-clicked grant.
         const devs = await md.enumerateDevices();
-        if (!cancelled) setInputs(videoInputs(devs));
+        if (!cancelled) { setDevices(devs); setInputs(videoInputs(devs)); }
       } catch {
         // Camera blocked: fall through to the hint below.
       }
     })();
     return () => { cancelled = true; };
-  }, []);
+  }, [scan]);
 
   const setRole = (deviceId: string, role: RoleChoice) => {
     setMap((m) => {
@@ -43,12 +46,7 @@ export function CameraRoleAssigner() {
   const cands = overviewCandidates(inputs);
   const tiles = cands.length ? cands : inputs.filter((d) => d.label);
   if (!tiles.length) {
-    return (
-      <span className="hint" style={{ marginTop: 0 }}>
-        No external camera live-view available yet — allow camera access in the browser, or plug in
-        the cameras.
-      </span>
-    );
+    return <CameraAccessPrompt devices={devices} onGranted={() => setScan((n) => n + 1)} />;
   }
   const labeled = labelCandidates(tiles);
 
