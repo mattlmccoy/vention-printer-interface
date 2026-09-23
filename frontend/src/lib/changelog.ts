@@ -20,6 +20,7 @@ export const CHANGELOG: Release[] = [
       "Pistons: in-app backlash calibration with live plots, a re-measure check, a stable recommendation and saved history; per-cylinder max travel and a guard against builds beyond usable travel.",
       "Cameras & calibration: coverage-gated science-camera calibration with independent scale validation, calibration through the browser camera, an automatic camera-center sweep for the capture pose, and ignoring unwanted cameras.",
       "Windows: a 'Grant camera access' button, the real reason when a camera can't open, and camera names on Windows.",
+      "Cameras: ignored cameras (like the built-in FaceTime camera) are hidden everywhere; the Settings tab is now 'Camera inventory'. ChArUco: large custom boards no longer overload the operator, and a preset board carries its parameters straight into calibration with the mm/px and bed-extent fields explained.",
       "Interface: alerts float over the page instead of pushing it down, archived jobs get their own section, a 5 mm jog step, numbers without floating-point noise, and the status bar shows the operator's exact commit so updates are visible.",
       "Analysis: exportable publication-style plots for backlash, layer accuracy, validation and sweeps.",
     ],

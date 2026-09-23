@@ -15,9 +15,12 @@ corresponds to a tagged merge to `main`.
 ### Changed
 - Science stills are no longer stored twice when uncalibrated (~36% smaller runs); lighter overview frames; shorter default dwells.
 - Alerts float over the page; archived jobs in their own section; 5 mm jog step; numbers without floating-point noise.
+- Settings "Unattended science" tab renamed **Camera inventory**; ChArUco presets carry their board parameters into calibration, with the mm/px and bed-extent fields explained.
 
 ### Fixed
 - Reveal on disk for runs on external drives; capture counts for WebP runs; sidecar lookups for deduplicated captures.
+- Ignored cameras (e.g. the built-in FaceTime camera) are hidden everywhere, not just in Settings.
+- Generating a large custom ChArUco board no longer overloads and kills the operator.
 
 ## v0.10.2 — 2026-09-18
 
