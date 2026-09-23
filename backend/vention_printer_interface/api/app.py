@@ -46,6 +46,7 @@ from vention_printer_interface.analysis.dimensional import (
     load_report,
 )
 from vention_printer_interface.analysis.lane_b import analyze_lane_b_from_pngs
+from vention_printer_interface.api.uvc_routes import register_uvc_routes
 from vention_printer_interface.build_info import operator_build
 from vention_printer_interface.control.backlash_cal import (
     BacklashResult,
@@ -189,6 +190,7 @@ from vention_printer_interface.vision.registration import (
     view_tilt_deg,
 )
 from vention_printer_interface.vision.store import read_manifest, write_overview_frame
+from vention_printer_interface.vision.uvc_backend import MacUvcBackend, UvcBackend
 
 log = logging.getLogger(__name__)
 
@@ -744,6 +746,9 @@ def create_app(
     vision_source: FrameSource | None = None,
     overview_source: FrameSource | None = None,
     device_enumerator: Callable[[], list[dict[str, Any]]] | None = None,
+    # Operator-side UVC camera controls. "auto" = the IOKit backend on macOS (the browser exposes
+    # almost no camera controls there), none elsewhere; tests inject a fake.
+    uvc_backend: UvcBackend | None | Literal["auto"] = "auto",
 ) -> FastAPI:
     # Experiments (runs) root: explicit arg -> VPI_EXPERIMENTS_ROOT env -> persistent config ->
     # CWD/experiments (install-local fallback, flagged loudly). Mirrors the jobs-root logic so a
@@ -2443,6 +2448,22 @@ def create_app(
             "science": _spec_to_settings(camera_config.science),
         }
 
+    @app.delete("/api/vision/settings/{role}")
+    def vision_reset_settings(role: str) -> dict[str, Any]:
+        """Drop one role's saved overrides so it returns to the env/built-in defaults (the
+        server half of "reset camera settings to default"). The other role is untouched."""
+        nonlocal camera_config
+        if role not in ("overview", "science"):
+            raise HTTPException(400, "role must be overview or science")
+        overrides = load_camera_settings(vision_settings_path)
+        overrides.pop(role, None)
+        save_camera_settings(vision_settings_path, overrides)
+        camera_config = build_camera_config()
+        return {
+            "overview": _spec_to_settings(camera_config.overview),
+            "science": _spec_to_settings(camera_config.science),
+        }
+
     @app.get("/api/vision/devices")
     def vision_devices() -> dict[str, Any]:
         """Detected cameras (A7 auto-connect/quick-start) plus an overall camera-permission
@@ -3337,6 +3358,14 @@ def create_app(
                 await asyncio.sleep(0.1)
         except WebSocketDisconnect:
             return
+
+    register_uvc_routes(
+        app,
+        (MacUvcBackend() if sys.platform == "darwin" else None)
+        if uvc_backend == "auto" else uvc_backend,
+        load_ignored_cameras,
+        load_science_uid,
+    )
 
     dist = frontend_dist or _DEFAULT_FRONTEND_DIST
     if dist.exists():

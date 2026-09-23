@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import { loadRoleMap } from "../lib/camera_roles.ts";
 import {
+  defaultSettingsFor,
   loadCameraSettings,
   resolutionsFor,
   resolutionWH,
@@ -12,6 +13,9 @@ import { applyPayload, numericControls, type NumericControl } from "../lib/track
 import { formatExposure, maxFps } from "../lib/camera_caps.ts";
 import { api } from "../lib/api.ts";
 import { SETUP_PREVIEW_CONSTRAINTS, waitForCameraFrame } from "../lib/camera_ready.ts";
+import { browserResetPlan } from "../lib/uvc_controls.ts";
+import type { CameraSettings, UvcResetPayload } from "../lib/api.ts";
+import { UvcControlsPanel } from "./UvcControlsPanel.tsx";
 
 const storage = typeof localStorage === "undefined" ? null : localStorage;
 
@@ -43,6 +47,10 @@ export function CameraSettingsPanel({ role }: { role: SettingsRole }) {
   const streamRef = useRef<MediaStream | null>(null);
   const trackRef = useRef<MediaStreamTrack | null>(null);
   const pushTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const [uvcNonce, setUvcNonce] = useState(0); // >0: ask the operator-side panel for a factory reset
+  const [uvcShown, setUvcShown] = useState(false);
+  const [resetMsg, setResetMsg] = useState<{ tone: "ok" | "warn"; text: string } | null>(null);
+  const browserNotes = useRef<string[]>([]);
 
   const stop = () => {
     streamRef.current?.getTracks().forEach((t) => t.stop());
@@ -53,21 +61,22 @@ export function CameraSettingsPanel({ role }: { role: SettingsRole }) {
   // Seed the panel from the server-side capture settings once, so it shows what will ACTUALLY be
   // recorded (e.g. the science default 20 MP · YUY2 · 7.5 fps) rather than a client-side guess. Format
   // lives only server-side; resolution / fps / exposure are mirrored into the client settings.
+  const seedFromServer = (s: CameraSettings | undefined, base?: OverviewSettings) => {
+    if (!s) return;
+    setFormat(typeof s.format === "string" ? s.format : "");
+    setSettings((prev) => {
+      const from = base ?? prev;
+      const next: OverviewSettings = { ...from, manual: { ...from.manual } };
+      if (Array.isArray(s.resolution) && s.resolution.length === 2) next.resolution = `${s.resolution[0]}x${s.resolution[1]}`;
+      else if (typeof s.resolution === "string") next.resolution = s.resolution;
+      if (typeof s.fps === "number") next.frameRate = s.fps;
+      if (typeof s.exposure === "number") next.manual.exposureTime = s.exposure;
+      saveCameraSettings(storage, role, next);
+      return next;
+    });
+  };
   useEffect(() => {
-    api.visionGetSettings().then((all) => {
-      const s = all[role];
-      if (!s) return;
-      if (typeof s.format === "string") setFormat(s.format);
-      setSettings((prev) => {
-        const next: OverviewSettings = { ...prev, manual: { ...prev.manual } };
-        if (Array.isArray(s.resolution) && s.resolution.length === 2) next.resolution = `${s.resolution[0]}x${s.resolution[1]}`;
-        else if (typeof s.resolution === "string") next.resolution = s.resolution;
-        if (typeof s.fps === "number") next.frameRate = s.fps;
-        if (typeof s.exposure === "number") next.manual.exposureTime = s.exposure;
-        saveCameraSettings(storage, role, next);
-        return next;
-      });
-    }).catch(() => {});
+    api.visionGetSettings().then((all) => seedFromServer(all[role])).catch(() => {});
     api.visionDevices().then((d) => { const dev = d.devices.find((x) => x.role === role); setModel(dev?.name ?? null); }).catch(() => {});
   }, [role]);
 
@@ -198,6 +207,44 @@ export function CameraSettingsPanel({ role }: { role: SettingsRole }) {
     if (key === "exposureTime") pushServer({ exposure: value });
   };
 
+  // Reset to defaults: the recorded-capture settings (server), the browser-saved overrides, the
+  // live browser controls (auto modes + defaults it can confirm), and -- on macOS -- the camera's
+  // own controls to its factory defaults over UVC. The outcome says what could NOT be reset.
+  const resetToDefaults = async () => {
+    if (!window.confirm(`Reset the ${role} camera to its defaults?\n\nResolution, fps, format and exposure go back to the defaults, saved slider values are cleared, and the camera's own controls return to factory settings where the operator or browser can reach them.`)) return;
+    setResetMsg(null);
+    browserNotes.current = [];
+    try {
+      const all = await api.visionResetSettings(role);
+      seedFromServer(all[role], defaultSettingsFor(role));
+    } catch (e) {
+      browserNotes.current.push(`capture settings not reset (${e instanceof Error ? e.message : "operator unreachable"})`);
+      const next = defaultSettingsFor(role);
+      saveCameraSettings(storage, role, next);
+      setSettings(next);
+    }
+    const track = trackRef.current;
+    if (track?.getCapabilities) {
+      const plan = browserResetPlan(track.getCapabilities() as Record<string, unknown>);
+      for (const c of plan.constraints) await track.applyConstraints({ advanced: [c] } as MediaTrackConstraints).catch(() => undefined);
+      if (plan.unknown.length) browserNotes.current.push(`browser can't read the factory default for: ${plan.unknown.join(", ")}`);
+    }
+    setReloadNonce((n) => n + 1); // reopen the preview at the default resolution, re-reading controls
+    if (uvcShown) setUvcNonce((n) => n + 1); // the operator panel reports the camera reset
+    else finishReset(null);
+  };
+  const finishReset = (uvc: UvcResetPayload | { error: string } | null) => {
+    const notes = [...browserNotes.current];
+    let done = "capture settings and saved sliders reset";
+    if (uvc && "error" in uvc) notes.push(`camera controls not reset (${uvc.error})`);
+    else if (uvc) {
+      done += ` · ${uvc.reset.length} camera controls back to factory defaults`;
+      const failed = Object.keys(uvc.failed);
+      if (failed.length) notes.push(`the camera refused: ${failed.join(", ")}`);
+    }
+    setResetMsg({ tone: notes.length ? "warn" : "ok", text: [done, ...notes].join(" · ") });
+  };
+
   const captureOnly = px.width * px.height > 8_300_000; // > 4K (e.g. 20 MP)
   const notLiveMsg = status === "denied"
     ? (error ?? "camera preview could not produce a frame")
@@ -250,7 +297,7 @@ export function CameraSettingsPanel({ role }: { role: SettingsRole }) {
           </label>
 
           {status === "live" && (controls.length === 0 ? (
-            <span className="hint" style={{ marginTop: 0 }}>this camera/browser exposes no adjustable controls (exposure is auto)</span>
+            !uvcShown && <span className="hint" style={{ marginTop: 0 }}>this camera/browser exposes no adjustable controls (exposure is auto)</span>
           ) : (
             <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
               {controls.map((c) => (
@@ -272,6 +319,13 @@ export function CameraSettingsPanel({ role }: { role: SettingsRole }) {
           </span>
         </>
       )}
+
+      {/* Operator-side (UVC) controls and the reset work without a browser camera assigned. */}
+      <UvcControlsPanel role={role} resetNonce={uvcNonce} onReset={finishReset} onAvailable={setUvcShown} />
+      <div className="row" style={{ gap: 8, alignItems: "center", flexWrap: "wrap" }}>
+        <button className="small" onClick={resetToDefaults}>Reset to defaults</button>
+        {resetMsg && <span className={resetMsg.tone === "ok" ? "okline" : "warnline"} style={{ marginTop: 0 }}>{resetMsg.text}</span>}
+      </div>
     </div>
   );
 }
