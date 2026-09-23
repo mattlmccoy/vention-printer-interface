@@ -106,3 +106,44 @@ test("labelCandidates leaves a unique label untouched, numbers only the duplicat
   // display is additive: original fields are preserved
   assert.equal(labelCandidates(cams)[0].deviceId, "elpA");
 });
+
+// ---- camera permission + getUserMedia error reasons (Windows: tiles were silently empty) -------
+import { needsCameraPermission, cameraErrorMessage } from "./webcam.ts";
+
+test("needsCameraPermission: cameras listed but every label hidden -> must ask", () => {
+  // Browsers hide labels (and Chrome hides deviceIds) until the site is granted camera access.
+  assert.equal(needsCameraPermission([{ kind: "videoinput", deviceId: "", label: "" }]), true);
+  assert.equal(needsCameraPermission([
+    { kind: "videoinput", deviceId: "", label: "" },
+    { kind: "audioinput", deviceId: "a", label: "Mic" },
+  ]), true);
+});
+
+test("needsCameraPermission: labels visible (granted) or no cameras at all -> no ask", () => {
+  assert.equal(needsCameraPermission([{ kind: "videoinput", deviceId: "d", label: "ELP 4K USB Camera" }]), false);
+  assert.equal(needsCameraPermission([{ kind: "audioinput", deviceId: "", label: "" }]), false);
+  assert.equal(needsCameraPermission([]), false);
+});
+
+const err = (name: string, message = "") => Object.assign(new Error(message), { name });
+
+test("cameraErrorMessage: blocked access names the browser AND the Windows privacy switch", () => {
+  const m = cameraErrorMessage(err("NotAllowedError"));
+  assert.match(m, /blocked/i);
+  assert.match(m, /Let desktop apps access your camera/);
+});
+
+test("cameraErrorMessage: in-use camera says so (Windows lets one app hold a camera)", () => {
+  assert.match(cameraErrorMessage(err("NotReadableError")), /in use/i);
+  assert.match(cameraErrorMessage(err("TrackStartError")), /in use/i); // older Chrome name
+});
+
+test("cameraErrorMessage: missing / unsupported camera", () => {
+  assert.match(cameraErrorMessage(err("NotFoundError")), /not (found|available)/i);
+  assert.match(cameraErrorMessage(err("OverconstrainedError")), /not (found|available)|resolution/i);
+});
+
+test("cameraErrorMessage: unknown errors keep their name for diagnosis", () => {
+  assert.match(cameraErrorMessage(err("WeirdError", "boom")), /WeirdError.*boom/);
+  assert.match(cameraErrorMessage("nope"), /camera error/i);
+});

@@ -1,12 +1,13 @@
 import { useEffect, useRef, useState, type PointerEvent as ReactPointerEvent } from "react";
 import type { View } from "../lib/console.ts";
 import { panelVisible, setPanelVisible } from "../lib/vision.ts";
-import { overviewCandidates, pickOverviewDeviceId, videoInputs, type VideoInput } from "../lib/webcam.ts";
+import { cameraErrorMessage, overviewCandidates, pickOverviewDeviceId, videoInputs, type VideoInput } from "../lib/webcam.ts";
 import { loadLiveFeedCameraId, saveLiveFeedCameraId } from "../lib/live_feed.ts";
 import { clampZoom, cropStyle, loadCrop, NO_CROP, panOrigin, saveCrop, type Crop } from "../lib/crop.ts";
 import { applyPayload, numericControls, type NumericControl } from "../lib/track_settings.ts";
 import { loadOverviewSettings, videoConstraints } from "../lib/overview_settings.ts";
 import { CameraTiles } from "./CameraTiles.tsx";
+import { CameraAccessPrompt } from "./CameraAccessPrompt.tsx";
 
 const storage = typeof localStorage === "undefined" ? null : localStorage;
 
@@ -23,6 +24,9 @@ export function OverviewCameraPanel({ view }: { base?: string; view: View }) {
   const videoRef = useRef<HTMLVideoElement | null>(null);
   const streamRef = useRef<MediaStream | null>(null);
   const [inputs, setInputs] = useState<VideoInput[]>([]);
+  const [devices, setDevices] = useState<MediaDeviceInfo[]>([]); // raw list: tells "hidden" from "none"
+  const [scan, setScan] = useState(0); // bumped after a permission grant to re-enumerate
+  const [openError, setOpenError] = useState(""); // why the chosen camera failed to open
   const [selectedId, setSelectedId] = useState<string | null>(() => loadLiveFeedCameraId(storage));
   const [status, setStatus] = useState<"idle" | "live" | "pick" | "denied" | "unsupported">("idle");
   const [crop, setCrop] = useState<Crop>(NO_CROP);
@@ -54,6 +58,7 @@ export function OverviewCameraPanel({ view }: { base?: string; view: View }) {
         // Continuity Camera. Only exact deviceIds selected from labelled inputs are opened.
         const devs = await md.enumerateDevices();
         if (cancelled) return;
+        setDevices(devs);
         const ins = videoInputs(devs);
         setInputs(ins);
         const saved = loadLiveFeedCameraId(storage);
@@ -67,7 +72,7 @@ export function OverviewCameraPanel({ view }: { base?: string; view: View }) {
     return () => {
       cancelled = true;
     };
-  }, [visible]);
+  }, [visible, scan]);
 
   // Open the selected camera and feed the <video>.
   useEffect(() => {
@@ -100,9 +105,11 @@ export function OverviewCameraPanel({ view }: { base?: string; view: View }) {
         } catch {
           setControls([]);
         }
+        setOpenError("");
         setStatus("live");
-      } catch {
-        if (!cancelled) setStatus("pick");
+      } catch (e) {
+        // Keep the reason (blocked / in use / unplugged) so the picker can say why, not just reset.
+        if (!cancelled) { setOpenError(cameraErrorMessage(e)); setStatus("pick"); }
       }
     })();
     return () => {
@@ -247,12 +254,12 @@ export function OverviewCameraPanel({ view }: { base?: string; view: View }) {
             return tiles.length ? (
               <div className="cam-pick" style={{ display: "flex", flexDirection: "column", gap: 6 }}>
                 <span className="hint">pick which camera to show in the live feed</span>
+                {openError && <span className="hint" role="alert" style={{ color: "var(--warn)" }}>{openError}</span>}
                 <CameraTiles candidates={tiles} selectedId={selectedId} onPick={pickTile} />
               </div>
             ) : (
               <div className="cam-panel-empty">
-                <span className="cam-panel-ph" aria-hidden="true" />
-                <span>no external camera found — only phone/built-in cameras detected</span>
+                <CameraAccessPrompt devices={devices} onGranted={() => setScan((n) => n + 1)} />
               </div>
             );
           })()}

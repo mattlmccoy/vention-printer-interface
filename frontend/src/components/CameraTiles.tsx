@@ -1,5 +1,5 @@
 import { useEffect, useRef, type ReactNode } from "react";
-import { labelCandidates, type VideoInput } from "../lib/webcam.ts";
+import { cameraErrorMessage, labelCandidates, type VideoInput } from "../lib/webcam.ts";
 import { SETUP_PREVIEW_CONSTRAINTS } from "../lib/camera_ready.ts";
 
 // Low-res, low-fps preview so two identical 20MP cameras can stream side-by-side on one USB hub
@@ -43,10 +43,14 @@ export function CameraTile({
         streamRef.current = stream;
         if (videoRef.current) videoRef.current.srcObject = stream;
         if (errRef.current) errRef.current.style.display = "none";
-      } catch {
-        // Camera busy (already open elsewhere) or hub can't supply another stream: show the name
-        // only. The operator can still assign it; the full-res open will retry when it's used.
-        if (errRef.current) errRef.current.style.display = "flex";
+      } catch (e) {
+        // Say WHY the preview is empty (blocked / in use / unplugged) instead of a silent black box.
+        // The operator can still assign the camera; the full-res open retries when it's used.
+        if (errRef.current) {
+          errRef.current.textContent = cameraErrorMessage(e);
+          errRef.current.title = errRef.current.textContent;
+          errRef.current.style.display = "flex";
+        }
       }
     })();
     return () => {
@@ -111,10 +115,12 @@ export function CameraTile({
         )}
         <span
           ref={errRef}
-          style={{ display: "none", position: "absolute", inset: 0, alignItems: "center", justifyContent: "center" }}
+          style={{ display: "none", position: "absolute", inset: 0, alignItems: "center", justifyContent: "center",
+            padding: 6, fontSize: 10, lineHeight: 1.25, textAlign: "center", overflow: "hidden" }}
           className="hint"
+          role="status"
         >
-          preview busy
+          preview unavailable
         </span>
       </div>
       <span style={{ fontSize: 12, lineHeight: 1.2 }}>

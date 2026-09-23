@@ -100,3 +100,52 @@ export function saveOverviewCameraId(storage: Storage | null, deviceId: string):
     /* private mode / disabled storage: selection just isn't remembered */
   }
 }
+
+/** True when the browser lists camera(s) but hides every label — i.e. this site has never been
+ *  granted camera access (browsers withhold labels, and Chrome also deviceIds, until then). The UI
+ *  must then offer an explicit, user-clicked grant: nothing else ever triggers the prompt (we avoid
+ *  an automatic getUserMedia({video:true}) because on macOS it can wake an iPhone Continuity
+ *  Camera). A fresh Windows browser hits exactly this, which left the camera pickers empty. */
+export function needsCameraPermission(devices: { kind: string; label: string; deviceId?: string }[]): boolean {
+  const cams = devices.filter((d) => d.kind === "videoinput");
+  return cams.length > 0 && cams.every((d) => !d.label);
+}
+
+/** Ask for camera access (only ever call this from a user click). Opens the default camera just
+ *  long enough to get the grant, then stops it; afterwards enumerateDevices returns real labels. */
+export async function requestCameraPermission(md: MediaDevices): Promise<void> {
+  const stream = await md.getUserMedia({ video: true });
+  stream.getTracks().forEach((t) => t.stop());
+}
+
+/** Actionable text for a getUserMedia failure, so a tile says WHY it is empty instead of a silent
+ *  black box. Windows specifics: a system-wide privacy switch can block every desktop app (the
+ *  browser included) while the built-in Camera app still works, and only one app can hold a camera
+ *  at a time. */
+export function cameraErrorMessage(err: unknown): string {
+  const name = err && typeof err === "object" && "name" in err ? String((err as { name: unknown }).name) : "";
+  const message = err instanceof Error ? err.message : "";
+  switch (name) {
+    case "NotAllowedError":
+    case "SecurityError":
+    case "PermissionDeniedError":
+      return "Camera access is blocked. Allow the camera for this site (address-bar camera icon). "
+        + "On Windows also check Settings → Privacy & security → Camera → "
+        + "“Let desktop apps access your camera”.";
+    case "NotReadableError":
+    case "TrackStartError":
+      return "Camera is in use by another app — close the Camera app / Teams / Zoom (or another "
+        + "browser tab) and retry. Windows lets only one app hold a camera at a time.";
+    case "NotFoundError":
+    case "DevicesNotFoundError":
+      return "Camera not found — it may have been unplugged. Replug it and retry.";
+    case "OverconstrainedError":
+    case "ConstraintNotSatisfiedError":
+      return "Camera not available at the requested resolution/frame rate — retry, or lower the "
+        + "camera settings.";
+    case "AbortError":
+      return "Camera failed to start — unplug and replug it, then retry.";
+    default:
+      return name ? `Camera error: ${name}${message ? `: ${message}` : ""}` : "Camera error — retry.";
+  }
+}
