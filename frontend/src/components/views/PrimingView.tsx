@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 import { api } from "../../lib/api.ts";
-import type { Gates } from "../../lib/format.ts";
+import { fmtMmAuto, type Gates } from "../../lib/format.ts";
 import type { StatusPayload } from "../../lib/telemetry.ts";
 import { fillDepthMm, cavityFillPct, FEED_TRAVEL_MM, type FillSource } from "../../lib/powder.ts";
 import { WALKTHROUGH_STEPS, stepHeading } from "../../lib/walkthrough.ts";
@@ -73,7 +73,7 @@ export function PrimingView({ status, gates, call, onJob, onPrint }: { status: S
     <button className={`small${source === value ? " on" : ""}`} aria-pressed={source === value} onClick={() => setSource(value)}>{label}</button>
   );
   const target = (k: string): number | null => (s ? s[k] ?? null : null);
-  const fmt = (mm: number | null) => (mm === null ? "—" : `${mm} mm`);
+  const fmt = (mm: number | null) => fmtMmAuto(mm);
   const skip = () => setStep((x) => Math.min(WALKTHROUGH_STEPS.length - 1, x + 1));
   // Feed-supply amount for the level step: the editable field, else the saved feed/precoat default.
   const feedSupplyMm = n(feedAmt) > 0 ? n(feedAmt) : (target("thick_feed_mm") ?? 0);
@@ -235,7 +235,7 @@ export function PrimingView({ status, gates, call, onJob, onPrint }: { status: S
                 </div>
                 {primed ? (
                   <>
-                    <div className="kv"><span>captured part</span><span>{primed.part_mm} mm</span><span>captured feed</span><span>{primed.feed_mm} mm</span></div>
+                    <div className="kv"><span>captured part</span><span>{fmtMmAuto(primed.part_mm)}</span><span>captured feed</span><span>{fmtMmAuto(primed.feed_mm)}</span></div>
                     <div className="btnrow"><button className="cta primary" onClick={onPrint}>Priming complete — go to Print →</button></div>
                   </>
                 ) : <div className="hint">No primed bed captured yet. The Print tab starts from the captured bed.</div>}

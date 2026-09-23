@@ -377,6 +377,9 @@ button.small { height: 34px; padding: 0 12px; border: 1px solid var(--line-contr
 .fields.adv { max-width: 720px; grid-template-columns: auto minmax(0, 1fr) auto minmax(0, 1fr); }
 .fields.adv .grp { grid-column: 1 / -1; margin-top: 8px; font: 11px var(--font-mono); letter-spacing: .08em; text-transform: uppercase; color: var(--muted); border-bottom: 1px solid var(--line); padding-bottom: 4px; }
 .fields.adv .grp:first-child { margin-top: 0; }
+/* Full-width plain-language help / inline error under a field (Calibrate page). */
+.fields .field-help { grid-column: 1 / -1; margin-top: -6px; color: var(--muted); font-size: 12.5px; line-height: 1.4; }
+.fields .field-err { grid-column: 1 / -1; margin-top: -6px; color: var(--err); font-size: 13px; }
 .est { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
 .est div .l { font: 12px var(--font-mono); letter-spacing: .09em; text-transform: uppercase; color: var(--label); }
 .est div .v { font: 700 30px var(--font-mono); color: var(--fg-strong); margin-top: 6px; }
@@ -655,3 +658,16 @@ button.small { height: 34px; padding: 0 12px; border: 1px solid var(--line-contr
   font: 12px/1.45 system-ui, sans-serif; text-transform: none; letter-spacing: 0; text-align: left;
   box-shadow: var(--shadow); pointer-events: none; white-space: normal;
 }
+
+/* ---- floating alert stack: fault / error / warning / NOT HOMED ----
+   Fixed under the header so an alert never pushes the page down (no layout shift). Centered and
+   width-capped so the Print page's PAUSE/ABORT (right) and state pill (left) stay visible on wide
+   screens; it starts below the header, so E-STOP is never covered. Tints sit over an opaque panel so
+   the text stays readable above page content. */
+.alert-stack { position: fixed; top: 64px; left: 50%; transform: translateX(-50%); width: min(760px, calc(100% - 32px)); z-index: 40; display: flex; flex-direction: column; gap: 8px; pointer-events: none; }
+.alert-stack .banner { pointer-events: auto; padding: 10px 16px; border: 1px solid var(--line-strong); border-radius: var(--radius); box-shadow: var(--shadow); background: var(--panel); }
+.alert-stack .banner.err { background: linear-gradient(var(--err-bg), var(--err-bg)), var(--panel); border-color: var(--err); }
+.alert-stack .banner.warn { background: linear-gradient(var(--warn-bg), var(--warn-bg)), var(--panel); border-color: var(--warn); }
+.alert-stack .banner .reason { max-width: 48ch; }
+@media (prefers-reduced-motion: no-preference) { .alert-stack .banner { animation: alert-in .16s ease-out; } }
+@keyframes alert-in { from { opacity: 0; transform: translateY(-4px); } to { opacity: 1; transform: none; } }

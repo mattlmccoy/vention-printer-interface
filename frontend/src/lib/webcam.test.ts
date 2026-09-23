@@ -1,6 +1,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import {
+  allVideoInputs,
   isBuiltinOrPhoneLabel,
   labelCandidates,
   overviewCandidates,
@@ -146,4 +147,46 @@ test("cameraErrorMessage: missing / unsupported camera", () => {
 test("cameraErrorMessage: unknown errors keep their name for diagnosis", () => {
   assert.match(cameraErrorMessage(err("WeirdError", "boom")), /WeirdError.*boom/);
   assert.match(cameraErrorMessage("nope"), /camera error/i);
+});
+
+// ---- ignored / built-in cameras never reach a picker ------------------------------------------
+
+test("isBuiltinOrPhoneLabel flags every built-in laptop camera label, never a USB ELP", () => {
+  assert.equal(isBuiltinOrPhoneLabel("FaceTime HD Camera"), true);
+  assert.equal(isBuiltinOrPhoneLabel("MacBook Pro Camera"), true); // Apple-silicon Macs
+  assert.equal(isBuiltinOrPhoneLabel("MacBook Air Camera"), true);
+  assert.equal(isBuiltinOrPhoneLabel("Integrated Camera"), true); // Windows laptops
+  assert.equal(isBuiltinOrPhoneLabel("FaceTime HD Camera (Built-in) (05ac:8514)"), true);
+  assert.equal(isBuiltinOrPhoneLabel("ELP 4K USB Camera (32e4:9230)"), false);
+  assert.equal(isBuiltinOrPhoneLabel("20MP U3 Camera (32e4:2020)"), false);
+  assert.equal(isBuiltinOrPhoneLabel("USB Camera"), false);
+});
+
+test("videoInputs drops cameras on the ignore list (by name and by deviceId)", () => {
+  const devs = [
+    { kind: "videoinput", deviceId: "ft", label: "FaceTime HD Camera" },
+    { kind: "videoinput", deviceId: "elpA", label: "ELP 4K USB Camera (32e4:9230)" },
+    { kind: "videoinput", deviceId: "elpB", label: "ELP 4K USB Camera (32e4:9230)" },
+  ];
+  const ignore = { deviceIds: ["elpB"], names: ["FaceTime HD Camera"] };
+  assert.deepEqual(videoInputs(devs, ignore).map((d) => d.deviceId), ["elpA"]);
+  assert.deepEqual(allVideoInputs(devs).map((d) => d.deviceId), ["ft", "elpA", "elpB"]);
+});
+
+test("pickOverviewDeviceId never returns a saved built-in camera", () => {
+  const inputs: VideoInput[] = [
+    { deviceId: "ft", label: "FaceTime HD Camera" },
+    { deviceId: "elp", label: "ELP 4K USB Camera (32e4:9230)" },
+  ];
+  assert.equal(pickOverviewDeviceId(inputs, "ft", null), "elp");
+  assert.equal(pickOverviewDeviceId([inputs[0]], "ft", null), null);
+});
+
+test("pickOverviewDeviceId never returns a saved ignored camera", () => {
+  const inputs: VideoInput[] = [
+    { deviceId: "elpA", label: "ELP 4K USB Camera (32e4:9230)" },
+    { deviceId: "elpB", label: "ELP 4K USB Camera (32e4:9230)" },
+  ];
+  const ignore = { deviceIds: ["elpB"], names: [] };
+  assert.equal(pickOverviewDeviceId(inputs, "elpB", null, ignore), "elpA");
 });

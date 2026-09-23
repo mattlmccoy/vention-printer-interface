@@ -302,9 +302,11 @@ export const api = {
   // Data locations (jobs + runs) — persisted install-independently so a reinstall can't lose them.
   getConfigPaths: () => req<PathsInfo | Record<string, never>>("GET", "/api/config/paths"),
   setConfigPaths: (body: { jobs_root?: string | null; experiments_root?: string | null }) => req<PathsInfo & { restart_required: boolean }>("PUT", "/api/config/paths", body),
-  avfCameras: () => req<{ cameras: Array<{ index: number; name: string; unique_id: string }>; science_uid: string | null; ignored_uids: string[] }>("GET", "/api/vision/avf-cameras"),
+  // `ignored_names` / `names` (browser-safe names of ignored cameras) are absent on an older operator.
+  avfCameras: () => req<{ cameras: Array<{ index: number; name: string; unique_id: string }>; science_uid: string | null; ignored_uids: string[]; ignored_names?: string[] }>("GET", "/api/vision/avf-cameras"),
   setScienceUid: (unique_id: string | null) => req<{ unique_id: string | null }>("PUT", "/api/vision/science-uid", { unique_id }),
-  setIgnoredCameras: (unique_ids: string[]) => req<{ unique_ids: string[] }>("PUT", "/api/vision/ignored-cameras", { unique_ids }),
+  ignoredCameras: () => req<{ unique_ids: string[]; names?: string[] }>("GET", "/api/vision/ignored-cameras"),
+  setIgnoredCameras: (unique_ids: string[]) => req<{ unique_ids: string[]; names?: string[] }>("PUT", "/api/vision/ignored-cameras", { unique_ids }),
   // Move a completed job's folder into the hot folder's _archive/ (Jobs-page housekeeping).
   archiveJob: (folder: string) => req<{ folder: string; archived_to: string }>("POST", "/api/jobs/archive", { folder }),
   macro: (name: string) => req<StatusPayload["print"]>("POST", `/api/macro/${name}`),

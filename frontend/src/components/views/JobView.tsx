@@ -1,8 +1,9 @@
 import { useEffect, useState } from "react";
 import { api } from "../../lib/api.ts";
-import type { Gates } from "../../lib/format.ts";
+import { cleanNum, type Gates } from "../../lib/format.ts";
 import type { JobSnap, StatusPayload } from "../../lib/telemetry.ts";
 import { CrossSection } from "../CrossSection.tsx";
+import { splitArchived } from "../../lib/job_list.ts";
 import type { Call } from "./types.ts";
 
 type JobRow = Omit<JobSnap, "current_layer">;
@@ -20,6 +21,14 @@ export function JobView({ status, gates, call, onGoPrint }: {
   const running = gates.printActive;
   const refresh = () => { api.jobs().then((r) => { setJobs(r.jobs as JobRow[]); setRoots(r.roots); }).catch(() => undefined); };
   useEffect(() => { refresh(); }, [gates.reachable, job?.path]);
+  const { active, archived, selectedIsArchived } = splitArchived(jobs, job?.path ?? null);
+
+  const row = (j: JobRow) => (
+    <button key={j.path} className={job?.path === j.path ? "on" : ""} disabled={running} onClick={() => call("select job", () => api.selectJob(j.path))}>
+      <span className="n"><span className={`kind ${(j.kind ?? (j.layer_count <= 1 ? "2D" : "3D")) === "2D" ? "k2d" : "k3d"}`} title={(j.kind ?? (j.layer_count <= 1 ? "2D" : "3D")) === "2D" ? "2D RIP print (single layer, multi-pass)" : "3D sliced part"}>{j.kind ?? (j.layer_count <= 1 ? "2D" : "3D")}</span>{j.name}</span><span className="m">{j.layer_count} × {cleanNum(j.layer_height_mm)} mm</span>
+      <span className="m">{j.folder.slice(0, 8)} {j.folder.slice(9, 11)}:{j.folder.slice(11, 13)} · {cleanNum(j.bbox_mm.x)} × {cleanNum(j.bbox_mm.y)} × {cleanNum(j.height_mm)} mm</span><span className={`m ${j.complete ? "" : "bad"}`}>{j.complete ? `${j.dpi} dpi` : "missing pages"}</span>
+    </button>
+  );
 
   return (
     <div className="view fixed-page job-view">
@@ -29,14 +38,17 @@ export function JobView({ status, gates, call, onGoPrint }: {
           <h3>sliced jobs<button className="small" onClick={refresh}>rescan</button></h3>
           <div className="hint" style={{ marginTop: 0, marginBottom: 8 }}>{roots.join(" · ") || "no jobs folder configured (vpi-serve --jobs-root)"}</div>
           <div className="job-list">
-            {jobs.map((j) => (
-              <button key={j.path} className={job?.path === j.path ? "on" : ""} disabled={running} onClick={() => call("select job", () => api.selectJob(j.path))}>
-                <span className="n"><span className={`kind ${(j.kind ?? (j.layer_count <= 1 ? "2D" : "3D")) === "2D" ? "k2d" : "k3d"}`} title={(j.kind ?? (j.layer_count <= 1 ? "2D" : "3D")) === "2D" ? "2D RIP print (single layer, multi-pass)" : "3D sliced part"}>{j.kind ?? (j.layer_count <= 1 ? "2D" : "3D")}</span>{j.name}{j.archived ? <span className="m" style={{ marginLeft: 6, opacity: 0.65 }} title="Archived — under the hot folder's _archive/">· archived</span> : null}</span><span className="m">{j.layer_count} × {j.layer_height_mm} mm</span>
-                <span className="m">{j.folder.slice(0, 8)} {j.folder.slice(9, 11)}:{j.folder.slice(11, 13)} · {j.bbox_mm.x} × {j.bbox_mm.y} × {j.height_mm} mm</span><span className={`m ${j.complete ? "" : "bad"}`}>{j.complete ? `${j.dpi} dpi` : "missing pages"}</span>
-              </button>
-            ))}
+            {active.map(row)}
             {jobs.length === 0 && <div className="hint">no job_info.json folders found. Slice a part with the Meteor RIP tool; its hot-folder archive is scanned.</div>}
+            {jobs.length > 0 && active.length === 0 && <div className="hint">no active jobs — everything is archived.</div>}
           </div>
+          {archived.length > 0 && (
+            // key flips when the selected job moves into/out of the archive, so it opens to show it
+            <details className="job-archive" open={selectedIsArchived} key={selectedIsArchived ? "sel" : "idle"}>
+              <summary title="Jobs under the hot folder's _archive/">Archived ({archived.length})</summary>
+              <div className="job-list" style={{ marginTop: 8 }}>{archived.map(row)}</div>
+            </details>
+          )}
           {job && <div className="row" style={{ marginTop: 10 }}><button className="small" disabled={running} onClick={() => call("clear job", api.clearJob)}>manual print (no job)</button></div>}
         </div>
         <div className="card">

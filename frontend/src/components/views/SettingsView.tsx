@@ -3,14 +3,16 @@ import { api, type BacklashHistoryItem, type BacklashRecord, type BacklashSessio
 import { captureScienceStillOnce } from "../../lib/science_still.ts";
 import { BacklashPlot } from "../BacklashPlot.tsx";
 import { verifyVerdict, type Verdict } from "../../lib/backlash_verify.ts";
-import type { Gates } from "../../lib/format.ts";
+import { cleanNum, type Gates } from "../../lib/format.ts";
 import type { StatusPayload } from "../../lib/telemetry.ts";
 import { loadRoleMap } from "../../lib/camera_roles.ts";
 import { loadCameraSettings, videoConstraints } from "../../lib/overview_settings.ts";
 import { CalibrationBoardPanel } from "../CalibrationBoardPanel.tsx";
 import { CameraRoleAssigner } from "../CameraRoleAssigner.tsx";
+import { CameraInventoryPanel } from "../CameraInventoryPanel.tsx";
 import { CameraSettingsPanel } from "../CameraSettingsPanel.tsx";
 import { CalibrationWizard } from "../CalibrationWizard.tsx";
+import { parseFinalizeInputs } from "../../lib/calib_finalize.ts";
 import { ValidationPanel } from "../ValidationPanel.tsx";
 import { PlotExportButtons } from "../PlotExportButtons.tsx";
 import { pistonMaxPatch, type PistonField } from "../../lib/pistons.ts";
@@ -242,14 +244,12 @@ function CalibrationForm({ call, disabled }: { call: Call; disabled: boolean }) 
     try {
       const image_points = parsePoints(imagePts);
       const world_points_mm = parsePoints(worldPts);
-      const extent = bedExtent.split(",").map(Number);
       if (image_points.some(([x, y]) => !Number.isFinite(x) || !Number.isFinite(y))) throw new Error("bad image point");
       if (world_points_mm.some(([x, y]) => !Number.isFinite(x) || !Number.isFinite(y))) throw new Error("bad world point");
       if (image_points.length !== world_points_mm.length || image_points.length < 4) throw new Error("need >= 4 matched image/world points");
-      if (extent.length !== 4 || extent.some((v) => !Number.isFinite(v))) throw new Error("bed extent needs 4 numbers: x0,y0,x1,y1");
-      const mm = Number(mmPerPx);
-      if (!Number.isFinite(mm) || mm <= 0) throw new Error("mm/px must be a positive number");
-      body = { image_points, world_points_mm, mm_per_px: mm, bed_extent_mm: extent as [number, number, number, number] };
+      const raster = parseFinalizeInputs(mmPerPx, bedExtent); // same bed-image bounds as the backend
+      if (!raster.ok) throw new Error(raster.error);
+      body = { image_points, world_points_mm, mm_per_px: raster.mmPerPx, bed_extent_mm: raster.extent };
     } catch (e) {
       setParseErr(e instanceof Error ? e.message : String(e));
       return;
@@ -268,7 +268,7 @@ function CalibrationForm({ call, disabled }: { call: Call; disabled: boolean }) 
         <span>mm / px</span>
         <input type="number" step="0.01" value={mmPerPx} onChange={(e) => setMmPerPx(e.target.value)} />
         <span>bed extent (mm)</span>
-        <input type="text" placeholder="x0,y0,x1,y1" value={bedExtent} onChange={(e) => setBedExtent(e.target.value)} />
+        <input type="text" placeholder="left,top,right,bottom" value={bedExtent} onChange={(e) => setBedExtent(e.target.value)} />
       </div>
       {parseErr && <div className="errline">{parseErr}</div>}
       <div className="actions one tight">
@@ -423,7 +423,7 @@ function CaptureCalibration({ status, gates, call }: { status: StatusPayload | n
       </div>
       <div className="kv" style={{ marginTop: 8 }}>
         <span>recoater now</span><span>{typeof rc === "number" ? `${rc.toFixed(1)} mm` : "—"}</span>
-        <span>saved capture pose</span><span>{pose != null && pose > 0 ? `${pose} mm` : "not set"}</span>
+        <span>saved capture pose</span><span>{pose != null && pose > 0 ? `${cleanNum(pose)} mm` : "not set"}</span>
       </div>
       <div className="actions one tight" style={{ marginTop: 10 }}>
         <button className="cta primary" disabled={!ok || typeof rc !== "number"} onClick={savePose}>Set capture pose = {typeof rc === "number" ? `${rc.toFixed(1)} mm` : "?"}</button>
@@ -464,9 +464,6 @@ function CaptureCalibration({ status, gates, call }: { status: StatusPayload | n
   );
 }
 
-/** Bind the SCIENCE camera to a stable macOS AVFoundation unique id, so the operator captures the
- *  RIGHT camera unattended (no browser tab open). The client-side picker is still the primary way to
- *  tell two identical ELPs apart; this is the robust server-side fallback for unattended prints. */
 /** Copy runs to a picked external drive, FLIR-style: each file hash-verified, re-copy skips what's
  *  already there (a yanked cable just resumes). Runs land under vpi-runs/ on the drive. */
 function DataOffloadPanel() {
@@ -630,75 +627,6 @@ function PrintPacingPanel() {
   );
 }
 
-function UnattendedSciencePanel() {
-  const [cams, setCams] = useState<Array<{ index: number; name: string; unique_id: string }>>([]);
-  const [uid, setUid] = useState<string | null>(null);
-  const [ignored, setIgnored] = useState<string[]>([]);
-  const [showIgnored, setShowIgnored] = useState(false);
-  const [msg, setMsg] = useState("");
-  const load = () => api.avfCameras().then((r) => { setCams(r.cameras); setUid(r.science_uid); setIgnored(r.ignored_uids); }).catch(() => setCams([]));
-  useEffect(() => { load(); }, []);
-  const set = (u: string | null) => api.setScienceUid(u).then((r) => { setUid(r.unique_id); setMsg(u ? "science camera bound" : "binding cleared"); }).catch(() => setMsg("failed"));
-  const saveIgnored = (list: string[]) => api.setIgnoredCameras(list).then((r) => setIgnored(r.unique_ids)).catch(() => setMsg("failed"));
-  const ignore = (u: string) => { if (uid !== u) void saveIgnored([...ignored, u]); };
-  const unignore = (u: string) => void saveIgnored(ignored.filter((x) => x !== u));
-
-  const rowStyle = { justifyContent: "space-between", gap: 8, padding: "5px 0", borderTop: "1px solid var(--line)" } as const;
-  const active = cams.filter((c) => !ignored.includes(c.unique_id));
-  const ignoredCams = cams.filter((c) => ignored.includes(c.unique_id));
-  const ignoredMissing = ignored.filter((u) => !cams.some((c) => c.unique_id === u));  // unplugged but still ignored
-  const ignoredCount = ignoredCams.length + ignoredMissing.length;
-  return (
-    <div className="body">
-      <div className="hint" style={{ marginTop: 0 }}>
-        Bind the science camera to a stable macOS unique id so the server grabs the correct camera even
-        with no browser tab open. Identify which is which with the live tiles in the camera quick-start;
-        confirm on the two-ELP rig before relying on it for a real print. Ignore the cameras you never
-        use (FaceTime, iPhone) to keep the picker clean — it persists across restarts.
-      </div>
-      {active.length === 0 && ignoredCount === 0
-        ? <div className="hint">no macOS cameras enumerated (non-macOS, or none detected)</div>
-        : active.map((c) => (
-            <div key={c.unique_id} className="row" style={rowStyle}>
-              <span>[{c.index}] {c.name || "camera"} <small className="hint">{c.unique_id}</small></span>
-              <span style={{ display: "flex", gap: 6, flexShrink: 0 }}>
-                {uid === c.unique_id
-                  ? <b className="okv">science ✓</b>
-                  : <button className="small" onClick={() => set(c.unique_id)}>set as science</button>}
-                <button className="small" title="Hide this camera from the picker permanently" disabled={uid === c.unique_id} onClick={() => ignore(c.unique_id)}>ignore</button>
-              </span>
-            </div>
-          ))}
-      {ignoredCount > 0 && (
-        <div style={{ marginTop: 8 }}>
-          <button className="small" onClick={() => setShowIgnored((v) => !v)}>{showIgnored ? "hide" : "show"} {ignoredCount} ignored</button>
-          {showIgnored && (
-            <>
-              {ignoredCams.map((c) => (
-                <div key={c.unique_id} className="row" style={{ ...rowStyle, opacity: 0.6 }}>
-                  <span>[{c.index}] {c.name || "camera"} <small className="hint">{c.unique_id}</small></span>
-                  <button className="small" onClick={() => unignore(c.unique_id)}>un-ignore</button>
-                </div>
-              ))}
-              {ignoredMissing.map((u) => (
-                <div key={u} className="row" style={{ ...rowStyle, opacity: 0.6 }}>
-                  <span><span className="hint">not connected</span> <small className="hint">{u}</small></span>
-                  <button className="small" onClick={() => unignore(u)}>un-ignore</button>
-                </div>
-              ))}
-            </>
-          )}
-        </div>
-      )}
-      <div className="actions" style={{ marginTop: 8, gap: 8 }}>
-        <button className="small" onClick={load}>refresh</button>
-        {uid && <button className="small" onClick={() => set(null)}>clear binding</button>}
-        {msg && <span className="hint">{msg}</span>}
-      </div>
-    </div>
-  );
-}
-
 export function SettingsView({ status, gates, call, base, onOpenQuickStart }: {
   status: StatusPayload | null; gates: Gates; call: Call; base: string;
   /** A7: reopens the camera-role quick-start wizard any time (cameras swapped/replaced/re-cabled) */
@@ -723,7 +651,8 @@ export function SettingsView({ status, gates, call, base, onOpenQuickStart }: {
     { key: "validate", title: "Validate", sub: "dimensional ±0.1 mm" },
     { key: "pose", title: "Capture pose", sub: "overhead science cam" },
     { key: "manual", title: "Manual calibration", sub: "raw image↔world points" },
-    { key: "unattended", title: "Unattended science", sub: "bind camera by UID" },
+    // key stays "unattended" (the tab's former name) so an existing selection still lands here.
+    { key: "unattended", title: "Camera inventory", sub: "ignore list · science UID" },
     { key: "offload", title: "Data offload", sub: "copy runs to a drive" },
     { key: "pacing", title: "Print pacing", sub: "inter-move timing" },
   ];
@@ -787,7 +716,7 @@ export function SettingsView({ status, gates, call, base, onOpenQuickStart }: {
           {sel === "validate" && <ValidationPanel call={call} printing={gates.printActive} />}
           {sel === "pose" && <CaptureCalibration status={status} gates={gates} call={call} base={base} />}
           {sel === "manual" && <div className="body"><CalibrationForm call={call} disabled={!gates.reachable} /></div>}
-          {sel === "unattended" && <UnattendedSciencePanel />}
+          {sel === "unattended" && <CameraInventoryPanel />}
           {sel === "offload" && <DataOffloadPanel />}
           {sel === "pacing" && <PrintPacingPanel />}
         </div>

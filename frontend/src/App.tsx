@@ -5,7 +5,9 @@ import { checkHandshake, saveOperatorBase, UI_API_VERSION, wsUrl } from "./lib/o
 import { loadConsole, saveConsole, type View } from "./lib/console.ts";
 import { connectOptions, type Candidate } from "./lib/connect.ts";
 import { dismissQuickStart, shouldShowQuickStart } from "./lib/vision.ts";
+import { syncCameraIgnore } from "./lib/camera_ignore_sync.ts";
 import type { StatusPayload } from "./lib/telemetry.ts";
+import { showWarnings, warningsKey } from "./lib/alerts.ts";
 import { ErrorBoundary } from "./components/ErrorBoundary.tsx";
 import { StatusBar } from "./components/StatusBar.tsx";
 import { MachineDock } from "./components/MachineDock.tsx";
@@ -34,6 +36,7 @@ export function App() {
   const [base, setBase] = useState(operatorBase());
   const [baseInput, setBaseInput] = useState(operatorBase());
   const [err, setErr] = useState<string | null>(null);
+  const [dismissedWarn, setDismissedWarn] = useState<string | null>(null); // hidden until warnings change
   const [version, setVersion] = useState<string | null>(null);
   const [opBuild, setOpBuild] = useState<string | null>(null); // operator's git commit (health.build)
   const [handshake, setHandshake] = useState<string | null>(null);
@@ -94,6 +97,12 @@ export function App() {
     poll();
     const id = window.setInterval(poll, 5000);
     return () => { live = false; window.clearInterval(id); };
+  }, [reachable, base]);
+
+  // Camera ignore list (Settings → Camera inventory): pull the operator's ignored camera names on
+  // connect so every browser picker hides them, and drop saved selections that point at them.
+  useEffect(() => {
+    if (reachable) void syncCameraIgnore(storage);
   }, [reachable, base]);
 
   useEffect(() => {
@@ -198,7 +207,8 @@ export function App() {
           </button>
           <button className="estop" disabled={!g.connected} onClick={() => call("e-stop", api.estop)}>■ E-STOP</button>
         </header>
-        <div>
+        {/* Alerts FLOAT over the page (fixed, under the header) instead of pushing the layout down. */}
+        <div className="alert-stack" aria-live="polite">
           {g.faulted && (
             <div className="banner err recovery">
               <b>FAULT</b>
@@ -220,7 +230,7 @@ export function App() {
               {err && <span className="apierr" title={err}>{err}</span>}
             </div>
           )}
-          {!g.faulted && (err || (c && c.warnings.length > 0)) && <div className={`banner ${err ? "err" : "warn"}`}>{err ? <span className="apierr" style={{ marginLeft: 0, maxWidth: "100%" }}>{err}</span> : c?.warnings.join("; ")}{err && <button style={{ marginLeft: "auto" }} onClick={() => setErr(null)}>dismiss</button>}</div>}
+          {!g.faulted && (err || showWarnings(c?.warnings, dismissedWarn)) && <div className={`banner ${err ? "err" : "warn"}`}>{err ? <span className="apierr" style={{ marginLeft: 0, maxWidth: "100%" }}>{err}</span> : c?.warnings.join("; ")}<button style={{ marginLeft: "auto" }} onClick={() => (err ? setErr(null) : setDismissedWarn(warningsKey(c?.warnings ?? [])))}>dismiss</button></div>}
           {!g.faulted && g.connected && anyUnref && (
             <div className="banner warn">
               <b>NOT HOMED</b>
@@ -228,6 +238,8 @@ export function App() {
               {ui.view !== "control" && <button className="small" style={{ marginLeft: "auto" }} onClick={() => setView("control")}>go to Control</button>}
             </div>
           )}
+        </div>
+        <div>
           {showConnect && (
             <div className="banner">
               {g.connected ? <>

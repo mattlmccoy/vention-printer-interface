@@ -121,9 +121,12 @@ from vention_printer_interface.recording.recorder import Recorder, list_runs_in
 from vention_printer_interface.timing_config import TimingConfig, load_timing, save_timing
 from vention_printer_interface.vision.avfoundation import list_avf_cameras
 from vention_printer_interface.vision.board_gen import (
+    BoardSpecError,
     generate_charuco_dxf,
     generate_charuco_svg,
     resolve_preset,
+    validate_charuco_spec,
+    with_auto_dict,
 )
 from vention_printer_interface.vision.cameras import (
     CameraConfig,
@@ -151,12 +154,20 @@ from vention_printer_interface.vision.frame_source import (
     FrameSource,
     UvcFrameSource,
 )
+from vention_printer_interface.vision.ignored_cameras import (
+    drop_ignored_devices,
+    exposed_names,
+    load_ignored,
+    save_ignored,
+    with_names,
+)
 from vention_printer_interface.vision.overview import OverviewStreamer, encode_jpeg
 from vention_printer_interface.vision.registration import (
     BoardDetection,
     BoardSpec,
     Calibration,
     apply_homography,
+    bed_raster_error,
     calibrate_intrinsics,
     calibrate_intrinsics_boards,
     calibration_validation_warning,
@@ -179,6 +190,9 @@ log = logging.getLogger(__name__)
 API_VERSION = "0.1"
 LOCAL_ORIGIN_RE = r"^https?://(localhost|127\.0\.0\.1)(:\d+)?$"
 CLIENT_HEADER = "x-vpi-client"
+# GET /api/vision/board reports the ArUco dictionary it drew the board with (auto-picked unless
+# the caller named one), so the UI can show it and hand it to the calibrate session.
+BOARD_DICT_HEADER = "X-Board-Dict"
 SAFE_METHODS = frozenset({"GET", "HEAD", "OPTIONS"})
 RUN_FILES = frozenset(
     {
@@ -290,6 +304,7 @@ def install_cross_origin_policy(app: FastAPI, *, site_origin: str | None) -> Non
         allow_origin_regex=LOCAL_ORIGIN_RE,
         allow_methods=["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
         allow_headers=["content-type", CLIENT_HEADER],
+        expose_headers=[BOARD_DICT_HEADER],
         allow_private_network=True,
         max_age=600,
     )
@@ -470,7 +485,8 @@ class BoardSpecBody(BaseModel):
     squares_y: int = 0
     square_length_mm: float = 0.0
     marker_length_mm: float = 0.0
-    aruco_dict: str = "DICT_4X4_50"
+    # None = auto-pick the smallest adequate 4x4 dictionary (same rule as GET /api/vision/board).
+    aruco_dict: str | None = None
     cols: int = 0
     rows: int = 0
     square_size_mm: float = 0.0
@@ -539,18 +555,22 @@ def _grid_scale_bias(
 
 
 def _board_spec(body: BoardSpecBody) -> BoardSpec:
-    """Convert a request ``BoardSpecBody`` into a domain ``BoardSpec``."""
-    return BoardSpec(
+    """Convert a request ``BoardSpecBody`` into a domain ``BoardSpec``. A ChArUco body with no
+    ``aruco_dict`` gets the auto-picked dictionary (the board endpoint's rule)."""
+    spec = BoardSpec(
         kind=body.kind,
         squares_x=body.squares_x,
         squares_y=body.squares_y,
         square_length_mm=body.square_length_mm,
         marker_length_mm=body.marker_length_mm,
-        aruco_dict=body.aruco_dict,
+        aruco_dict=body.aruco_dict or "DICT_4X4_50",
         cols=body.cols,
         rows=body.rows,
         square_size_mm=body.square_size_mm,
     )
+    if spec.kind == "charuco" and body.aruco_dict is None:
+        spec = with_auto_dict(spec)
+    return spec
 
 
 def _tcp_open(ip: str, port: int, timeout_s: float = 0.5) -> bool:
@@ -747,9 +767,9 @@ def create_app(
     # present, the server captures science by this STABLE per-camera id instead of a fragile index —
     # so the RIGHT camera is grabbed even with no browser tab open. Unset => current behavior.
     science_uid_path = root / ".vision_science_uid.json"
-    # AVFoundation unique ids the operator has perpetually IGNORED (FaceTime, iPhone, etc.) so they
-    # never clutter the science picker. Persisted server-side (survives browser changes, applies
-    # unattended). A stable-id list, mirroring the science-uid file.
+    # AVFoundation unique ids the operator has perpetually IGNORED (FaceTime, iPhone, etc.), with
+    # each camera's name so the browser (which only knows labels) can hide it too. An ignored
+    # camera is dropped from device listing, role resolution and the science binding.
     ignored_cameras_path = root / ".vision_ignored_cameras.json"
 
     def load_science_uid() -> str | None:
@@ -760,11 +780,21 @@ def create_app(
             return None
 
     def load_ignored_cameras() -> list[str]:
-        try:
-            uids = json.loads(ignored_cameras_path.read_text()).get("unique_ids")
-            return [u for u in uids if isinstance(u, str) and u] if isinstance(uids, list) else []
-        except (OSError, ValueError):
+        return [e.unique_id for e in load_ignored(ignored_cameras_path)]
+
+    def ignored_names_now() -> list[str]:
+        """Ignored cameras' browser-safe names, backfilling names for ids stored without one."""
+        entries = load_ignored(ignored_cameras_path)
+        if not entries:
             return []
+        cams = list_avf_cameras()
+        named = with_names([e.unique_id for e in entries], cams, entries)
+        if named != entries:
+            try:
+                save_ignored(ignored_cameras_path, named)
+            except OSError as exc:
+                log.warning("could not backfill ignored-camera names (%s)", exc)
+        return exposed_names(named, cams)
 
     def build_camera_config() -> CameraConfig:
         """CameraConfig from env/defaults, merged with any persisted per-role setting overrides.
@@ -857,6 +887,8 @@ def create_app(
             except Exception as exc:  # noqa: BLE001 - enumeration must never block startup
                 log.warning("camera enumeration failed (%s); serving without auto-resolve", exc)
                 enumerated = []
+            # An ignored camera can never hold a role (nor be auto-opened by the index fallback).
+            enumerated = drop_ignored_devices(enumerated, load_ignored_cameras())
             mapping = load_role_map(vision_roles_path)
             resolved = resolve_roles(enumerated, mapping, camera_config)
             app.state.vision_enumerated_devices = enumerated
@@ -872,6 +904,8 @@ def create_app(
             # (the 2026-09-16 "FaceTime streamed despite no cameras detected" bug). An injected test
             # source still opens.
             science_uid = load_science_uid()
+            if science_uid in load_ignored_cameras():
+                science_uid = None  # bound before it was ignored: never capture from it
             # A configured AVFoundation unique id IS a resolution — open by it even when no
             # stable_id spec resolved (that is the whole point of the unattended-by-uid path).
             if spec is None and vision_source is None and not science_uid:
@@ -2089,8 +2123,13 @@ def create_app(
         browser isn't possible (headless/remote). The ``open`` call is best-effort glue: a failure
         (or a non-desktop host) still returns the path with ``revealed: false`` and a reason.
         """
+        # Resolve across the local root AND mounted drives, so an offloaded run reveals on its drive
+        # (was a 400 "bad run" for any run not under the local experiments root).
+        run_dir = _run_dir_opt(run)
+        if run_dir is None:
+            raise HTTPException(400, "bad run")
         try:
-            target = _run_reveal_target(root, run)
+            target = _run_reveal_target(run_dir.parent, run)
         except ValueError as exc:
             raise HTTPException(400, str(exc)) from exc
         revealed, note = False, ""
@@ -2379,6 +2418,8 @@ def create_app(
         except Exception as exc:  # noqa: BLE001 - enumeration must never fail the request
             log.warning("device enumeration failed (%s)", exc)
             enumerated = []
+        access = camera_access_state(enumerated)  # over EVERY camera, ignored ones included
+        enumerated = drop_ignored_devices(enumerated, load_ignored_cameras())
         mapping = load_role_map(vision_roles_path)
         resolved = resolve_roles(enumerated, mapping, camera_config)
         role_by_index = {spec.index: role for role, spec in resolved.items()}
@@ -2403,7 +2444,7 @@ def create_app(
                     "has_frame": device.get("has_frame"),
                 }
             )
-        return {"devices": devices, "camera_access": camera_access_state(enumerated)}
+        return {"devices": devices, "camera_access": access}
 
     @app.get("/api/vision/roles")
     def vision_get_roles() -> dict[str, str]:
@@ -2421,6 +2462,13 @@ def create_app(
                 400, f"invalid role value(s): {bad_roles!r} (must be in {sorted(_VALID_ROLES)!r})"
             )
         save_role_map(vision_roles_path, body.mapping)
+        reopen_vision_sources()
+        unresolved: list[str] = list(app.state.vision_unresolved_roles)
+        return {"mapping": body.mapping, "roles_resolved": not unresolved, "unresolved": unresolved}
+
+    def reopen_vision_sources() -> None:
+        """Re-resolve roles, then (re)open the mapped overview+science sources -- guarded end to
+        end so a role pointed at a device that isn't plugged in never crashes or half-opens."""
         resolved = app.state.vision_refresh_role_resolution()
 
         vision = vision_service()
@@ -2445,9 +2493,6 @@ def create_app(
                 log.warning("overview source close before reopen failed (%s)", exc)
         app.state.vision_open_overview(resolved.get("overview"))
 
-        unresolved: list[str] = list(app.state.vision_unresolved_roles)
-        return {"mapping": body.mapping, "roles_resolved": not unresolved, "unresolved": unresolved}
-
     @app.get("/api/vision/avf-cameras")
     def vision_avf_cameras() -> dict[str, Any]:
         """macOS cameras with their STABLE AVFoundation unique ids (Phase-2 unattended capture).
@@ -2459,11 +2504,14 @@ def create_app(
             ],
             "science_uid": load_science_uid(),
             "ignored_uids": load_ignored_cameras(),
+            "ignored_names": ignored_names_now(),
         }
 
     @app.get("/api/vision/ignored-cameras")
     def vision_get_ignored_cameras() -> dict[str, list[str]]:
-        return {"unique_ids": load_ignored_cameras()}
+        """The ignore list plus the names the browser pickers may hide by label (a name shared
+        with a camera that is NOT ignored -- one of two identical ELPs -- is withheld)."""
+        return {"unique_ids": load_ignored_cameras(), "names": ignored_names_now()}
 
     @app.put("/api/vision/ignored-cameras")
     def vision_put_ignored_cameras(body: dict[str, Any]) -> dict[str, list[str]]:
@@ -2473,8 +2521,14 @@ def create_app(
         if not isinstance(raw, list) or not all(isinstance(u, str) for u in raw):
             raise HTTPException(400, "unique_ids must be a list of strings")
         uids = list(dict.fromkeys(u for u in raw if u))  # de-dup, drop empties, keep order
-        ignored_cameras_path.write_text(json.dumps({"unique_ids": uids}))
-        return {"unique_ids": uids}
+        science_uid = load_science_uid()
+        if science_uid is not None and science_uid in uids:
+            raise HTTPException(400, "clear the science binding before ignoring that camera")
+        cams = list_avf_cameras()
+        entries = with_names(uids, cams, load_ignored(ignored_cameras_path))
+        save_ignored(ignored_cameras_path, entries)
+        reopen_vision_sources()  # drop a now-ignored camera from any role it held
+        return {"unique_ids": uids, "names": exposed_names(entries, cams)}
 
     @app.get("/api/vision/science-uid")
     def vision_get_science_uid() -> dict[str, str | None]:
@@ -2487,6 +2541,8 @@ def create_app(
         uid = body.get("unique_id")
         if uid is not None and (not isinstance(uid, str) or not uid.strip()):
             raise HTTPException(400, "unique_id must be a non-empty string or null")
+        if uid is not None and uid in load_ignored_cameras():
+            raise HTTPException(400, "that camera is ignored -- un-ignore it first")
         science_uid_path.write_text(json.dumps({"unique_id": uid}))
         vision = vision_service()
         if vision is not None:
@@ -2507,7 +2563,7 @@ def create_app(
         squares_y: int | None = None,
         square_mm: float | None = None,
         marker_mm: float | None = None,
-        dict_name: str = Query("DICT_4X4_50", alias="dict"),
+        dict_name: str | None = Query(None, alias="dict"),
         engrave_black: bool = True,
         label: bool = True,
         cut_outline: bool = True,
@@ -2515,22 +2571,18 @@ def create_app(
         """Generate a TRUE-VECTOR ChArUco calibration board (SVG or DXF) for laser engraving.
 
         Either a named ``preset`` (with optional explicit field overrides) or an explicit
-        ``squares_x``/``squares_y``/``square_mm``/``marker_mm`` set must be supplied. Returns
-        the file with the right content-type + an attachment download name; 400 on bad params.
+        ``squares_x``/``squares_y``/``square_mm``/``marker_mm`` set must be supplied. With no
+        ``dict``, the smallest 4x4 ArUco dictionary with enough markers for the grid is used; an
+        explicit ``dict`` that is too small is a 400. The dictionary used is returned in the
+        ``X-Board-Dict`` header. Returns the file with the right content-type + an attachment
+        download name; 400 on bad params (never 500).
         """
         if kind != "charuco":
             raise HTTPException(400, "only kind=charuco is supported")
         if fmt not in ("svg", "dxf"):
             raise HTTPException(400, "format must be 'svg' or 'dxf'")
 
-        # I-1: validate BEFORE touching cv2/board_gen -- an unbounded squares_x/squares_y or a
-        # bogus dict name must never reach board generation (CPU-burn / crash risk).
         import cv2
-        import cv2.aruco as aruco
-
-        dict_allowlist = {name for name in dir(aruco) if name.startswith("DICT_")}
-        if dict_name not in dict_allowlist:
-            raise HTTPException(400, f"unknown aruco dictionary: {dict_name!r}")
 
         try:
             if preset is not None:
@@ -2543,8 +2595,6 @@ def create_app(
                     overrides["square_length_mm"] = square_mm
                 if marker_mm is not None:
                     overrides["marker_length_mm"] = marker_mm
-                if dict_name != "DICT_4X4_50":
-                    overrides["aruco_dict"] = dict_name
                 spec = resolve_preset(preset, **overrides)
                 filename_base = preset
             else:
@@ -2559,51 +2609,54 @@ def create_app(
                     squares_y=squares_y,
                     square_length_mm=square_mm,
                     marker_length_mm=marker_mm,
-                    aruco_dict=dict_name,
                 )
                 filename_base = f"charuco_{squares_x}x{squares_y}"
         except KeyError as exc:
             raise HTTPException(400, f"unknown preset: {preset!r}") from exc
 
-        # Range/consistency validation on the FINAL resolved spec (covers both the explicit
-        # path and a preset with overrides) -- still before any cv2 board-generation compute.
-        if not (1 <= spec.squares_x <= 40):
-            raise HTTPException(400, "squares_x must be between 1 and 40")
-        if not (1 <= spec.squares_y <= 40):
-            raise HTTPException(400, "squares_y must be between 1 and 40")
-        if not (0 < spec.marker_length_mm < spec.square_length_mm):
-            raise HTTPException(400, "marker_mm must be > 0 and less than square_mm")
+        # I-1: validate the FINAL resolved spec BEFORE any cv2 board construction -- a 1-wide
+        # grid, an unbounded grid, or a bogus/too-small dictionary must never reach cv2.
+        try:
+            if dict_name is None:
+                spec = with_auto_dict(spec)
+            else:
+                spec = dataclasses.replace(spec, aruco_dict=dict_name)
+            validate_charuco_spec(spec)
+        except BoardSpecError as exc:
+            raise HTTPException(400, f"invalid board spec: {exc}") from exc
 
         polarity = "black" if engrave_black else "white"
         try:
             if fmt == "svg":
-                svg = generate_charuco_svg(
+                content: str | bytes = generate_charuco_svg(
                     spec, engrave_black=engrave_black, label=label, cut_outline=cut_outline
                 )
-                return Response(
-                    content=svg,
-                    media_type="image/svg+xml",
-                    headers={
-                        "Content-Disposition": (
-                            f'attachment; filename="{filename_base}_{polarity}.svg"'
-                        )
-                    },
+                media_type = "image/svg+xml"
+            else:
+                content = generate_charuco_dxf(
+                    spec, engrave_black=engrave_black, label=label, cut_outline=cut_outline
                 )
-            dxf = generate_charuco_dxf(
-                spec, engrave_black=engrave_black, label=label, cut_outline=cut_outline
-            )
-        except (ValueError, AttributeError, TypeError, cv2.error) as exc:
+                media_type = "application/dxf"
+        # SystemError: cv2 signals some bad board inputs this way (last-resort; validation above
+        # is what keeps them away from cv2, since the process can be unstable afterwards).
+        except (ValueError, AttributeError, TypeError, SystemError, cv2.error) as exc:
             raise HTTPException(400, f"invalid board spec: {exc}") from exc
         return Response(
-            content=dxf,
-            media_type="application/dxf",
+            content=content,
+            media_type=media_type,
             headers={
-                "Content-Disposition": f'attachment; filename="{filename_base}_{polarity}.dxf"'
+                "Content-Disposition": (
+                    f'attachment; filename="{filename_base}_{polarity}.{fmt}"'
+                ),
+                BOARD_DICT_HEADER: spec.aruco_dict,
             },
         )
 
     @app.post("/api/vision/calibrate")
     def vision_calibrate(body: VisionCalibrateBody) -> dict[str, Any]:
+        raster_problem = bed_raster_error(body.mm_per_px, body.bed_extent_mm)
+        if raster_problem is not None:
+            raise HTTPException(400, raster_problem)
         # Bed correspondence points (raw image px <-> world mm on the bed plane).
         bed_image_pts = np.asarray(body.image_points, dtype=float)
         bed_world_pts = np.asarray(body.world_points_mm, dtype=float)
@@ -2682,8 +2735,17 @@ def create_app(
 
     @app.post("/api/vision/calibrate/session")
     def vision_calibrate_session_start(body: CalibSessionBody) -> dict[str, Any]:
-        """Start/reset a guided calibration-capture session. Clears accumulated views."""
+        """Start/reset a guided calibration-capture session. Clears accumulated views.
+
+        A ChArUco board is validated first (grid >= 2 squares per side, marker < square, a
+        dictionary big enough for the markers): cv2 can take the process down on a 1-wide board.
+        """
         spec = _board_spec(body.spec) if body.spec is not None else _DEFAULT_CALIB_SPEC
+        if spec.kind == "charuco":
+            try:
+                validate_charuco_spec(spec)
+            except BoardSpecError as exc:
+                raise HTTPException(400, f"invalid board: {exc}") from exc
         app.state.calib_session_spec = spec
         app.state.calib_session_views = []
         app.state.calib_session_image_size = None
@@ -2764,6 +2826,9 @@ def create_app(
         spec: BoardSpec | None = app.state.calib_session_spec
         if spec is None:
             raise HTTPException(400, "no active calibration session; start one first")
+        raster_problem = bed_raster_error(body.mm_per_px, body.bed_extent_mm)
+        if raster_problem is not None:
+            raise HTTPException(400, raster_problem)
         views: list[BoardDetection] = app.state.calib_session_views
         if not views:
             raise HTTPException(400, "no calibration views captured; capture a board first")

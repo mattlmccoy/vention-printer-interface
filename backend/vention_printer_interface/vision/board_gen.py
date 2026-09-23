@@ -26,10 +26,94 @@ non-marker square filled at ``True`` is empty at ``False`` and vice-versa.
 from __future__ import annotations
 
 import io
+import threading
 from dataclasses import replace
 from typing import Any
 
 from vention_printer_interface.vision.registration import BoardSpec
+
+# Grid bounds for a ChArUco board. cv2 raises SystemError for a board 1 square wide, and the
+# process can die later (SIGTRAP on the next cv2 call, observed on OpenCV 5.0.0), so a 1-wide
+# grid must be rejected BEFORE cv2 ever sees it. The upper bound caps generation cost.
+MIN_SQUARES = 2
+MAX_SQUARES = 40
+# Auto-pick order: the smallest 4x4 dictionary that holds the board's markers wins.
+ARUCO_4X4_FAMILY: tuple[str, ...] = (
+    "DICT_4X4_50",
+    "DICT_4X4_100",
+    "DICT_4X4_250",
+    "DICT_4X4_1000",
+)
+# One generation at a time: concurrent requests (e.g. a preview per keystroke) queue here
+# instead of building several boards in parallel and piling up memory.
+_GENERATION_LOCK = threading.Lock()
+
+
+class BoardSpecError(ValueError):
+    """A ChArUco board spec that cannot be generated or detected (message is user-facing)."""
+
+
+def markers_needed(squares_x: int, squares_y: int) -> int:
+    """Number of ArUco markers a ``squares_x`` x ``squares_y`` ChArUco board uses (the white
+    squares): ``floor(sx * sy / 2)``, matching ``len(cv2.aruco.CharucoBoard(..).getIds())``."""
+    return (squares_x * squares_y) // 2
+
+
+def dict_capacity(dict_name: str) -> int:
+    """Marker count of a predefined ``cv2.aruco`` dictionary, read from cv2 itself.
+
+    Raises ``BoardSpecError`` for a name that is not a predefined ``DICT_*`` dictionary.
+    """
+    import cv2.aruco as aruco
+
+    if not dict_name.startswith("DICT_") or not hasattr(aruco, dict_name):
+        raise BoardSpecError(f"unknown aruco dictionary: {dict_name!r}")
+    dictionary = aruco.getPredefinedDictionary(getattr(aruco, dict_name))
+    return int(dictionary.bytesList.shape[0])
+
+
+def pick_aruco_dict(squares_x: int, squares_y: int) -> str:
+    """Smallest dictionary in :data:`ARUCO_4X4_FAMILY` with enough markers for the grid."""
+    needed = markers_needed(squares_x, squares_y)
+    for name in ARUCO_4X4_FAMILY:
+        if dict_capacity(name) >= needed:
+            return name
+    raise BoardSpecError(
+        f"a {squares_x}x{squares_y} board needs {needed} markers; the largest 4x4 "
+        f"dictionary ({ARUCO_4X4_FAMILY[-1]}) has {dict_capacity(ARUCO_4X4_FAMILY[-1])}"
+    )
+
+
+def with_auto_dict(spec: BoardSpec) -> BoardSpec:
+    """``spec`` with :func:`pick_aruco_dict`'s dictionary for its grid. A grid outside the
+    allowed bounds is returned unchanged, for :func:`validate_charuco_spec` to reject."""
+    in_bounds = all(MIN_SQUARES <= n <= MAX_SQUARES for n in (spec.squares_x, spec.squares_y))
+    if not in_bounds:
+        return spec
+    return replace(spec, aruco_dict=pick_aruco_dict(spec.squares_x, spec.squares_y))
+
+
+def validate_charuco_spec(spec: BoardSpec) -> None:
+    """Reject a ChArUco spec that cv2 cannot build or detect. Pure checks, run before any
+    cv2 board construction; raises ``BoardSpecError`` with a user-facing message."""
+    if spec.kind != "charuco":
+        raise BoardSpecError(f"only charuco boards are supported here, got {spec.kind!r}")
+    for axis, n in (("squares_x", spec.squares_x), ("squares_y", spec.squares_y)):
+        if not (MIN_SQUARES <= n <= MAX_SQUARES):
+            raise BoardSpecError(
+                f"{axis} must be at least {MIN_SQUARES} and at most {MAX_SQUARES} (got {n})"
+            )
+    if not (0 < spec.marker_length_mm < spec.square_length_mm):
+        raise BoardSpecError("marker size must be > 0 and smaller than the square size")
+    capacity = dict_capacity(spec.aruco_dict)
+    needed = markers_needed(spec.squares_x, spec.squares_y)
+    if capacity < needed:
+        raise BoardSpecError(
+            f"a {spec.squares_x}x{spec.squares_y} board needs {needed} markers but "
+            f"{spec.aruco_dict} has only {capacity}; use "
+            f"{pick_aruco_dict(spec.squares_x, spec.squares_y)} or leave the dictionary unset"
+        )
+
 
 # Preset library. Every field is overridable via ``resolve_preset(name, **overrides)``.
 # ``small_cylinder`` is sized so the board's bounding circle fits a Ø101.6 mm (4 in) cylinder
@@ -201,7 +285,7 @@ def _label_text(spec: BoardSpec) -> str:
     )
 
 
-def generate_charuco_svg(
+def _render_charuco_svg(
     spec: BoardSpec, *, engrave_black: bool = True, label: bool = True, cut_outline: bool = True
 ) -> str:
     """Render the ChArUco board as a true-vector SVG string at exact mm scale.
@@ -247,13 +331,13 @@ def generate_charuco_svg(
     return "\n".join(parts)
 
 
-def generate_charuco_dxf(
+def _render_charuco_dxf(
     spec: BoardSpec, *, engrave_black: bool = True, label: bool = True, cut_outline: bool = True
 ) -> bytes:
     """Render the ChArUco board as a DXF byte string (units = mm) via ``ezdxf``.
 
     Each filled cell is one closed ``LWPOLYLINE`` on the ``ENGRAVE`` layer; the optional spec
-    label is a ``TEXT`` entity. Geometry is identical to :func:`generate_charuco_svg`, so the
+    label is a ``TEXT`` entity. Geometry is identical to :func:`_render_charuco_svg`, so the
     ENGRAVE-layer LWPOLYLINE count equals that SVG's filled-cell count. When ``cut_outline``
     (default) the board's outer rectangle is added as a closed polyline on a separate ``CUT``
     layer (red), so the operator's laser software maps it to the cut operation.
@@ -301,3 +385,27 @@ def generate_charuco_dxf(
     stream = io.StringIO()
     doc.write(stream)
     return stream.getvalue().encode("utf-8")
+
+
+def generate_charuco_svg(
+    spec: BoardSpec, *, engrave_black: bool = True, label: bool = True, cut_outline: bool = True
+) -> str:
+    """Validate ``spec`` (see :func:`validate_charuco_spec`), then render it as a true-vector
+    SVG (see :func:`_render_charuco_svg`). Generations run one at a time."""
+    validate_charuco_spec(spec)
+    with _GENERATION_LOCK:
+        return _render_charuco_svg(
+            spec, engrave_black=engrave_black, label=label, cut_outline=cut_outline
+        )
+
+
+def generate_charuco_dxf(
+    spec: BoardSpec, *, engrave_black: bool = True, label: bool = True, cut_outline: bool = True
+) -> bytes:
+    """Validate ``spec`` (see :func:`validate_charuco_spec`), then render it as a DXF (see
+    :func:`_render_charuco_dxf`). Generations run one at a time."""
+    validate_charuco_spec(spec)
+    with _GENERATION_LOCK:
+        return _render_charuco_dxf(
+            spec, engrave_black=engrave_black, label=label, cut_outline=cut_outline
+        )
