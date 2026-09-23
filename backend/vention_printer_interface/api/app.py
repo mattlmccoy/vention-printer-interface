@@ -153,6 +153,13 @@ from vention_printer_interface.vision.frame_source import (
     FrameSource,
     UvcFrameSource,
 )
+from vention_printer_interface.vision.ignored_cameras import (
+    drop_ignored_devices,
+    exposed_names,
+    load_ignored,
+    save_ignored,
+    with_names,
+)
 from vention_printer_interface.vision.overview import OverviewStreamer, encode_jpeg
 from vention_printer_interface.vision.registration import (
     BoardDetection,
@@ -759,9 +766,9 @@ def create_app(
     # present, the server captures science by this STABLE per-camera id instead of a fragile index —
     # so the RIGHT camera is grabbed even with no browser tab open. Unset => current behavior.
     science_uid_path = root / ".vision_science_uid.json"
-    # AVFoundation unique ids the operator has perpetually IGNORED (FaceTime, iPhone, etc.) so they
-    # never clutter the science picker. Persisted server-side (survives browser changes, applies
-    # unattended). A stable-id list, mirroring the science-uid file.
+    # AVFoundation unique ids the operator has perpetually IGNORED (FaceTime, iPhone, etc.), with
+    # each camera's name so the browser (which only knows labels) can hide it too. An ignored
+    # camera is dropped from device listing, role resolution and the science binding.
     ignored_cameras_path = root / ".vision_ignored_cameras.json"
 
     def load_science_uid() -> str | None:
@@ -772,11 +779,21 @@ def create_app(
             return None
 
     def load_ignored_cameras() -> list[str]:
-        try:
-            uids = json.loads(ignored_cameras_path.read_text()).get("unique_ids")
-            return [u for u in uids if isinstance(u, str) and u] if isinstance(uids, list) else []
-        except (OSError, ValueError):
+        return [e.unique_id for e in load_ignored(ignored_cameras_path)]
+
+    def ignored_names_now() -> list[str]:
+        """Ignored cameras' browser-safe names, backfilling names for ids stored without one."""
+        entries = load_ignored(ignored_cameras_path)
+        if not entries:
             return []
+        cams = list_avf_cameras()
+        named = with_names([e.unique_id for e in entries], cams, entries)
+        if named != entries:
+            try:
+                save_ignored(ignored_cameras_path, named)
+            except OSError as exc:
+                log.warning("could not backfill ignored-camera names (%s)", exc)
+        return exposed_names(named, cams)
 
     def build_camera_config() -> CameraConfig:
         """CameraConfig from env/defaults, merged with any persisted per-role setting overrides.
@@ -869,6 +886,8 @@ def create_app(
             except Exception as exc:  # noqa: BLE001 - enumeration must never block startup
                 log.warning("camera enumeration failed (%s); serving without auto-resolve", exc)
                 enumerated = []
+            # An ignored camera can never hold a role (nor be auto-opened by the index fallback).
+            enumerated = drop_ignored_devices(enumerated, load_ignored_cameras())
             mapping = load_role_map(vision_roles_path)
             resolved = resolve_roles(enumerated, mapping, camera_config)
             app.state.vision_enumerated_devices = enumerated
@@ -884,6 +903,8 @@ def create_app(
             # (the 2026-09-16 "FaceTime streamed despite no cameras detected" bug). An injected test
             # source still opens.
             science_uid = load_science_uid()
+            if science_uid in load_ignored_cameras():
+                science_uid = None  # bound before it was ignored: never capture from it
             # A configured AVFoundation unique id IS a resolution — open by it even when no
             # stable_id spec resolved (that is the whole point of the unattended-by-uid path).
             if spec is None and vision_source is None and not science_uid:
@@ -2393,6 +2414,8 @@ def create_app(
         except Exception as exc:  # noqa: BLE001 - enumeration must never fail the request
             log.warning("device enumeration failed (%s)", exc)
             enumerated = []
+        access = camera_access_state(enumerated)  # over EVERY camera, ignored ones included
+        enumerated = drop_ignored_devices(enumerated, load_ignored_cameras())
         mapping = load_role_map(vision_roles_path)
         resolved = resolve_roles(enumerated, mapping, camera_config)
         role_by_index = {spec.index: role for role, spec in resolved.items()}
@@ -2417,7 +2440,7 @@ def create_app(
                     "has_frame": device.get("has_frame"),
                 }
             )
-        return {"devices": devices, "camera_access": camera_access_state(enumerated)}
+        return {"devices": devices, "camera_access": access}
 
     @app.get("/api/vision/roles")
     def vision_get_roles() -> dict[str, str]:
@@ -2435,6 +2458,13 @@ def create_app(
                 400, f"invalid role value(s): {bad_roles!r} (must be in {sorted(_VALID_ROLES)!r})"
             )
         save_role_map(vision_roles_path, body.mapping)
+        reopen_vision_sources()
+        unresolved: list[str] = list(app.state.vision_unresolved_roles)
+        return {"mapping": body.mapping, "roles_resolved": not unresolved, "unresolved": unresolved}
+
+    def reopen_vision_sources() -> None:
+        """Re-resolve roles, then (re)open the mapped overview+science sources -- guarded end to
+        end so a role pointed at a device that isn't plugged in never crashes or half-opens."""
         resolved = app.state.vision_refresh_role_resolution()
 
         vision = vision_service()
@@ -2459,9 +2489,6 @@ def create_app(
                 log.warning("overview source close before reopen failed (%s)", exc)
         app.state.vision_open_overview(resolved.get("overview"))
 
-        unresolved: list[str] = list(app.state.vision_unresolved_roles)
-        return {"mapping": body.mapping, "roles_resolved": not unresolved, "unresolved": unresolved}
-
     @app.get("/api/vision/avf-cameras")
     def vision_avf_cameras() -> dict[str, Any]:
         """macOS cameras with their STABLE AVFoundation unique ids (Phase-2 unattended capture).
@@ -2473,11 +2500,14 @@ def create_app(
             ],
             "science_uid": load_science_uid(),
             "ignored_uids": load_ignored_cameras(),
+            "ignored_names": ignored_names_now(),
         }
 
     @app.get("/api/vision/ignored-cameras")
     def vision_get_ignored_cameras() -> dict[str, list[str]]:
-        return {"unique_ids": load_ignored_cameras()}
+        """The ignore list plus the names the browser pickers may hide by label (a name shared
+        with a camera that is NOT ignored -- one of two identical ELPs -- is withheld)."""
+        return {"unique_ids": load_ignored_cameras(), "names": ignored_names_now()}
 
     @app.put("/api/vision/ignored-cameras")
     def vision_put_ignored_cameras(body: dict[str, Any]) -> dict[str, list[str]]:
@@ -2487,8 +2517,14 @@ def create_app(
         if not isinstance(raw, list) or not all(isinstance(u, str) for u in raw):
             raise HTTPException(400, "unique_ids must be a list of strings")
         uids = list(dict.fromkeys(u for u in raw if u))  # de-dup, drop empties, keep order
-        ignored_cameras_path.write_text(json.dumps({"unique_ids": uids}))
-        return {"unique_ids": uids}
+        science_uid = load_science_uid()
+        if science_uid is not None and science_uid in uids:
+            raise HTTPException(400, "clear the science binding before ignoring that camera")
+        cams = list_avf_cameras()
+        entries = with_names(uids, cams, load_ignored(ignored_cameras_path))
+        save_ignored(ignored_cameras_path, entries)
+        reopen_vision_sources()  # drop a now-ignored camera from any role it held
+        return {"unique_ids": uids, "names": exposed_names(entries, cams)}
 
     @app.get("/api/vision/science-uid")
     def vision_get_science_uid() -> dict[str, str | None]:
@@ -2501,6 +2537,8 @@ def create_app(
         uid = body.get("unique_id")
         if uid is not None and (not isinstance(uid, str) or not uid.strip()):
             raise HTTPException(400, "unique_id must be a non-empty string or null")
+        if uid is not None and uid in load_ignored_cameras():
+            raise HTTPException(400, "that camera is ignored -- un-ignore it first")
         science_uid_path.write_text(json.dumps({"unique_id": uid}))
         vision = vision_service()
         if vision is not None:

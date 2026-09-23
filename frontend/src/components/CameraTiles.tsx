@@ -124,7 +124,7 @@ export function CameraTile({
         </span>
       </div>
       <span style={{ fontSize: 12, lineHeight: 1.2 }}>
-        {active && !footer ? "✓ " : ""}
+        {active && !badge ? "✓ " : ""}
         {display}
       </span>
       {footer}
@@ -140,12 +140,15 @@ export function CameraTiles({
   selectedId,
   badge,
   onPick,
+  onIgnore,
 }: {
   candidates: VideoInput[];
   selectedId: string | null;
   /** Label shown as a pill on the selected tile, e.g. "overview" — makes the assignment explicit. */
   badge?: string;
   onPick: (deviceId: string) => void;
+  /** Offer an "ignore" action per tile: hides that camera from every picker in this browser. */
+  onIgnore?: (deviceId: string) => void;
 }) {
   const labeled = labelCandidates(candidates);
   return (
@@ -158,6 +161,16 @@ export function CameraTiles({
           active={c.deviceId === selectedId}
           badge={badge}
           onClick={() => onPick(c.deviceId)}
+          footer={onIgnore && (
+            <button
+              className="small"
+              title="Hide this camera from every picker (undo in Settings → Camera inventory)"
+              onClick={(e) => { e.stopPropagation(); onIgnore(c.deviceId); }}
+              onKeyDown={(e) => e.stopPropagation()}
+            >
+              ignore
+            </button>
+          )}
         />
       ))}
     </div>

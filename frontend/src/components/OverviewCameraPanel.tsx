@@ -3,6 +3,8 @@ import type { View } from "../lib/console.ts";
 import { panelVisible, setPanelVisible } from "../lib/vision.ts";
 import { cameraErrorMessage, overviewCandidates, pickOverviewDeviceId, videoInputs, type VideoInput } from "../lib/webcam.ts";
 import { loadLiveFeedCameraId, saveLiveFeedCameraId } from "../lib/live_feed.ts";
+import { loadIgnoreSet } from "../lib/camera_ignore.ts";
+import { ignoreCameraHere, useIgnoreVersion } from "../lib/camera_ignore_sync.ts";
 import { clampZoom, cropStyle, loadCrop, NO_CROP, panOrigin, saveCrop, type Crop } from "../lib/crop.ts";
 import { applyPayload, numericControls, type NumericControl } from "../lib/track_settings.ts";
 import { loadOverviewSettings, videoConstraints } from "../lib/overview_settings.ts";
@@ -27,7 +29,10 @@ export function OverviewCameraPanel({ view }: { base?: string; view: View }) {
   const [devices, setDevices] = useState<MediaDeviceInfo[]>([]); // raw list: tells "hidden" from "none"
   const [scan, setScan] = useState(0); // bumped after a permission grant to re-enumerate
   const [openError, setOpenError] = useState(""); // why the chosen camera failed to open
-  const [selectedId, setSelectedId] = useState<string | null>(() => loadLiveFeedCameraId(storage));
+  // Resolved after enumeration (never opened straight from storage): a saved id may point at a
+  // camera that has since been ignored or is built-in.
+  const [selectedId, setSelectedId] = useState<string | null>(null);
+  const ignoreVersion = useIgnoreVersion();
   const [status, setStatus] = useState<"idle" | "live" | "pick" | "denied" | "unsupported">("idle");
   const [crop, setCrop] = useState<Crop>(NO_CROP);
   const drag = useRef<{ x: number; y: number } | null>(null);
@@ -59,12 +64,17 @@ export function OverviewCameraPanel({ view }: { base?: string; view: View }) {
         const devs = await md.enumerateDevices();
         if (cancelled) return;
         setDevices(devs);
-        const ins = videoInputs(devs);
+        const ignore = loadIgnoreSet(storage);
+        const ins = videoInputs(devs, ignore); // ignored cameras never reach the picker
         setInputs(ins);
         const saved = loadLiveFeedCameraId(storage);
-        const id = pickOverviewDeviceId(ins, saved, null);
+        const id = pickOverviewDeviceId(ins, saved, null, ignore);
         if (id) setSelectedId(id);
-        else setStatus("pick");
+        else {
+          stop(); // the camera on screen may have just been ignored
+          setSelectedId(null);
+          setStatus("pick");
+        }
       } catch {
         if (!cancelled) setStatus("denied");
       }
@@ -72,7 +82,7 @@ export function OverviewCameraPanel({ view }: { base?: string; view: View }) {
     return () => {
       cancelled = true;
     };
-  }, [visible, scan]);
+  }, [visible, scan, ignoreVersion]);
 
   // Open the selected camera and feed the <video>.
   useEffect(() => {
@@ -249,13 +259,13 @@ export function OverviewCameraPanel({ view }: { base?: string; view: View }) {
             </div>
           )}
           {status === "pick" && (() => {
-            const cands = overviewCandidates(inputs);
-            const tiles = cands.length ? cands : inputs.filter((d) => d.label);
+            // Only real, non-ignored cameras: never fall back to showing built-in/phone cameras.
+            const tiles = overviewCandidates(inputs);
             return tiles.length ? (
               <div className="cam-pick" style={{ display: "flex", flexDirection: "column", gap: 6 }}>
                 <span className="hint">pick which camera to show in the live feed</span>
                 {openError && <span className="hint" role="alert" style={{ color: "var(--warn)" }}>{openError}</span>}
-                <CameraTiles candidates={tiles} selectedId={selectedId} onPick={pickTile} />
+                <CameraTiles candidates={tiles} selectedId={selectedId} onPick={pickTile} onIgnore={(id) => ignoreCameraHere(storage, id)} />
               </div>
             ) : (
               <div className="cam-panel-empty">

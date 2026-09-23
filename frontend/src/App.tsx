@@ -5,6 +5,7 @@ import { checkHandshake, saveOperatorBase, UI_API_VERSION, wsUrl } from "./lib/o
 import { loadConsole, saveConsole, type View } from "./lib/console.ts";
 import { connectOptions, type Candidate } from "./lib/connect.ts";
 import { dismissQuickStart, shouldShowQuickStart } from "./lib/vision.ts";
+import { syncCameraIgnore } from "./lib/camera_ignore_sync.ts";
 import type { StatusPayload } from "./lib/telemetry.ts";
 import { showWarnings, warningsKey } from "./lib/alerts.ts";
 import { ErrorBoundary } from "./components/ErrorBoundary.tsx";
@@ -95,6 +96,12 @@ export function App() {
     poll();
     const id = window.setInterval(poll, 5000);
     return () => { live = false; window.clearInterval(id); };
+  }, [reachable, base]);
+
+  // Camera ignore list (Settings → Camera inventory): pull the operator's ignored camera names on
+  // connect so every browser picker hides them, and drop saved selections that point at them.
+  useEffect(() => {
+    if (reachable) void syncCameraIgnore(storage);
   }, [reachable, base]);
 
   useEffect(() => {

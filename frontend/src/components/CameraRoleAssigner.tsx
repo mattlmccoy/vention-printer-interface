@@ -3,6 +3,7 @@ import { CameraTile } from "./CameraTiles.tsx";
 import { CameraAccessPrompt } from "./CameraAccessPrompt.tsx";
 import { labelCandidates, overviewCandidates, videoInputs, type VideoInput } from "../lib/webcam.ts";
 import { assignRole, loadRoleMap, roleOf, saveRoleMap, type RoleChoice } from "../lib/camera_roles.ts";
+import { ignoreCameraHere, useIgnoreVersion } from "../lib/camera_ignore_sync.ts";
 
 const storage = typeof localStorage === "undefined" ? null : localStorage;
 
@@ -16,6 +17,7 @@ export function CameraRoleAssigner() {
   const [devices, setDevices] = useState<MediaDeviceInfo[]>([]); // raw list: tells "hidden" from "none"
   const [scan, setScan] = useState(0); // bumped after a permission grant to re-enumerate
   const [map, setMap] = useState(() => loadRoleMap(storage));
+  const ignoreVersion = useIgnoreVersion();
 
   useEffect(() => {
     const md = typeof navigator !== "undefined" ? navigator.mediaDevices : undefined;
@@ -27,13 +29,13 @@ export function CameraRoleAssigner() {
         // wake an iPhone Continuity Camera. Existing site permission exposes labels; otherwise
         // CameraAccessPrompt offers an explicit, user-clicked grant.
         const devs = await md.enumerateDevices();
-        if (!cancelled) { setDevices(devs); setInputs(videoInputs(devs)); }
+        if (!cancelled) { setDevices(devs); setInputs(videoInputs(devs)); setMap(loadRoleMap(storage)); }
       } catch {
         // Camera blocked: fall through to the hint below.
       }
     })();
     return () => { cancelled = true; };
-  }, [scan]);
+  }, [scan, ignoreVersion]);
 
   const setRole = (deviceId: string, role: RoleChoice) => {
     setMap((m) => {
@@ -43,8 +45,8 @@ export function CameraRoleAssigner() {
     });
   };
 
-  const cands = overviewCandidates(inputs);
-  const tiles = cands.length ? cands : inputs.filter((d) => d.label);
+  // Only real, non-ignored cameras: never fall back to offering built-in/phone cameras for a role.
+  const tiles = overviewCandidates(inputs);
   if (!tiles.length) {
     return <CameraAccessPrompt devices={devices} onGranted={() => setScan((n) => n + 1)} />;
   }
@@ -63,16 +65,25 @@ export function CameraRoleAssigner() {
               active={role !== ""}
               badge={role || undefined}
               footer={
-                <select
-                  aria-label={`role for ${c.display}`}
-                  value={role}
-                  onChange={(e) => setRole(c.deviceId, e.target.value as RoleChoice)}
-                  style={{ width: "100%", fontSize: 12 }}
-                >
-                  <option value="">— unassigned</option>
-                  <option value="overview">overview (live)</option>
-                  <option value="science">science (bed stills)</option>
-                </select>
+                <div style={{ display: "flex", gap: 4 }}>
+                  <select
+                    aria-label={`role for ${c.display}`}
+                    value={role}
+                    onChange={(e) => setRole(c.deviceId, e.target.value as RoleChoice)}
+                    style={{ flex: 1, minWidth: 0, fontSize: 12 }}
+                  >
+                    <option value="">— unassigned</option>
+                    <option value="overview">overview (live)</option>
+                    <option value="science">science (bed stills)</option>
+                  </select>
+                  <button
+                    className="small"
+                    title="Hide this camera from every picker (undo in Settings → Camera inventory)"
+                    onClick={() => ignoreCameraHere(storage, c.deviceId)}
+                  >
+                    ignore
+                  </button>
+                </div>
               }
             />
           );
