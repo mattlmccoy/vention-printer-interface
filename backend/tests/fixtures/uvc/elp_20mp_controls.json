@@ -1,0 +1,716 @@
+{
+ "0x23100032e42020": {
+  "vc_interface": 0,
+  "controls": {
+   "CT1.bit1.sel0x02": {
+    "CUR": "08",
+    "MIN": "ERR IOKit DeviceRequest failed (0xe000404f)",
+    "MAX": "ERR IOKit DeviceRequest failed (0xe000404f)",
+    "RES": "09",
+    "INFO": "03",
+    "DEF": "08"
+   },
+   "CT1.bit2.sel0x03": {
+    "CUR": "00",
+    "MIN": "ERR IOKit DeviceRequest failed (0xe000404f)",
+    "MAX": "ERR IOKit DeviceRequest failed (0xe000404f)",
+    "RES": "ERR IOKit DeviceRequest failed (0xe000404f)",
+    "INFO": "03",
+    "DEF": "ERR IOKit DeviceRequest failed (0xe000404f)"
+   },
+   "CT1.bit3.sel0x04": {
+    "CUR": "9c000000",
+    "MIN": "01000000",
+    "MAX": "10270000",
+    "RES": "01000000",
+    "INFO": "0f",
+    "DEF": "9c000000"
+   },
+   "CT1.bit4.sel0x05": {
+    "CUR": "ERR IOKit DeviceRequest failed (0xe000404f)",
+    "MIN": "ERR IOKit DeviceRequest failed (0xe000404f)",
+    "MAX": "ERR IOKit DeviceRequest failed (0xe000404f)",
+    "RES": "ERR IOKit DeviceRequest failed (0xe000404f)",
+    "INFO": "ERR IOKit DeviceRequest failed (0xe000404f)",
+    "DEF": "ERR IOKit DeviceRequest failed (0xe000404f)"
+   },
+   "CT1.bit5.sel0x06": {
+    "CUR": "9700",
+    "MIN": "0000",
+    "MAX": "5401",
+    "RES": "0100",
+    "INFO": "03",
+    "DEF": "0000"
+   },
+   "CT1.bit6.sel0x07": {
+    "CUR": "ERR IOKit DeviceRequest failed (0xe000404f)",
+    "MIN": "ERR IOKit DeviceRequest failed (0xe000404f)",
+    "MAX": "ERR IOKit DeviceRequest failed (0xe000404f)",
+    "RES": "ERR IOKit DeviceRequest failed (0xe000404f)",
+    "INFO": "ERR IOKit DeviceRequest failed (0xe000404f)",
+    "DEF": "ERR IOKit DeviceRequest failed (0xe000404f)"
+   },
+   "CT1.bit9.sel0x0b": {
+    "CUR": "6400",
+    "MIN": "6400",
+    "MAX": "c800",
+    "RES": "0100",
+    "INFO": "03",
+    "DEF": "6400"
+   },
+   "CT1.bit11.sel0x0d": {
+    "CUR": "0000000000000000",
+    "MIN": "c01cf6ffc01cf6ff",
+    "MAX": "40e3090040e30900",
+    "RES": "100e0000100e0000",
+    "INFO": "03",
+    "DEF": "0000000000000000"
+   },
+   "CT1.bit13.sel0x0f": {
+    "CUR": "0000",
+    "MIN": "0000",
+    "MAX": "0300",
+    "RES": "0100",
+    "INFO": "03",
+    "DEF": "0000"
+   },
+   "CT1.bit17.sel0x08": {
+    "CUR": "01",
+    "MIN": "ERR IOKit DeviceRequest failed (0xe000404f)",
+    "MAX": "ERR IOKit DeviceRequest failed (0xe000404f)",
+    "RES": "01",
+    "INFO": "03",
+    "DEF": "01"
+   },
+   "CT1.bit18.sel0x12": {
+    "CUR": "ERR IOKit DeviceRequest failed (0xe000404f)",
+    "MIN": "ERR IOKit DeviceRequest failed (0xe000404f)",
+    "MAX": "ERR IOKit DeviceRequest failed (0xe000404f)",
+    "RES": "ERR IOKit DeviceRequest failed (0xe000404f)",
+    "INFO": "ERR IOKit DeviceRequest failed (0xe000404f)",
+    "DEF": "ERR IOKit DeviceRequest failed (0xe000404f)"
+   },
+   "CT1.bit21.sel0x05": {
+    "CUR": "ERR IOKit DeviceRequest failed (0xe000404f)",
+    "MIN": "ERR IOKit DeviceRequest failed (0xe000404f)",
+    "MAX": "ERR IOKit DeviceRequest failed (0xe000404f)",
+    "RES": "ERR IOKit DeviceRequest failed (0xe000404f)",
+    "INFO": "ERR IOKit DeviceRequest failed (0xe000404f)",
+    "DEF": "ERR IOKit DeviceRequest failed (0xe000404f)"
+   },
+   "PU2.bit0.sel0x02": {
+    "CUR": "8000",
+    "MIN": "0000",
+    "MAX": "ff00",
+    "RES": "0100",
+    "INFO": "03",
+    "DEF": "8000"
+   },
+   "PU2.bit1.sel0x03": {
+    "CUR": "4100",
+    "MIN": "0000",
+    "MAX": "8000",
+    "RES": "0100",
+    "INFO": "03",
+    "DEF": "4100"
+   },
+   "PU2.bit2.sel0x06": {
+    "CUR": "0000",
+    "MIN": "80ff",
+    "MAX": "8000",
+    "RES": "0100",
+    "INFO": "03",
+    "DEF": "0000"
+   },
+   "PU2.bit3.sel0x07": {
+    "CUR": "5400",
+    "MIN": "0000",
+    "MAX": "8000",
+    "RES": "0100",
+    "INFO": "03",
+    "DEF": "5400"
+   },
+   "PU2.bit4.sel0x08": {
+    "CUR": "8000",
+    "MIN": "0000",
+    "MAX": "ff00",
+    "RES": "0100",
+    "INFO": "03",
+    "DEF": "8000"
+   },
+   "PU2.bit5.sel0x09": {
+    "CUR": "8000",
+    "MIN": "0000",
+    "MAX": "ff00",
+    "RES": "0100",
+    "INFO": "03",
+    "DEF": "8000"
+   },
+   "PU2.bit6.sel0x0a": {
+    "CUR": "2a12",
+    "MIN": "f00a",
+    "MAX": "6419",
+    "RES": "0100",
+    "INFO": "0f",
+    "DEF": "2a12"
+   },
+   "PU2.bit8.sel0x01": {
+    "CUR": "3800",
+    "MIN": "1000",
+    "MAX": "a000",
+    "RES": "0100",
+    "INFO": "03",
+    "DEF": "3800"
+   },
+   "PU2.bit9.sel0x04": {
+    "CUR": "8800",
+    "MIN": "0000",
+    "MAX": "ff00",
+    "RES": "0100",
+    "INFO": "03",
+    "DEF": "8800"
+   },
+   "PU2.bit10.sel0x05": {
+    "CUR": "01",
+    "MIN": "01",
+    "MAX": "02",
+    "RES": "01",
+    "INFO": "03",
+    "DEF": "01"
+   },
+   "PU2.bit12.sel0x0b": {
+    "CUR": "01",
+    "MIN": "ERR IOKit DeviceRequest failed (0xe000404f)",
+    "MAX": "ERR IOKit DeviceRequest failed (0xe000404f)",
+    "RES": "ERR IOKit DeviceRequest failed (0xe000404f)",
+    "INFO": "03",
+    "DEF": "01"
+   },
+   "PU3.bit0.sel0x02": {
+    "CUR": "5400",
+    "MIN": "0000",
+    "MAX": "ffff",
+    "RES": "0100",
+    "INFO": "03",
+    "DEF": "0000"
+   },
+   "PU3.bit1.sel0x03": {
+    "CUR": "0000",
+    "MIN": "0000",
+    "MAX": "ffff",
+    "RES": "0100",
+    "INFO": "03",
+    "DEF": "0000"
+   },
+   "PU3.bit3.sel0x07": {
+    "CUR": "ERR IOKit DeviceRequest failed (0xe000404f)",
+    "MIN": "ERR IOKit DeviceRequest failed (0xe000404f)",
+    "MAX": "ERR IOKit DeviceRequest failed (0xe000404f)",
+    "RES": "ERR IOKit DeviceRequest failed (0xe000404f)",
+    "INFO": "ERR IOKit DeviceRequest failed (0xe000404f)",
+    "DEF": "ERR IOKit DeviceRequest failed (0xe000404f)"
+   },
+   "PU5.bit0.sel0x02": {
+    "CUR": "ERR IOKit DeviceRequest failed (0xe000404f)",
+    "MIN": "ERR IOKit DeviceRequest failed (0xe000404f)",
+    "MAX": "ERR IOKit DeviceRequest failed (0xe000404f)",
+    "RES": "ERR IOKit DeviceRequest failed (0xe000404f)",
+    "INFO": "ERR IOKit DeviceRequest failed (0xe000404f)",
+    "DEF": "ERR IOKit DeviceRequest failed (0xe000404f)"
+   },
+   "PU5.bit1.sel0x03": {
+    "CUR": "ERR IOKit DeviceRequest failed (0xe000404f)",
+    "MIN": "ERR IOKit DeviceRequest failed (0xe000404f)",
+    "MAX": "ERR IOKit DeviceRequest failed (0xe000404f)",
+    "RES": "ERR IOKit DeviceRequest failed (0xe000404f)",
+    "INFO": "ERR IOKit DeviceRequest failed (0xe000404f)",
+    "DEF": "ERR IOKit DeviceRequest failed (0xe000404f)"
+   },
+   "PU5.bit3.sel0x07": {
+    "CUR": "ERR IOKit DeviceRequest failed (0xe000404f)",
+    "MIN": "ERR IOKit DeviceRequest failed (0xe000404f)",
+    "MAX": "ERR IOKit DeviceRequest failed (0xe000404f)",
+    "RES": "ERR IOKit DeviceRequest failed (0xe000404f)",
+    "INFO": "ERR IOKit DeviceRequest failed (0xe000404f)",
+    "DEF": "ERR IOKit DeviceRequest failed (0xe000404f)"
+   },
+   "PU6.bit3.sel0x07": {
+    "CUR": "ERR IOKit DeviceRequest failed (0xe000404f)",
+    "MIN": "ERR IOKit DeviceRequest failed (0xe000404f)",
+    "MAX": "ERR IOKit DeviceRequest failed (0xe000404f)",
+    "RES": "ERR IOKit DeviceRequest failed (0xe000404f)",
+    "INFO": "ERR IOKit DeviceRequest failed (0xe000404f)",
+    "DEF": "ERR IOKit DeviceRequest failed (0xe000404f)"
+   },
+   "PU7.bit3.sel0x07": {
+    "CUR": "ERR IOKit DeviceRequest failed (0xe000404f)",
+    "MIN": "ERR IOKit DeviceRequest failed (0xe000404f)",
+    "MAX": "ERR IOKit DeviceRequest failed (0xe000404f)",
+    "RES": "ERR IOKit DeviceRequest failed (0xe000404f)",
+    "INFO": "ERR IOKit DeviceRequest failed (0xe000404f)",
+    "DEF": "ERR IOKit DeviceRequest failed (0xe000404f)"
+   },
+   "PU8.bit0.sel0x02": {
+    "CUR": "ERR IOKit DeviceRequest failed (0xe000404f)",
+    "MIN": "ERR IOKit DeviceRequest failed (0xe000404f)",
+    "MAX": "ERR IOKit DeviceRequest failed (0xe000404f)",
+    "RES": "ERR IOKit DeviceRequest failed (0xe000404f)",
+    "INFO": "ERR IOKit DeviceRequest failed (0xe000404f)",
+    "DEF": "ERR IOKit DeviceRequest failed (0xe000404f)"
+   },
+   "PU8.bit3.sel0x07": {
+    "CUR": "ERR IOKit DeviceRequest failed (0xe000404f)",
+    "MIN": "ERR IOKit DeviceRequest failed (0xe000404f)",
+    "MAX": "ERR IOKit DeviceRequest failed (0xe000404f)",
+    "RES": "ERR IOKit DeviceRequest failed (0xe000404f)",
+    "INFO": "ERR IOKit DeviceRequest failed (0xe000404f)",
+    "DEF": "ERR IOKit DeviceRequest failed (0xe000404f)"
+   },
+   "PU9.bit0.sel0x02": {
+    "CUR": "ERR IOKit DeviceRequest failed (0xe000404f)",
+    "MIN": "ERR IOKit DeviceRequest failed (0xe000404f)",
+    "MAX": "ERR IOKit DeviceRequest failed (0xe000404f)",
+    "RES": "ERR IOKit DeviceRequest failed (0xe000404f)",
+    "INFO": "ERR IOKit DeviceRequest failed (0xe000404f)",
+    "DEF": "ERR IOKit DeviceRequest failed (0xe000404f)"
+   },
+   "PU9.bit1.sel0x03": {
+    "CUR": "ERR IOKit DeviceRequest failed (0xe000404f)",
+    "MIN": "ERR IOKit DeviceRequest failed (0xe000404f)",
+    "MAX": "ERR IOKit DeviceRequest failed (0xe000404f)",
+    "RES": "ERR IOKit DeviceRequest failed (0xe000404f)",
+    "INFO": "ERR IOKit DeviceRequest failed (0xe000404f)",
+    "DEF": "ERR IOKit DeviceRequest failed (0xe000404f)"
+   },
+   "PU9.bit2.sel0x06": {
+    "CUR": "ERR IOKit DeviceRequest failed (0xe000404f)",
+    "MIN": "ERR IOKit DeviceRequest failed (0xe000404f)",
+    "MAX": "ERR IOKit DeviceRequest failed (0xe000404f)",
+    "RES": "ERR IOKit DeviceRequest failed (0xe000404f)",
+    "INFO": "ERR IOKit DeviceRequest failed (0xe000404f)",
+    "DEF": "ERR IOKit DeviceRequest failed (0xe000404f)"
+   },
+   "PU10.bit0.sel0x02": {
+    "CUR": "ERR IOKit DeviceRequest failed (0xe000404f)",
+    "MIN": "ERR IOKit DeviceRequest failed (0xe000404f)",
+    "MAX": "ERR IOKit DeviceRequest failed (0xe000404f)",
+    "RES": "ERR IOKit DeviceRequest failed (0xe000404f)",
+    "INFO": "ERR IOKit DeviceRequest failed (0xe000404f)",
+    "DEF": "ERR IOKit DeviceRequest failed (0xe000404f)"
+   },
+   "PU10.bit2.sel0x06": {
+    "CUR": "ERR IOKit DeviceRequest failed (0xe000404f)",
+    "MIN": "ERR IOKit DeviceRequest failed (0xe000404f)",
+    "MAX": "ERR IOKit DeviceRequest failed (0xe000404f)",
+    "RES": "ERR IOKit DeviceRequest failed (0xe000404f)",
+    "INFO": "ERR IOKit DeviceRequest failed (0xe000404f)",
+    "DEF": "ERR IOKit DeviceRequest failed (0xe000404f)"
+   },
+   "PU12.bit2.sel0x06": {
+    "CUR": "ERR IOKit DeviceRequest failed (0xe000404f)",
+    "MIN": "ERR IOKit DeviceRequest failed (0xe000404f)",
+    "MAX": "ERR IOKit DeviceRequest failed (0xe000404f)",
+    "RES": "ERR IOKit DeviceRequest failed (0xe000404f)",
+    "INFO": "ERR IOKit DeviceRequest failed (0xe000404f)",
+    "DEF": "ERR IOKit DeviceRequest failed (0xe000404f)"
+   },
+   "PU13.bit2.sel0x06": {
+    "CUR": "ERR IOKit DeviceRequest failed (0xe000404f)",
+    "MIN": "ERR IOKit DeviceRequest failed (0xe000404f)",
+    "MAX": "ERR IOKit DeviceRequest failed (0xe000404f)",
+    "RES": "ERR IOKit DeviceRequest failed (0xe000404f)",
+    "INFO": "ERR IOKit DeviceRequest failed (0xe000404f)",
+    "DEF": "ERR IOKit DeviceRequest failed (0xe000404f)"
+   },
+   "PU14.bit0.sel0x02": {
+    "CUR": "ERR IOKit DeviceRequest failed (0xe000404f)",
+    "MIN": "ERR IOKit DeviceRequest failed (0xe000404f)",
+    "MAX": "ERR IOKit DeviceRequest failed (0xe000404f)",
+    "RES": "ERR IOKit DeviceRequest failed (0xe000404f)",
+    "INFO": "ERR IOKit DeviceRequest failed (0xe000404f)",
+    "DEF": "ERR IOKit DeviceRequest failed (0xe000404f)"
+   },
+   "PU14.bit1.sel0x03": {
+    "CUR": "ERR IOKit DeviceRequest failed (0xe000404f)",
+    "MIN": "ERR IOKit DeviceRequest failed (0xe000404f)",
+    "MAX": "ERR IOKit DeviceRequest failed (0xe000404f)",
+    "RES": "ERR IOKit DeviceRequest failed (0xe000404f)",
+    "INFO": "ERR IOKit DeviceRequest failed (0xe000404f)",
+    "DEF": "ERR IOKit DeviceRequest failed (0xe000404f)"
+   },
+   "PU15.bit1.sel0x03": {
+    "CUR": "ERR IOKit DeviceRequest failed (0xe000404f)",
+    "MIN": "ERR IOKit DeviceRequest failed (0xe000404f)",
+    "MAX": "ERR IOKit DeviceRequest failed (0xe000404f)",
+    "RES": "ERR IOKit DeviceRequest failed (0xe000404f)",
+    "INFO": "ERR IOKit DeviceRequest failed (0xe000404f)",
+    "DEF": "ERR IOKit DeviceRequest failed (0xe000404f)"
+   },
+   "PU16.bit0.sel0x02": {
+    "CUR": "ERR IOKit DeviceRequest failed (0xe000404f)",
+    "MIN": "ERR IOKit DeviceRequest failed (0xe000404f)",
+    "MAX": "ERR IOKit DeviceRequest failed (0xe000404f)",
+    "RES": "ERR IOKit DeviceRequest failed (0xe000404f)",
+    "INFO": "ERR IOKit DeviceRequest failed (0xe000404f)",
+    "DEF": "ERR IOKit DeviceRequest failed (0xe000404f)"
+   }
+  }
+ },
+ "0x23400032e42020": {
+  "vc_interface": 0,
+  "controls": {
+   "CT1.bit1.sel0x02": {
+    "CUR": "08",
+    "MIN": "ERR IOKit DeviceRequest failed (0xe000404f)",
+    "MAX": "ERR IOKit DeviceRequest failed (0xe000404f)",
+    "RES": "09",
+    "INFO": "03",
+    "DEF": "08"
+   },
+   "CT1.bit2.sel0x03": {
+    "CUR": "00",
+    "MIN": "ERR IOKit DeviceRequest failed (0xe000404f)",
+    "MAX": "ERR IOKit DeviceRequest failed (0xe000404f)",
+    "RES": "ERR IOKit DeviceRequest failed (0xe000404f)",
+    "INFO": "03",
+    "DEF": "ERR IOKit DeviceRequest failed (0xe000404f)"
+   },
+   "CT1.bit3.sel0x04": {
+    "CUR": "9c000000",
+    "MIN": "01000000",
+    "MAX": "10270000",
+    "RES": "01000000",
+    "INFO": "0f",
+    "DEF": "9c000000"
+   },
+   "CT1.bit4.sel0x05": {
+    "CUR": "ERR IOKit DeviceRequest failed (0xe000404f)",
+    "MIN": "ERR IOKit DeviceRequest failed (0xe000404f)",
+    "MAX": "ERR IOKit DeviceRequest failed (0xe000404f)",
+    "RES": "ERR IOKit DeviceRequest failed (0xe000404f)",
+    "INFO": "ERR IOKit DeviceRequest failed (0xe000404f)",
+    "DEF": "ERR IOKit DeviceRequest failed (0xe000404f)"
+   },
+   "CT1.bit5.sel0x06": {
+    "CUR": "3200",
+    "MIN": "0000",
+    "MAX": "5401",
+    "RES": "0100",
+    "INFO": "03",
+    "DEF": "0000"
+   },
+   "CT1.bit6.sel0x07": {
+    "CUR": "ERR IOKit DeviceRequest failed (0xe000404f)",
+    "MIN": "ERR IOKit DeviceRequest failed (0xe000404f)",
+    "MAX": "ERR IOKit DeviceRequest failed (0xe000404f)",
+    "RES": "ERR IOKit DeviceRequest failed (0xe000404f)",
+    "INFO": "ERR IOKit DeviceRequest failed (0xe000404f)",
+    "DEF": "ERR IOKit DeviceRequest failed (0xe000404f)"
+   },
+   "CT1.bit9.sel0x0b": {
+    "CUR": "6400",
+    "MIN": "6400",
+    "MAX": "c800",
+    "RES": "0100",
+    "INFO": "03",
+    "DEF": "6400"
+   },
+   "CT1.bit11.sel0x0d": {
+    "CUR": "0000000000000000",
+    "MIN": "c01cf6ffc01cf6ff",
+    "MAX": "40e3090040e30900",
+    "RES": "100e0000100e0000",
+    "INFO": "03",
+    "DEF": "0000000000000000"
+   },
+   "CT1.bit13.sel0x0f": {
+    "CUR": "0000",
+    "MIN": "0000",
+    "MAX": "0300",
+    "RES": "0100",
+    "INFO": "03",
+    "DEF": "0000"
+   },
+   "CT1.bit17.sel0x08": {
+    "CUR": "01",
+    "MIN": "ERR IOKit DeviceRequest failed (0xe000404f)",
+    "MAX": "ERR IOKit DeviceRequest failed (0xe000404f)",
+    "RES": "01",
+    "INFO": "03",
+    "DEF": "01"
+   },
+   "CT1.bit18.sel0x12": {
+    "CUR": "ERR IOKit DeviceRequest failed (0xe000404f)",
+    "MIN": "ERR IOKit DeviceRequest failed (0xe000404f)",
+    "MAX": "ERR IOKit DeviceRequest failed (0xe000404f)",
+    "RES": "ERR IOKit DeviceRequest failed (0xe000404f)",
+    "INFO": "ERR IOKit DeviceRequest failed (0xe000404f)",
+    "DEF": "ERR IOKit DeviceRequest failed (0xe000404f)"
+   },
+   "CT1.bit21.sel0x05": {
+    "CUR": "ERR IOKit DeviceRequest failed (0xe000404f)",
+    "MIN": "ERR IOKit DeviceRequest failed (0xe000404f)",
+    "MAX": "ERR IOKit DeviceRequest failed (0xe000404f)",
+    "RES": "ERR IOKit DeviceRequest failed (0xe000404f)",
+    "INFO": "ERR IOKit DeviceRequest failed (0xe000404f)",
+    "DEF": "ERR IOKit DeviceRequest failed (0xe000404f)"
+   },
+   "PU2.bit0.sel0x02": {
+    "CUR": "8000",
+    "MIN": "0000",
+    "MAX": "ff00",
+    "RES": "0100",
+    "INFO": "03",
+    "DEF": "8000"
+   },
+   "PU2.bit1.sel0x03": {
+    "CUR": "4100",
+    "MIN": "0000",
+    "MAX": "8000",
+    "RES": "0100",
+    "INFO": "03",
+    "DEF": "4100"
+   },
+   "PU2.bit2.sel0x06": {
+    "CUR": "0000",
+    "MIN": "80ff",
+    "MAX": "8000",
+    "RES": "0100",
+    "INFO": "03",
+    "DEF": "0000"
+   },
+   "PU2.bit3.sel0x07": {
+    "CUR": "5400",
+    "MIN": "0000",
+    "MAX": "8000",
+    "RES": "0100",
+    "INFO": "03",
+    "DEF": "5400"
+   },
+   "PU2.bit4.sel0x08": {
+    "CUR": "8000",
+    "MIN": "0000",
+    "MAX": "ff00",
+    "RES": "0100",
+    "INFO": "03",
+    "DEF": "8000"
+   },
+   "PU2.bit5.sel0x09": {
+    "CUR": "8000",
+    "MIN": "0000",
+    "MAX": "ff00",
+    "RES": "0100",
+    "INFO": "03",
+    "DEF": "8000"
+   },
+   "PU2.bit6.sel0x0a": {
+    "CUR": "2a12",
+    "MIN": "f00a",
+    "MAX": "6419",
+    "RES": "0100",
+    "INFO": "0f",
+    "DEF": "2a12"
+   },
+   "PU2.bit8.sel0x01": {
+    "CUR": "3800",
+    "MIN": "1000",
+    "MAX": "a000",
+    "RES": "0100",
+    "INFO": "03",
+    "DEF": "3800"
+   },
+   "PU2.bit9.sel0x04": {
+    "CUR": "8800",
+    "MIN": "0000",
+    "MAX": "ff00",
+    "RES": "0100",
+    "INFO": "03",
+    "DEF": "8800"
+   },
+   "PU2.bit10.sel0x05": {
+    "CUR": "01",
+    "MIN": "01",
+    "MAX": "02",
+    "RES": "01",
+    "INFO": "03",
+    "DEF": "01"
+   },
+   "PU2.bit12.sel0x0b": {
+    "CUR": "01",
+    "MIN": "ERR IOKit DeviceRequest failed (0xe000404f)",
+    "MAX": "ERR IOKit DeviceRequest failed (0xe000404f)",
+    "RES": "ERR IOKit DeviceRequest failed (0xe000404f)",
+    "INFO": "03",
+    "DEF": "01"
+   },
+   "PU3.bit0.sel0x02": {
+    "CUR": "5400",
+    "MIN": "0000",
+    "MAX": "ffff",
+    "RES": "0100",
+    "INFO": "03",
+    "DEF": "0000"
+   },
+   "PU3.bit1.sel0x03": {
+    "CUR": "0000",
+    "MIN": "0000",
+    "MAX": "ffff",
+    "RES": "0100",
+    "INFO": "03",
+    "DEF": "0000"
+   },
+   "PU3.bit3.sel0x07": {
+    "CUR": "ERR IOKit DeviceRequest failed (0xe000404f)",
+    "MIN": "ERR IOKit DeviceRequest failed (0xe000404f)",
+    "MAX": "ERR IOKit DeviceRequest failed (0xe000404f)",
+    "RES": "ERR IOKit DeviceRequest failed (0xe000404f)",
+    "INFO": "ERR IOKit DeviceRequest failed (0xe000404f)",
+    "DEF": "ERR IOKit DeviceRequest failed (0xe000404f)"
+   },
+   "PU5.bit0.sel0x02": {
+    "CUR": "ERR IOKit DeviceRequest failed (0xe000404f)",
+    "MIN": "ERR IOKit DeviceRequest failed (0xe000404f)",
+    "MAX": "ERR IOKit DeviceRequest failed (0xe000404f)",
+    "RES": "ERR IOKit DeviceRequest failed (0xe000404f)",
+    "INFO": "ERR IOKit DeviceRequest failed (0xe000404f)",
+    "DEF": "ERR IOKit DeviceRequest failed (0xe000404f)"
+   },
+   "PU5.bit1.sel0x03": {
+    "CUR": "ERR IOKit DeviceRequest failed (0xe000404f)",
+    "MIN": "ERR IOKit DeviceRequest failed (0xe000404f)",
+    "MAX": "ERR IOKit DeviceRequest failed (0xe000404f)",
+    "RES": "ERR IOKit DeviceRequest failed (0xe000404f)",
+    "INFO": "ERR IOKit DeviceRequest failed (0xe000404f)",
+    "DEF": "ERR IOKit DeviceRequest failed (0xe000404f)"
+   },
+   "PU5.bit3.sel0x07": {
+    "CUR": "ERR IOKit DeviceRequest failed (0xe000404f)",
+    "MIN": "ERR IOKit DeviceRequest failed (0xe000404f)",
+    "MAX": "ERR IOKit DeviceRequest failed (0xe000404f)",
+    "RES": "ERR IOKit DeviceRequest failed (0xe000404f)",
+    "INFO": "ERR IOKit DeviceRequest failed (0xe000404f)",
+    "DEF": "ERR IOKit DeviceRequest failed (0xe000404f)"
+   },
+   "PU6.bit3.sel0x07": {
+    "CUR": "ERR IOKit DeviceRequest failed (0xe000404f)",
+    "MIN": "ERR IOKit DeviceRequest failed (0xe000404f)",
+    "MAX": "ERR IOKit DeviceRequest failed (0xe000404f)",
+    "RES": "ERR IOKit DeviceRequest failed (0xe000404f)",
+    "INFO": "ERR IOKit DeviceRequest failed (0xe000404f)",
+    "DEF": "ERR IOKit DeviceRequest failed (0xe000404f)"
+   },
+   "PU7.bit3.sel0x07": {
+    "CUR": "ERR IOKit DeviceRequest failed (0xe000404f)",
+    "MIN": "ERR IOKit DeviceRequest failed (0xe000404f)",
+    "MAX": "ERR IOKit DeviceRequest failed (0xe000404f)",
+    "RES": "ERR IOKit DeviceRequest failed (0xe000404f)",
+    "INFO": "ERR IOKit DeviceRequest failed (0xe000404f)",
+    "DEF": "ERR IOKit DeviceRequest failed (0xe000404f)"
+   },
+   "PU8.bit0.sel0x02": {
+    "CUR": "ERR IOKit DeviceRequest failed (0xe000404f)",
+    "MIN": "ERR IOKit DeviceRequest failed (0xe000404f)",
+    "MAX": "ERR IOKit DeviceRequest failed (0xe000404f)",
+    "RES": "ERR IOKit DeviceRequest failed (0xe000404f)",
+    "INFO": "ERR IOKit DeviceRequest failed (0xe000404f)",
+    "DEF": "ERR IOKit DeviceRequest failed (0xe000404f)"
+   },
+   "PU8.bit3.sel0x07": {
+    "CUR": "ERR IOKit DeviceRequest failed (0xe000404f)",
+    "MIN": "ERR IOKit DeviceRequest failed (0xe000404f)",
+    "MAX": "ERR IOKit DeviceRequest failed (0xe000404f)",
+    "RES": "ERR IOKit DeviceRequest failed (0xe000404f)",
+    "INFO": "ERR IOKit DeviceRequest failed (0xe000404f)",
+    "DEF": "ERR IOKit DeviceRequest failed (0xe000404f)"
+   },
+   "PU9.bit0.sel0x02": {
+    "CUR": "ERR IOKit DeviceRequest failed (0xe000404f)",
+    "MIN": "ERR IOKit DeviceRequest failed (0xe000404f)",
+    "MAX": "ERR IOKit DeviceRequest failed (0xe000404f)",
+    "RES": "ERR IOKit DeviceRequest failed (0xe000404f)",
+    "INFO": "ERR IOKit DeviceRequest failed (0xe000404f)",
+    "DEF": "ERR IOKit DeviceRequest failed (0xe000404f)"
+   },
+   "PU9.bit1.sel0x03": {
+    "CUR": "ERR IOKit DeviceRequest failed (0xe000404f)",
+    "MIN": "ERR IOKit DeviceRequest failed (0xe000404f)",
+    "MAX": "ERR IOKit DeviceRequest failed (0xe000404f)",
+    "RES": "ERR IOKit DeviceRequest failed (0xe000404f)",
+    "INFO": "ERR IOKit DeviceRequest failed (0xe000404f)",
+    "DEF": "ERR IOKit DeviceRequest failed (0xe000404f)"
+   },
+   "PU9.bit2.sel0x06": {
+    "CUR": "ERR IOKit DeviceRequest failed (0xe000404f)",
+    "MIN": "ERR IOKit DeviceRequest failed (0xe000404f)",
+    "MAX": "ERR IOKit DeviceRequest failed (0xe000404f)",
+    "RES": "ERR IOKit DeviceRequest failed (0xe000404f)",
+    "INFO": "ERR IOKit DeviceRequest failed (0xe000404f)",
+    "DEF": "ERR IOKit DeviceRequest failed (0xe000404f)"
+   },
+   "PU10.bit0.sel0x02": {
+    "CUR": "ERR IOKit DeviceRequest failed (0xe000404f)",
+    "MIN": "ERR IOKit DeviceRequest failed (0xe000404f)",
+    "MAX": "ERR IOKit DeviceRequest failed (0xe000404f)",
+    "RES": "ERR IOKit DeviceRequest failed (0xe000404f)",
+    "INFO": "ERR IOKit DeviceRequest failed (0xe000404f)",
+    "DEF": "ERR IOKit DeviceRequest failed (0xe000404f)"
+   },
+   "PU10.bit2.sel0x06": {
+    "CUR": "ERR IOKit DeviceRequest failed (0xe000404f)",
+    "MIN": "ERR IOKit DeviceRequest failed (0xe000404f)",
+    "MAX": "ERR IOKit DeviceRequest failed (0xe000404f)",
+    "RES": "ERR IOKit DeviceRequest failed (0xe000404f)",
+    "INFO": "ERR IOKit DeviceRequest failed (0xe000404f)",
+    "DEF": "ERR IOKit DeviceRequest failed (0xe000404f)"
+   },
+   "PU12.bit2.sel0x06": {
+    "CUR": "ERR IOKit DeviceRequest failed (0xe000404f)",
+    "MIN": "ERR IOKit DeviceRequest failed (0xe000404f)",
+    "MAX": "ERR IOKit DeviceRequest failed (0xe000404f)",
+    "RES": "ERR IOKit DeviceRequest failed (0xe000404f)",
+    "INFO": "ERR IOKit DeviceRequest failed (0xe000404f)",
+    "DEF": "ERR IOKit DeviceRequest failed (0xe000404f)"
+   },
+   "PU13.bit2.sel0x06": {
+    "CUR": "ERR IOKit DeviceRequest failed (0xe000404f)",
+    "MIN": "ERR IOKit DeviceRequest failed (0xe000404f)",
+    "MAX": "ERR IOKit DeviceRequest failed (0xe000404f)",
+    "RES": "ERR IOKit DeviceRequest failed (0xe000404f)",
+    "INFO": "ERR IOKit DeviceRequest failed (0xe000404f)",
+    "DEF": "ERR IOKit DeviceRequest failed (0xe000404f)"
+   },
+   "PU14.bit0.sel0x02": {
+    "CUR": "ERR IOKit DeviceRequest failed (0xe000404f)",
+    "MIN": "ERR IOKit DeviceRequest failed (0xe000404f)",
+    "MAX": "ERR IOKit DeviceRequest failed (0xe000404f)",
+    "RES": "ERR IOKit DeviceRequest failed (0xe000404f)",
+    "INFO": "ERR IOKit DeviceRequest failed (0xe000404f)",
+    "DEF": "ERR IOKit DeviceRequest failed (0xe000404f)"
+   },
+   "PU14.bit1.sel0x03": {
+    "CUR": "ERR IOKit DeviceRequest failed (0xe000404f)",
+    "MIN": "ERR IOKit DeviceRequest failed (0xe000404f)",
+    "MAX": "ERR IOKit DeviceRequest failed (0xe000404f)",
+    "RES": "ERR IOKit DeviceRequest failed (0xe000404f)",
+    "INFO": "ERR IOKit DeviceRequest failed (0xe000404f)",
+    "DEF": "ERR IOKit DeviceRequest failed (0xe000404f)"
+   },
+   "PU15.bit1.sel0x03": {
+    "CUR": "ERR IOKit DeviceRequest failed (0xe000404f)",
+    "MIN": "ERR IOKit DeviceRequest failed (0xe000404f)",
+    "MAX": "ERR IOKit DeviceRequest failed (0xe000404f)",
+    "RES": "ERR IOKit DeviceRequest failed (0xe000404f)",
+    "INFO": "ERR IOKit DeviceRequest failed (0xe000404f)",
+    "DEF": "ERR IOKit DeviceRequest failed (0xe000404f)"
+   },
+   "PU16.bit0.sel0x02": {
+    "CUR": "ERR IOKit DeviceRequest failed (0xe000404f)",
+    "MIN": "ERR IOKit DeviceRequest failed (0xe000404f)",
+    "MAX": "ERR IOKit DeviceRequest failed (0xe000404f)",
+    "RES": "ERR IOKit DeviceRequest failed (0xe000404f)",
+    "INFO": "ERR IOKit DeviceRequest failed (0xe000404f)",
+    "DEF": "ERR IOKit DeviceRequest failed (0xe000404f)"
+   }
+  }
+ }
+}
