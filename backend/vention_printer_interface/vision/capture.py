@@ -81,6 +81,9 @@ class VisionService:
         self._source_lock = threading.Lock()
         self._source_open = False
         self.drops = 0
+        # Called after every capture attempt (layer, stage, stored?) so the print can stop holding
+        # at the capture pose (control/capture_gate.py). Must not raise.
+        self.on_settled: Callable[[int, str, bool], None] | None = None
 
     # ---- the EventLog sink: enqueue and return, nothing else -----------------------------
     def on_event(self, label: str, data: dict[str, Any]) -> None:
@@ -190,11 +193,19 @@ class VisionService:
             except queue.Empty:
                 continue
             self._idle.clear()
+            stored = False
             try:
                 self._process(req)
+                stored = True
             except Exception as exc:  # noqa: BLE001 - a capture failure must never crash the worker
                 log.warning("vision capture failed (layer %s %s): %s", req.layer, req.stage, exc)
             finally:
+                hook = self.on_settled
+                if hook is not None:
+                    try:
+                        hook(req.layer, req.stage, stored)
+                    except Exception as exc:  # noqa: BLE001 - a hook must never crash the worker
+                        log.warning("vision on_settled hook failed: %s", exc)
                 self._idle.set()
 
     def store_uploaded(

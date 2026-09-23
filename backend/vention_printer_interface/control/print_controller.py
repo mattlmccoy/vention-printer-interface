@@ -55,6 +55,9 @@ class PrintController:
         self._clock = clock
         self._lock = threading.RLock()
         self.on_event: EventHook | None = None
+        # Has the operator stored the latest science capture? (control/capture_gate.py) None =
+        # no gate wired: an await_capture step never holds the print.
+        self.capture_settled: Callable[[], bool] | None = None
         self._reset(None)
 
     def _reset(
@@ -75,6 +78,7 @@ class PrintController:
         self.single_step = False
         self.reason = ""
         self._pause_requested = False
+        self._capture_missed = False
         self._step_granted = False
         self._in_flight: Step | None = None
         self._issued_at = 0.0
@@ -247,6 +251,12 @@ class PrintController:
                     return ("print_fault", {"reason": self.reason})
                 return None
             self._in_flight = None
+            if inflight.kind == "await_capture" and self._capture_missed:
+                # Timed out waiting for the still: record the miss; the print carries on.
+                self._capture_missed = False
+                return ("capture_missed", {
+                    "layer": inflight.layer, "phase": inflight.phase, "timeout_s": inflight.value,
+                })
             if inflight.phase == "setup" and inflight.index == 1 and self.macro is None:
                 self.part_zero_mm = (
                     self._part_position()
@@ -261,7 +271,7 @@ class PrintController:
             step = self.steps[self.step_index]
             self.step_index += 1
             event = self._issue(step, now)
-            if step.kind in ("wait", "dwell"):
+            if step.kind in ("wait", "dwell", "await_capture"):
                 self._in_flight, self._issued_at = step, now
                 self._saw_incomplete = False  # haven't seen the preceding move run yet
                 return event
@@ -279,6 +289,8 @@ class PrintController:
     def _blocking_done(self, step: Step, snapshot: dict[str, Any], now: float) -> bool:
         if step.kind == "dwell":
             return now - self._issued_at >= float(step.value or 0.0)
+        if step.kind == "await_capture":
+            return self._capture_wait_done(step, now)
         tel = snapshot.get("telemetry") or {}
         complete = tel.get("motion_complete") or {}
         all_complete = bool(complete) and all(complete.values())
@@ -290,6 +302,24 @@ class PrintController:
         # that never leaves the complete state, and the guard against a stale "complete" that
         # predates the move being registered on the controller.
         return self._saw_incomplete or now - self._issued_at >= self.min_wait_s
+
+    def _capture_wait_done(self, step: Step, now: float) -> bool:
+        """Done once the latest still is stored, or at the step's timeout (flagging a miss)."""
+        gate = self.capture_settled
+        if gate is None:
+            return True
+        try:
+            settled = gate()
+        except Exception as exc:  # noqa: BLE001 - a broken gate must never hang the print
+            log.warning("capture gate failed (%s); not holding the print", exc)
+            settled = True
+        if settled:
+            self._capture_missed = False
+            return True
+        if now - self._issued_at >= float(step.value or 0.0):
+            self._capture_missed = True
+            return True
+        return False
 
     def _issue(self, step: Step, now: float) -> tuple[str, dict[str, Any]] | None:
         self._phase, self._layer, self._height = step.phase, step.layer, step.part_height_mm

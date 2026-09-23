@@ -61,6 +61,7 @@ from vention_printer_interface.control.backlash_history import (
     save_backlash,
 )
 from vention_printer_interface.control.backlash_routine import BacklashRoutine
+from vention_printer_interface.control.capture_gate import capture_settled
 from vention_printer_interface.control.controller import REFERENCE_MATCH_TOL_MM, Controller
 from vention_printer_interface.control.events import EventLog
 from vention_printer_interface.control.feed_budget import (
@@ -859,7 +860,29 @@ def create_app(
         # macOS the server index fallback is always blocked because it can select Continuity Camera.
         app.state.capture_request = None
         app.state.capture_seq = 0
+        app.state.capture_done_seq = 0  # highest capture_request seq that is stored (or failed)
         app.state.science_client_until = 0.0
+
+        def mark_capture_settled(layer: int | None, stage: str | None) -> None:
+            """The current capture (matching layer + stage) was stored, or definitively failed:
+            the print may leave the capture pose (control/capture_gate.py)."""
+            req = getattr(app.state, "capture_request", None)
+            if req is None or req.get("stage") != stage or req.get("layer") != layer:
+                return
+            app.state.capture_done_seq = max(app.state.capture_done_seq, int(req["seq"]))
+
+        def capture_settled_now() -> bool:
+            browser_live = time.monotonic() < getattr(app.state, "science_client_until", 0.0)
+            server_can = app.state.vision is not None and not server_science_fallback_blocked
+            return capture_settled(
+                getattr(app.state, "capture_request", None),
+                app.state.capture_done_seq,
+                consumer_alive=browser_live or server_can,
+            )
+
+        app.state.capture_settled = capture_settled_now
+        printer.capture_settled = capture_settled_now
+        app.state.mark_capture_settled = mark_capture_settled
         events = EventLog()
         events.add_sink(recorder.event)  # every event also lands in the durable run record
 
@@ -959,6 +982,7 @@ def create_app(
                 calibration=load_calibration(vision_calibration_path),
                 camera_role="science",
             )
+            vision_svc.on_settled = lambda layer, stage, _ok: mark_capture_settled(layer, stage)
             try:
                 vision_svc.start()
                 app.state.vision = vision_svc
@@ -3115,6 +3139,9 @@ def create_app(
             raise HTTPException(409, "capture request is no longer current")
         if rec().current_run_dir is None:
             raise HTTPException(409, "no active recording run")
+        if server_science_fallback_blocked or vision_service() is None:
+            # Nobody else can take it: release the print from the capture pose, then refuse.
+            app.state.mark_capture_settled(capture.get("layer"), capture.get("stage"))
         if server_science_fallback_blocked:
             raise HTTPException(
                 503,
@@ -3187,6 +3214,7 @@ def create_app(
         )
         if paths is None:
             raise HTTPException(409, "no active recording run to store the capture under")
+        app.state.mark_capture_settled(layer, stage)
         return {"stored": True}
 
     @app.post("/api/vision/overview/capture")

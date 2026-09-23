@@ -11,6 +11,7 @@ import dataclasses
 from dataclasses import dataclass, field
 from typing import Any
 
+from vention_printer_interface.control.capture_gate import CAPTURE_TIMEOUT_S
 from vention_printer_interface.control.safety import SafetyLimits
 
 # Axis roles from vention/json/configuration.json (drive order) and V1.py lines 63-66.
@@ -615,6 +616,16 @@ def compile_print(plan: PrintSettings, feed_start_mm: float | None = None) -> tu
                         value=plan.capture_hold_s,
                         label="camera capture hold",
                     )
+                # Then hold until the operator has STORED this still (or the timeout): an
+                # on-demand full-res open can outlast the fixed hold, and the carriage must not
+                # leave the pose mid-capture. Returns at once when nothing is capturing.
+                add(
+                    phase,
+                    absolute_layer,
+                    "await_capture",
+                    value=CAPTURE_TIMEOUT_S,
+                    label="wait for science still",
+                )
 
             if "pre_jet" in cap_stages:
                 # Stop during the 950 -> home spreading return when the calibrated camera reaches
