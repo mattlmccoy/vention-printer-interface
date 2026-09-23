@@ -79,6 +79,14 @@ export interface AxisMotion { max_speed: number | null; max_accel: number | null
 /** GET /api/print/feed-budget (control/feed_budget.py). available/sufficient/layers_supported are null
  *  when the feed position can't be verified (not homed / no telemetry); unknown_reason says why. */
 export interface FeedBudgetPayload { demand_mm: number; available_mm: number | null; layers_total: number; layers_supported: number | null; sufficient: boolean | null; unknown_reason: string | null }
+/** One operator-side UVC control, read from the camera (GET /api/vision/uvc/{id}/controls). */
+export interface UvcControl {
+  key: string; label: string; kind: "range" | "bool" | "menu"; auto_key: string | null;
+  value: number | boolean; default: number | boolean;
+  min?: number; max?: number; step?: number; options?: { value: number; label: string }[];
+}
+export interface UvcCamerasPayload { available: boolean; reason: string | null; cameras: import("./uvc_controls.ts").UvcCamera[] }
+export interface UvcResetPayload { reset: string[]; failed: Record<string, string>; controls: UvcControl[] }
 export interface PrimingPayload { settings: Record<string, number>; validation: string[]; n_steps: number; n_thick_precoats: number; limits: Record<string, unknown> }
 export interface PrimedPayload { primed: { part_mm: number; feed_mm: number; captured_at: number } | null }
 export interface BacklashPositionResult { ref_mm: number; backlash_median_mm: number; backlash_mag_median_mm: number; reps_mm: number[] }
@@ -330,6 +338,11 @@ export const api = {
   visionSetRoles: (mapping: VisionRoleMap) => req<VisionRolesPutResult>("PUT", "/api/vision/roles", { mapping }),
   visionGetSettings: () => req<Record<string, CameraSettings>>("GET", "/api/vision/settings"),
   visionSetSettings: (body: Record<string, CameraSettings>) => req<Record<string, CameraSettings>>("PUT", "/api/vision/settings", body),
+  visionResetSettings: (role: "overview" | "science") => req<Record<string, CameraSettings>>("DELETE", `/api/vision/settings/${role}`),
+  uvcCameras: () => req<UvcCamerasPayload>("GET", "/api/vision/uvc"),
+  uvcControls: (uid: string) => req<{ controls: UvcControl[] }>("GET", `/api/vision/uvc/${encodeURIComponent(uid)}/controls`),
+  uvcSetControl: (uid: string, key: string, value: number | boolean) => req<{ controls: UvcControl[] }>("PUT", `/api/vision/uvc/${encodeURIComponent(uid)}/controls`, { key, value }),
+  uvcReset: (uid: string) => req<UvcResetPayload>("POST", `/api/vision/uvc/${encodeURIComponent(uid)}/reset`),
   visionCaptures: (run: string) => req<VisionCaptureRecord[]>("GET", `/api/vision/captures?run=${encodeURIComponent(run)}`),
   // Client-side science capture: heartbeat (keeps the server from doing its own cv2 grab), and the
   // still upload (raw encoded image as the body; layer/stage/cad_layer in the query).
