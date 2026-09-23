@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState, type ReactNode } from "react";
 import { api } from "../../lib/api.ts";
-import { fmtMm, fmtSecs, heightMismatch, type Gates } from "../../lib/format.ts";
+import { cleanNum, fmtMm, fmtSecs, heightMismatch, type Gates } from "../../lib/format.ts";
 import type { StatusPayload } from "../../lib/telemetry.ts";
 import { compilePrint, describeStep, type PrintSettings } from "../../lib/print_settings.ts";
 import { phrase, currentTimelineIndex, currentStage, PHASE_LABEL, TIMELINE_NOISE } from "../../lib/timeline.ts";
@@ -81,7 +81,7 @@ export function PrintView({ status, gates, call, base, onJob, onRuns }: { status
   const stageOffset = plan && r ? (r.phase === "printing" ? plan.thin_precoat.n_layers : r.phase === "postcoat" ? plan.thin_precoat.n_layers + plan.printing.n_layers : 0) : 0;
   const stageStep = r ? Math.max(1, r.layer - stageOffset) : 0;
   const stageName = r ? (PHASE_LABEL[r.phase] ?? r.phase) : "";
-  const stageLine = !isMacro && r?.state === "done" ? "complete" : (!isMacro && active && stageName) ? `${stageName}${stagePh ? ` · ${stageStep}/${stagePh.n_layers} · ${stagePh.layer_thickness_mm} mm` : ""}` : "";
+  const stageLine = !isMacro && r?.state === "done" ? "complete" : (!isMacro && active && stageName) ? `${stageName}${stagePh ? ` · ${stageStep}/${stagePh.n_layers} · ${cleanNum(stagePh.layer_thickness_mm, 3)} mm` : ""}` : "";
   const problems: Array<[string, "bad" | "warn"]> = [];
   if (t?.estop_triggered) problems.push(["e-stop asserted", "bad"]);
   if (t?.estop_triggered === null && gates.connected) problems.push(["e-stop status unknown", "warn"]);

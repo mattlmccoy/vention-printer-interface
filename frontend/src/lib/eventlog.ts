@@ -1,3 +1,4 @@
+import { cleanNum } from "./format.ts";
 import { AXIS_NAMES, type AxisNo, type EventItem } from "./telemetry.ts";
 
 function axisName(a: unknown): string {
@@ -18,7 +19,7 @@ export function describeEvent(e: EventItem): string {
   const d = e.data as Record<string, unknown>;
   switch (e.label) {
     case "home": return `Homed ${axisList(d.axes)}`;
-    case "move": return `Moved ${axisName(d.axis)} ${d.applied_mm} mm`;
+    case "move": return `Moved ${axisName(d.axis)} ${typeof d.applied_mm === "number" ? cleanNum(d.applied_mm, 3) : d.applied_mm} mm`;
     case "stop": return "Stopped all motion";
     case "heater_on": return "Heater on";
     case "heater_off": return "Heater off";

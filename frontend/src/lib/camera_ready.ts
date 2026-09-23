@@ -1,3 +1,5 @@
+import { contentStats, truncationReason, type ContentStats } from "./capture_diagnostics.ts";
+
 /** Wait until a video has decoded a real frame. A resolved getUserMedia promise alone is not
  * enough: overloaded UVC cameras can return a live MediaStream that never produces pixels. */
 export function waitForCameraFrame(
@@ -49,40 +51,42 @@ export function waitForCameraFrame(
   });
 }
 
-/** Reject all-black, all-white, and near-uniform camera frames. Some UVC failures still report
- * valid dimensions and timestamps while returning an empty grey/black raster. */
-export function cameraSourceHasContent(
-  source: CanvasImageSource,
-  width: number,
-  height: number,
-): boolean {
-  if (width <= 0 || height <= 0) return false;
+/** Grey-level stats of a 48×36 downsample of a camera source (null when it can't be drawn). */
+export function cameraSourceStats(source: CanvasImageSource, width: number, height: number): ContentStats | null {
+  if (width <= 0 || height <= 0) return null;
   try {
     const canvas = document.createElement("canvas");
     canvas.width = 48;
     canvas.height = 36;
     const ctx = canvas.getContext("2d", { willReadFrequently: true });
-    if (!ctx) return false;
+    if (!ctx) return null;
     ctx.drawImage(source, 0, 0, canvas.width, canvas.height);
-    const pixels = ctx.getImageData(0, 0, canvas.width, canvas.height).data;
-    let min = 255;
-    let max = 0;
-    let sum = 0;
-    let sumSq = 0;
-    const n = pixels.length / 4;
-    for (let i = 0; i < pixels.length; i += 4) {
-      const y = (pixels[i] + pixels[i + 1] + pixels[i + 2]) / 3;
-      min = Math.min(min, y);
-      max = Math.max(max, y);
-      sum += y;
-      sumSq += y * y;
-    }
-    const mean = sum / n;
-    const std = Math.sqrt(Math.max(0, sumSq / n - mean * mean));
-    return max - min >= 20 && std >= 8;
+    return contentStats(ctx.getImageData(0, 0, canvas.width, canvas.height).data);
   } catch {
-    return false;
+    return null;
   }
+}
+
+/** Why a camera source looks truncated (its bottom never arrived), from a 64×96 downsample; null when
+ *  it looks whole or can't be drawn. */
+export function cameraSourceTruncation(source: CanvasImageSource): string | null {
+  try {
+    const canvas = document.createElement("canvas");
+    canvas.width = 64;
+    canvas.height = 96;
+    const ctx = canvas.getContext("2d", { willReadFrequently: true });
+    if (!ctx) return null;
+    ctx.drawImage(source, 0, 0, canvas.width, canvas.height);
+    return truncationReason(ctx.getImageData(0, 0, canvas.width, canvas.height).data, canvas.width, canvas.height);
+  } catch {
+    return null;
+  }
+}
+
+/** Reject all-black, all-white, and near-uniform camera frames. Some UVC failures still report
+ * valid dimensions and timestamps while returning an empty grey/black raster. */
+export function cameraSourceHasContent(source: CanvasImageSource, width: number, height: number): boolean {
+  return cameraSourceStats(source, width, height)?.ok ?? false;
 }
 
 export const SCIENCE_FALLBACK_CONSTRAINTS: Omit<MediaTrackConstraints, "deviceId"> = {

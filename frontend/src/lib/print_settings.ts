@@ -1,3 +1,4 @@
+import { cleanNum } from "./format.ts";
 /** Mirror of backend/vention_printer_interface/control/print_settings.py: the same plan shape, the
  *  same defaults (V1.py constants) and the same step order, so the UI can preview a print_settings and
  *  show the printability verdict before asking the operator. The backend is the authority. */
@@ -366,18 +367,21 @@ export function compilePrint(plan: PrintSettings): Step[] {
 }
 
 /** Human label for a step, for the print_settings cursor. */
+const n = (v: number | null | undefined): string => (typeof v === "number" ? cleanNum(v, 3) : "—");
+
 export function describeStep(s: Step | null | undefined): string {
   if (!s) return "—";
   const ax = s.axis ? ({ 1: "build", 2: "feed", 3: "printhead", 4: "recoater" } as Record<number, string>)[s.axis] : "";
   switch (s.kind) {
     case "home": return ax ? `home ${ax}` : "home";
-    case "set_speed": return `${ax} speed ${s.value} mm/s`;
-    case "set_accel": return `${ax} accel ${s.value} mm/s²`;
-    case "move_abs": return `${ax} → ${s.value} mm`;
-    case "move_rel": return `${ax} ${s.value! >= 0 ? "+" : ""}${s.value} mm`;
-    case "seat_part": return `${ax} seat → ${s.value} mm (abs)`;
+    // Compiled values accumulate float error (abs seat heights sum layer thicknesses): cleanNum.
+    case "set_speed": return `${ax} speed ${n(s.value)} mm/s`;
+    case "set_accel": return `${ax} accel ${n(s.value)} mm/s²`;
+    case "move_abs": return `${ax} → ${n(s.value)} mm`;
+    case "move_rel": return `${ax} ${s.value! >= 0 ? "+" : ""}${n(s.value)} mm`;
+    case "seat_part": return `${ax} seat → ${n(s.value)} mm (abs)`;
     case "wait": return "wait for motion";
-    case "dwell": return `dwell ${s.value}s`;
+    case "dwell": return `dwell ${n(s.value)}s`;
     case "heater": return s.value ? "heater ON" : "heater off";
     case "mark": return s.label === "layer_start" ? `layer ${s.layer} start` : s.label === "feed_exhausted" ? "feed exhausted — stopped" : `layer ${s.layer} done`;
   }

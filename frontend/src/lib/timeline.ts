@@ -1,3 +1,4 @@
+import { cleanNum } from "./format.ts";
 import { describeStep, type PrintSettings, type Step } from "./print_settings.ts";
 
 /** Bookkeeping steps hidden from the operator-facing timeline (they carry no visible action). */
@@ -14,12 +15,12 @@ export function phrase(step: Step | null, plan: PrintSettings | null): string {
   const v = step.value ?? 0;
   switch (step.kind) {
     case "home": return step.axis ? `homing ${({ 1: "build", 2: "feed", 3: "printhead", 4: "recoater" } as Record<number, string>)[step.axis]}` : "homing";
-    case "move_rel": return step.axis === 1 ? `build piston down ${v} mm` : `feed piston up ${Math.abs(v)} mm`;
+    case "move_rel": return step.axis === 1 ? `build piston down ${cleanNum(v, 3)} mm` : `feed piston up ${cleanNum(Math.abs(v), 3)} mm`;
     case "move_abs":
       if (step.axis === 4) return v === plan.recoater_end_mm ? "spreading powder" : v === plan.heater_end_mm ? "heater pass" : "recoater returning";
       if (step.axis === 3) return v === plan.printhead_end_mm ? "printhead pass" : "printhead returning";
-      if (step.axis === 2) return `feed piston to ${v} mm`;
-      return `build piston to ${v} mm`;
+      if (step.axis === 2) return `feed piston to ${cleanNum(v, 3)} mm`;
+      return `build piston to ${cleanNum(v, 3)} mm`;
     case "dwell": return "settling";
     case "heater": return v ? "heater on" : "heater off";
     case "wait": return "waiting for motion";

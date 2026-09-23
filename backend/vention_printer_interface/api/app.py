@@ -161,6 +161,7 @@ from vention_printer_interface.vision.center_sweep import best_center_pose
 from vention_printer_interface.vision.circle_detect import center_offset_px, detect_piston_circle
 from vention_printer_interface.vision.coverage import coverage
 from vention_printer_interface.vision.events import label_to_stage
+from vention_printer_interface.vision.frame_integrity import frame_truncation
 from vention_printer_interface.vision.frame_source import (
     AVFoundationFrameSource,
     FrameSource,
@@ -3167,6 +3168,9 @@ def create_app(
             raise HTTPException(400, "could not decode uploaded image")
         if not image_has_usable_content(arr):
             raise HTTPException(422, "uploaded science image is blank or near-uniform")
+        truncated = frame_truncation(arr, order="bgr")  # cv2.imdecode -> BGR
+        if truncated:
+            raise HTTPException(422, f"uploaded science image: {truncated}")
         job = app.state.job.to_dict() if app.state.job is not None else {}
         axis: dict[str, float] = {}
         try:

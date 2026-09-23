@@ -80,6 +80,10 @@ class SimulatedFrameSource(FrameSource):
             raise RuntimeError("source not open")
         img = np.zeros((self.height, self.width, 3), dtype=np.uint8)
         img[:, :, 1] = np.linspace(0, 255, self.width, dtype=np.uint8)[None, :]
+        # A vertical ramp too, so no band is constant down its columns: a pattern that never
+        # changes down the frame is the signature of a TRUNCATED transfer (frame_integrity.py),
+        # which a real camera never produces.
+        img[:, :, 2] = np.linspace(0, 255, self.height, dtype=np.uint8)[:, None]
         img[self.height // 4 : self.height // 2, self.width // 4 : self.width // 2] = 255
         settings = (
             dict(self._settings)
