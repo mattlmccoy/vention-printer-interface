@@ -3,6 +3,17 @@
 Notable changes to the Vention Printer Interface. Versions follow semantic versioning; each entry
 corresponds to a tagged merge to `main`.
 
+## v0.12.1 — 2026-09-23
+
+### Fixed
+- **Truncated camera frames are refused, not stored.** A frame whose bottom never arrived over USB (torn rows, then a green band of unfilled data — seen with 20 MP YUY2 through a shared hub) used to pass the blank check and be saved as a science capture. The operator refuses it at every storage point and the browser tries its next grab.
+- **Capture failures say why.** A failed science capture names each browser attempt's reason (photo / frame / video, blank or truncated) and the operator fallback's answer, instead of only "503 science capture service is not running".
+- **Camera fps limits match the camera's real modes** (e.g. 4K uncompressed tops out at 23 fps), and Camera settings warns when an uncompressed mode needs more USB bandwidth than a shared hub carries.
+- **No floating-point noise** in timeline, step and event-log numbers (7.5000000000000036 mm → 7.5 mm).
+
+### Added
+- Clicking the console ≠ operator badge explains the mismatch and gives the in-place update command for the operator's OS. The update banner uses the same command (re-running the installer would regenerate the macOS service file and drop its print-timing flags).
+
 ## v0.12.0 — 2026-09-23
 
 ### Added

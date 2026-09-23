@@ -11,6 +11,17 @@ export interface Release {
 
 export const CHANGELOG: Release[] = [
   {
+    version: "0.12.1",
+    date: "2026-09-23",
+    changes: [
+      "Truncated camera frames (the bottom never arrived over USB — a green band) are refused instead of being saved as science captures; the browser tries its next grab.",
+      "Capture failures now say why: each browser attempt's reason and the operator fallback's answer, not only a 503.",
+      "Camera fps limits follow the camera's real modes, with a warning when an uncompressed mode needs more USB bandwidth than a shared hub carries.",
+      "Timeline, step and event-log numbers no longer show floating-point noise.",
+      "Clicking the console ≠ operator badge explains the mismatch and gives the update command for the operator's OS.",
+    ],
+  },
+  {
     version: "0.12.0",
     date: "2026-09-23",
     changes: [
