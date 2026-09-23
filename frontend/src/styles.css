@@ -699,3 +699,15 @@ button.small { height: 34px; padding: 0 12px; border: 1px solid var(--line-contr
 .alert-stack .banner .reason { max-width: 48ch; }
 @media (prefers-reduced-motion: no-preference) { .alert-stack .banner { animation: alert-in .16s ease-out; } }
 @keyframes alert-in { from { opacity: 0; transform: translateY(-4px); } to { opacity: 1; transform: none; } }
+
+/* Console ≠ operator popover (status-bar version badge). Fixed so the status bar's overflow can't clip it. */
+.skew-pop { position: fixed; right: 16px; bottom: 38px; z-index: 1100; width: min(560px, calc(100vw - 32px)); background: var(--panel); border: 1px solid var(--line-strong); border-radius: 12px; padding: 14px 16px; box-shadow: var(--shadow); display: flex; flex-direction: column; gap: 8px; font-size: 13px; color: var(--fg); }
+.skew-pop .skew-head { display: flex; align-items: center; justify-content: space-between; }
+.skew-pop .x { background: none; border: none; color: var(--muted); font-size: 16px; cursor: pointer; }
+.skew-pop .skew-row { display: grid; grid-template-columns: 80px minmax(0, 1fr); font: 12px var(--font-mono); color: var(--muted); }
+.skew-pop .skew-row code { color: var(--fg-strong); }
+.skew-pop p { margin: 0; line-height: 1.45; }
+.skew-pop .skew-label { font: 11.5px var(--font-mono); color: var(--muted); text-transform: uppercase; letter-spacing: .04em; }
+.skew-pop .skew-cmd { display: flex; gap: 8px; align-items: flex-start; }
+.skew-pop .skew-cmd code { flex: 1; min-width: 0; overflow-x: auto; white-space: pre-wrap; overflow-wrap: anywhere; font: 11.5px var(--font-mono); background: var(--bg-deep); border: 1px solid var(--line); border-radius: var(--radius); padding: 8px 10px; }
+.skew-pop .linklike { align-self: flex-start; }
