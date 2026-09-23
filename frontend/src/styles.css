@@ -655,3 +655,16 @@ button.small { height: 34px; padding: 0 12px; border: 1px solid var(--line-contr
   font: 12px/1.45 system-ui, sans-serif; text-transform: none; letter-spacing: 0; text-align: left;
   box-shadow: var(--shadow); pointer-events: none; white-space: normal;
 }
+
+/* ---- floating alert stack: fault / error / warning / NOT HOMED ----
+   Fixed under the header so an alert never pushes the page down (no layout shift). Centered and
+   width-capped so the Print page's PAUSE/ABORT (right) and state pill (left) stay visible on wide
+   screens; it starts below the header, so E-STOP is never covered. Tints sit over an opaque panel so
+   the text stays readable above page content. */
+.alert-stack { position: fixed; top: 64px; left: 50%; transform: translateX(-50%); width: min(760px, calc(100% - 32px)); z-index: 40; display: flex; flex-direction: column; gap: 8px; pointer-events: none; }
+.alert-stack .banner { pointer-events: auto; padding: 10px 16px; border: 1px solid var(--line-strong); border-radius: var(--radius); box-shadow: var(--shadow); background: var(--panel); }
+.alert-stack .banner.err { background: linear-gradient(var(--err-bg), var(--err-bg)), var(--panel); border-color: var(--err); }
+.alert-stack .banner.warn { background: linear-gradient(var(--warn-bg), var(--warn-bg)), var(--panel); border-color: var(--warn); }
+.alert-stack .banner .reason { max-width: 48ch; }
+@media (prefers-reduced-motion: no-preference) { .alert-stack .banner { animation: alert-in .16s ease-out; } }
+@keyframes alert-in { from { opacity: 0; transform: translateY(-4px); } to { opacity: 1; transform: none; } }

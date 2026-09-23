@@ -3,7 +3,7 @@ import { api, type BacklashHistoryItem, type BacklashRecord, type BacklashSessio
 import { captureScienceStillOnce } from "../../lib/science_still.ts";
 import { BacklashPlot } from "../BacklashPlot.tsx";
 import { verifyVerdict, type Verdict } from "../../lib/backlash_verify.ts";
-import type { Gates } from "../../lib/format.ts";
+import { cleanNum, type Gates } from "../../lib/format.ts";
 import type { StatusPayload } from "../../lib/telemetry.ts";
 import { loadRoleMap } from "../../lib/camera_roles.ts";
 import { loadCameraSettings, videoConstraints } from "../../lib/overview_settings.ts";
@@ -423,7 +423,7 @@ function CaptureCalibration({ status, gates, call }: { status: StatusPayload | n
       </div>
       <div className="kv" style={{ marginTop: 8 }}>
         <span>recoater now</span><span>{typeof rc === "number" ? `${rc.toFixed(1)} mm` : "—"}</span>
-        <span>saved capture pose</span><span>{pose != null && pose > 0 ? `${pose} mm` : "not set"}</span>
+        <span>saved capture pose</span><span>{pose != null && pose > 0 ? `${cleanNum(pose)} mm` : "not set"}</span>
       </div>
       <div className="actions one tight" style={{ marginTop: 10 }}>
         <button className="cta primary" disabled={!ok || typeof rc !== "number"} onClick={savePose}>Set capture pose = {typeof rc === "number" ? `${rc.toFixed(1)} mm` : "?"}</button>
