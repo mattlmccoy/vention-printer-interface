@@ -24,6 +24,7 @@ from typing import Any
 import numpy as np
 
 from vention_printer_interface.vision.events import CaptureRequest, label_to_stage
+from vention_printer_interface.vision.frame_integrity import frame_truncation
 from vention_printer_interface.vision.frame_source import Frame, FrameSource
 from vention_printer_interface.vision.registration import Calibration, register_frame
 from vention_printer_interface.vision.store import append_manifest, write_capture
@@ -231,6 +232,9 @@ class VisionService:
                 self._close_source_locked()
         if not image_has_usable_content(frame.image):
             raise ValueError("camera returned a blank or near-uniform frame")
+        truncated = frame_truncation(frame.image, order="bgr")  # cv2 frames are BGR
+        if truncated:
+            raise ValueError(f"camera returned a {truncated}")
         registered, registered_space = register_frame(frame.image, self._calibration)
 
         meta: dict[str, Any] = {
@@ -358,6 +362,9 @@ def store_uploaded(
         return None
     if not image_has_usable_content(image):
         raise ValueError("uploaded science image is blank or near-uniform")
+    truncated = frame_truncation(image, order="bgr")  # decoded with cv2 -> BGR
+    if truncated:
+        raise ValueError(f"uploaded science image: {truncated}")
     registered, registered_space = register_frame(image, calibration)
     meta: dict[str, Any] = {
         "run_id": Path(base).name,

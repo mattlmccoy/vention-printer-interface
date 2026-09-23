@@ -10,7 +10,7 @@ import {
   type SettingsRole,
 } from "../lib/overview_settings.ts";
 import { applyPayload, numericControls, type NumericControl } from "../lib/track_settings.ts";
-import { formatExposure, maxFps } from "../lib/camera_caps.ts";
+import { bandwidthWarning, formatExposure, maxFps } from "../lib/camera_caps.ts";
 import { api } from "../lib/api.ts";
 import { SETUP_PREVIEW_CONSTRAINTS, waitForCameraFrame } from "../lib/camera_ready.ts";
 import { browserResetPlan } from "../lib/uvc_controls.ts";
@@ -288,6 +288,10 @@ export function CameraSettingsPanel({ role }: { role: SettingsRole }) {
             </select>
             <span className="hint" style={{ marginTop: 0 }}>{fmtNote}</span>
           </label>
+          {(() => {
+            const warn = bandwidthWarning(format || null, px.width, px.height, Math.min(settings.frameRate, fpsCeiling));
+            return warn ? <div className="warnline" style={{ marginTop: 0 }}>{warn}</div> : null;
+          })()}
 
           <label className="row" style={{ gap: 8, alignItems: "center" }}>
             <span className="hint" style={{ minWidth: 96, marginTop: 0 }}>fps</span>

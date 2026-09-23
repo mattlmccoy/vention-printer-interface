@@ -1,6 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { EXPOSURE_UNIT_MS, exposureMs, formatExposure, maxFps, SENSOR_MAX } from "./camera_caps.ts";
+import { bandwidthWarning, EXPOSURE_UNIT_MS, exposureMs, formatExposure, maxFps, SENSOR_MAX } from "./camera_caps.ts";
 
 test("exposureTime is the W3C 100-microsecond unit: value 1 = 0.1 ms", () => {
   assert.equal(EXPOSURE_UNIT_MS, 0.1);
@@ -27,4 +27,27 @@ test("maxFps reflects the documented ELP snapshot ceilings", () => {
 
 test("the fps ceilings are anchored to the AR2020 sensor max", () => {
   assert.deepEqual(SENSOR_MAX, { width: 5120, height: 3840 });
+});
+
+test("maxFps follows the camera's REAL modes (ELP descriptor, backend/tests/fixtures/uvc)", () => {
+  // The old rule said "every lower resolution runs at 30 fps"; the camera disagrees:
+  assert.equal(maxFps("YUY2", 3840, 2160), 23);   // 4K uncompressed tops out at 23
+  assert.equal(maxFps("MJPG", 3840, 2160), 30);
+  assert.equal(maxFps("YUY2", 4000, 3000), 15);
+  assert.equal(maxFps("MJPG", 4000, 3000), 27.5); // 4:3 modes cap at 27.5 even compressed
+  assert.equal(maxFps("YUY2", 2592, 1944), 27.5);
+  assert.equal(maxFps(null, 3840, 2160), 30);     // auto: the compressed ceiling
+  // a size the camera doesn't list keeps the old conservative default
+  assert.equal(maxFps("YUY2", 1000, 1000), 30);
+});
+
+test("uncompressed modes that need a lot of USB bandwidth are flagged", () => {
+  // The failing Windows setup: 5120x3840 YUY2 at 7.5 fps = ~295 MB/s -> truncated frames.
+  const w = bandwidthWarning("YUY2", 5120, 3840, 7.5);
+  assert.ok(w);
+  assert.match(w, /295 MB\/s/);
+  assert.match(w, /MJPG/);
+  assert.equal(bandwidthWarning("YUY2", 1920, 1080, 30), null); // ~124 MB/s: fine
+  assert.equal(bandwidthWarning("MJPG", 5120, 3840, 27.5), null); // compressed on the camera
+  assert.equal(bandwidthWarning(null, 5120, 3840, 27.5), null);
 });
