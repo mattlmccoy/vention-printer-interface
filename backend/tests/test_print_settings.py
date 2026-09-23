@@ -478,7 +478,7 @@ def test_thin_precoat_layer_spreads_feeds_drops_part_and_returns() -> None:
         ("wait", None, None),
         ("move_rel", FEED, -0.4),  # feed advance 0.4 (nominal)
         ("wait", None, None),
-        ("dwell", None, 1.0),
+        ("dwell", None, 0.4),
         ("move_abs", RECOATER, 350.0),  # precoat return, NOT home
         ("wait", None, None),
         ("mark", None, None),
@@ -530,7 +530,7 @@ def test_compile_one_printing_layer_full_sequence() -> None:
         ("wait", None, None),
         ("move_rel", FEED, -0.4),          # feed advance (the feed piston supplies powder)
         ("wait", None, None),
-        ("dwell", None, 1.0),
+        ("dwell", None, 0.4),
         ("move_abs", RECOATER, 5.0),       # recoater home = SPREAD  \  concurrent: two moves,
         ("move_abs", PRINTHEAD, 900.0),    # printhead jet, trailing  /  then ONE wait
         ("wait", None, None),
@@ -951,7 +951,7 @@ def test_estimate_duration_is_deterministic_and_pins_frontend_parity() -> None:
     # #6: the estimate is a deterministic constant-velocity model. This golden pins BOTH that the
     # backend value is stable AND the exact number the frontend estimateDurationS must reproduce for
     # the default plan at the default operator wait floor (0.25) — they diverged when UI used 0.5.
-    assert estimate_duration_s(PrintSettings(), 0.25) == 391.4  # build_backlash_mm default 0 (off)
+    assert estimate_duration_s(PrintSettings(), 0.25) == 384.2  # build_backlash_mm default 0 (off)
     # Same plan is byte-identical run to run (pure function of the plan + wait floor).
     assert estimate_duration_s(PrintSettings(), 0.25) == estimate_duration_s(PrintSettings(), 0.25)
     # A larger wait floor only ever raises the estimate (waits take max(pending, floor)).

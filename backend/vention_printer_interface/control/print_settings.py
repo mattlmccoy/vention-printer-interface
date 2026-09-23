@@ -177,7 +177,7 @@ class PrintSettings:
     heater_accel: float = 250.0
     n_heater_passes: int = 1
     heater_enabled: bool = False
-    settle_s: float = 1.0  # V1.py's time.sleep(1) after the feed piston move
+    settle_s: float = 0.4  # powder settle after the feed move (was V1.py's arbitrary 1 s); tunable
     feed_backlash_mm: float = 0.0  # opt-in: drop the feed this much BEFORE the spread; the
     # post-spread feed-up covers it too (net advance unchanged, approached from below to take slop)
     # Anti-backlash on the BUILD-piston layer drop: overshoot DOWN past the layer target by this
@@ -209,10 +209,11 @@ class PrintSettings:
     # the constant recoat plane (so scale/focus don't drift across the build). 0 = fixed camera:
     # emit the capture mark in place, no capture move (the original behaviour).
     capture_recoater_mm: float = 0.0
-    capture_settle_s: float = 0.5
+    capture_settle_s: float = 0.3
     # Hold the machine still after a browser capture trigger. The trigger is asynchronous; without
-    # this dwell, the next move can begin while the browser is exposing/transferring the frame.
-    capture_hold_s: float = 2.0
+    # this dwell, the next move can begin while the browser is exposing/transferring the frame. A
+    # still grab off the stream is fast, so 1 s is ample; raise it if captures come out blurred.
+    capture_hold_s: float = 1.0
 
     @property
     def total_thickness_mm(self) -> float:
