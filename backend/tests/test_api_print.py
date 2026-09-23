@@ -35,6 +35,10 @@ FAST: dict[str, Any] = {
     "feed_fast_accel": 100,
 }
 
+# The simulator's feed is unhomed, so its powder column can't be verified; these tests are about
+# print mechanics, not the powder budget (tests/test_api_feed_budget.py), so they acknowledge it.
+START = {"accept_feed_risk": True}
+
 
 @pytest.fixture
 def client(tmp_path: Path) -> Iterator[TestClient]:
@@ -158,28 +162,28 @@ def test_start_requires_primed_bed(client: TestClient) -> None:
     client.put("/api/print-settings", json=FAST)
     connect_arm_no_prime(client)
     # armed + valid settings, but no primed bed captured yet -> refused with a prime-the-bed detail
-    r = client.post("/api/print/start", json={})
+    r = client.post("/api/print/start", json=START)
     assert r.status_code == 409 and "prime" in r.json()["detail"].lower()
     # capture the primed bed, then the start proceeds (no longer a 409)
     assert client.post("/api/primed/capture").status_code == 200
-    ok = client.post("/api/print/start", json={})
+    ok = client.post("/api/print/start", json=START)
     assert ok.status_code != 409
 
 
 def test_start_refused_when_not_armed_or_invalid(client: TestClient) -> None:
-    assert client.post("/api/print/start", json={}).status_code == 409
+    assert client.post("/api/print/start", json=START).status_code == 409
     client.post("/api/connect", json={"backend": "simulated"})
-    assert client.post("/api/print/start", json={}).status_code == 409
+    assert client.post("/api/print/start", json=START).status_code == 409
     client.put("/api/print-settings", json={"printing": {"n_layers": 200, "layer_thickness_mm": 2}})
     connect_arm(client)
-    r = client.post("/api/print/start", json={})
+    r = client.post("/api/print/start", json=START)
     assert r.status_code == 409 and "thickness" in r.json()["detail"]
 
 
 def test_run_to_done_with_auto_log_and_layers(client: TestClient) -> None:
     client.put("/api/print-settings", json=FAST)
     connect_arm(client)
-    r = client.post("/api/print/start", json={})
+    r = client.post("/api/print/start", json=START)
     assert r.status_code == 200 and r.json()["state"] == "running"
     assert client.get("/api/status").json()["recording"]["active"] is True  # auto-log opened
     done = wait_print(client, "done")
@@ -204,7 +208,7 @@ def test_pause_resume_abort(client: TestClient) -> None:
         "/api/print-settings", json={**FAST, "printing": {**FAST["printing"], "n_layers": 3}}
     )
     connect_arm(client)
-    assert client.post("/api/print/start", json={}).status_code == 200
+    assert client.post("/api/print/start", json=START).status_code == 200
     assert client.post("/api/print/pause").status_code == 200
     wait_print(client, "paused")
     assert client.post("/api/print/resume").status_code == 200
@@ -218,7 +222,7 @@ def test_single_step(client: TestClient) -> None:
     # Dry run removed (#3); single-step (debug) remains: start paused, advance one step at a time.
     client.put("/api/print-settings", json=FAST)
     connect_arm(client)
-    r = client.post("/api/print/start", json={"single_step": True})
+    r = client.post("/api/print/start", json={**START, "single_step": True})
     assert r.status_code == 200 and r.json()["single_step"] is True
     wait_print(client, "paused")
     assert client.post("/api/print/step").status_code == 200
@@ -232,7 +236,7 @@ def test_single_step_route_toggles_during_run(client: TestClient) -> None:
         "/api/print-settings", json={**FAST, "printing": {**FAST["printing"], "n_layers": 2}}
     )
     connect_arm(client)
-    assert client.post("/api/print/start", json={}).status_code == 200
+    assert client.post("/api/print/start", json=START).status_code == 200
     wait_print(client, "running")
     r = client.post("/api/print/single-step", json={"on": True})
     assert r.status_code == 200 and r.json()["single_step"] is True
@@ -247,7 +251,7 @@ def test_steps_route_lists_compiled_steps(client: TestClient) -> None:
     assert client.get("/api/print/steps").json()["steps"] == []
     client.put("/api/print-settings", json=FAST)
     connect_arm(client)
-    assert client.post("/api/print/start", json={}).status_code == 200
+    assert client.post("/api/print/start", json=START).status_code == 200
     r = client.get("/api/print/steps")
     assert r.status_code == 200
     steps = r.json()["steps"]
@@ -262,7 +266,7 @@ def test_seek_route_paused_only(client: TestClient) -> None:
         "/api/print-settings", json={**FAST, "printing": {**FAST["printing"], "n_layers": 2}}
     )
     connect_arm(client)
-    assert client.post("/api/print/start", json={}).status_code == 200
+    assert client.post("/api/print/start", json=START).status_code == 200
     wait_print(client, "running")
     assert client.post("/api/print/seek", json={"index": 3}).status_code == 409  # not paused
     client.post("/api/print/pause")
@@ -276,7 +280,7 @@ def test_auto_log_toggle(client: TestClient) -> None:
     assert client.put("/api/auto-log", json={"enabled": False}).json()["enabled"] is False
     client.put("/api/print-settings", json=FAST)
     connect_arm(client)
-    client.post("/api/print/start", json={})
+    client.post("/api/print/start", json=START)
     assert client.get("/api/status").json()["recording"]["active"] is False
 
 
@@ -285,7 +289,7 @@ def test_estop_aborts_print_settings(client: TestClient) -> None:
         "/api/print-settings", json={**FAST, "printing": {**FAST["printing"], "n_layers": 5}}
     )
     connect_arm(client)
-    client.post("/api/print/start", json={})
+    client.post("/api/print/start", json=START)
     client.post("/api/estop")
     s = wait_print(client, "aborted", timeout=5)
     assert "fault" in s["reason"]

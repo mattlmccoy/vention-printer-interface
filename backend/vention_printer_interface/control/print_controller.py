@@ -57,11 +57,17 @@ class PrintController:
         self.on_event: EventHook | None = None
         self._reset(None)
 
-    def _reset(self, plan: PrintSettings | None, steps: tuple[Step, ...] | None = None) -> None:
+    def _reset(
+        self,
+        plan: PrintSettings | None,
+        steps: tuple[Step, ...] | None = None,
+        feed_start_mm: float | None = None,
+    ) -> None:
         self.plan = plan
         self.macro: str | None = None
         self.steps: tuple[Step, ...] = (
-            steps if steps is not None else (compile_print(plan) if plan else ())
+            steps if steps is not None
+            else (compile_print(plan, feed_start_mm=feed_start_mm) if plan else ())
         )
         self.part_zero_mm: float | None = None
         self.state = PrintState.IDLE
@@ -83,7 +89,12 @@ class PrintController:
         self._height = 0.0
 
     # ---- operator actions -------------------------------------------------------------------
-    def start(self, plan: PrintSettings, single_step: bool = False) -> None:
+    def start(
+        self, plan: PrintSettings, single_step: bool = False, feed_start_mm: float | None = None
+    ) -> None:
+        """Start ``plan``. ``feed_start_mm`` is the powder actually in the feed column (the
+        referenced feed depth); the feed-exhaustion guard counts down from it so the print stops
+        safely when the powder runs out. None keeps the old full-column assumption."""
         with self._lock:
             if self.state in (PrintState.RUNNING, PrintState.PAUSED):
                 raise RuntimeError("a print is already running")
@@ -91,7 +102,7 @@ class PrintController:
             if reasons:
                 raise RuntimeError("print settings invalid: " + "; ".join(reasons))
             self._c._require_armed()
-            self._reset(plan)
+            self._reset(plan, feed_start_mm=feed_start_mm)
             self.single_step = single_step
             self.part_zero_mm = self._part_position()
             self.state = PrintState.RUNNING
