@@ -1756,13 +1756,16 @@ def test_validate_returns_400_when_board_not_detected(tmp_path: Path) -> None:
         assert r.status_code == 400
 
 
-def test_ignored_cameras_round_trip(client: TestClient) -> None:
-    assert client.get("/api/vision/ignored-cameras").json() == {"unique_ids": []}
+def test_ignored_cameras_round_trip(
+    client: TestClient, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr("vention_printer_interface.api.app.list_avf_cameras", lambda: [])
+    assert client.get("/api/vision/ignored-cameras").json()["unique_ids"] == []
     r = client.put("/api/vision/ignored-cameras",
                    json={"unique_ids": ["0xAAA", "0xBBB", "0xAAA", ""]},
                    headers={"X-VPI-Client": "1"})
     assert r.status_code == 200
-    assert r.json() == {"unique_ids": ["0xAAA", "0xBBB"]}  # de-duped, empties dropped
+    assert r.json()["unique_ids"] == ["0xAAA", "0xBBB"]  # de-duped, empties dropped
     assert client.get("/api/vision/ignored-cameras").json()["unique_ids"] == ["0xAAA", "0xBBB"]
     # avf-cameras surfaces the same ignored list so the UI can hide/reveal
     assert client.get("/api/vision/avf-cameras").json()["ignored_uids"] == ["0xAAA", "0xBBB"]
@@ -1771,4 +1774,95 @@ def test_ignored_cameras_round_trip(client: TestClient) -> None:
 def test_ignored_cameras_rejects_non_list(client: TestClient) -> None:
     r = client.put("/api/vision/ignored-cameras", json={"unique_ids": "0xAAA"},
                    headers={"X-VPI-Client": "1"})
+    assert r.status_code == 400
+
+
+# ---- ignored cameras apply everywhere (Settings -> Camera inventory) -------------------------
+#
+# FaceTime/iPhone ids + names captured from this Mac's real system_profiler output (2026-09-23).
+
+_H = {"X-VPI-Client": "1"}
+_FACETIME_UID = "3F45E80A-0176-46F7-B185-BB9E2C0E82E3"
+_ELP_A_UID = "0x1411000012345678"
+_ELP_B_UID = "0x1421000087654321"
+
+
+def _avf(monkeypatch: pytest.MonkeyPatch, cams: list[tuple[str, str]]) -> None:
+    from vention_printer_interface.vision.avfoundation import AvfCamera
+
+    listed = [AvfCamera(i, name, uid) for i, (name, uid) in enumerate(cams)]
+    monkeypatch.setattr("vention_printer_interface.api.app.list_avf_cameras", lambda: listed)
+
+
+def _elp_devices() -> list[dict[str, Any]]:
+    return [
+        {"index": 0, "stable_id": f"macos-uid:{_ELP_A_UID}", "name": "ELP 4K USB Camera",
+         "vid_pid": "13028:8224", "assignable": True, "has_frame": None, "probed": False},
+        {"index": 1, "stable_id": f"macos-uid:{_ELP_B_UID}", "name": "ELP 4K USB Camera",
+         "vid_pid": "13028:8224", "assignable": True, "has_frame": None, "probed": False},
+    ]
+
+
+def test_ignoring_records_the_name_and_exposes_it(
+    client: TestClient, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _avf(monkeypatch, [("FaceTime HD Camera", _FACETIME_UID), ("ELP 4K USB Camera", _ELP_A_UID)])
+    r = client.put("/api/vision/ignored-cameras", json={"unique_ids": [_FACETIME_UID]}, headers=_H)
+    assert r.status_code == 200
+    assert r.json() == {"unique_ids": [_FACETIME_UID], "names": ["FaceTime HD Camera"]}
+    assert client.get("/api/vision/ignored-cameras").json()["names"] == ["FaceTime HD Camera"]
+    assert client.get("/api/vision/avf-cameras").json()["ignored_names"] == ["FaceTime HD Camera"]
+
+
+def test_legacy_ids_only_file_is_backfilled_with_names(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    ignore_file = tmp_path / ".vision_ignored_cameras.json"
+    ignore_file.write_text(json.dumps({"unique_ids": [_FACETIME_UID]}))
+    _avf(monkeypatch, [("FaceTime HD Camera", _FACETIME_UID)])
+    app = create_app(backend="none", experiments_root=tmp_path, poll_interval_s=0.05)
+    with TestClient(app) as c:
+        assert c.get("/api/vision/ignored-cameras").json()["names"] == ["FaceTime HD Camera"]
+    stored = json.loads((tmp_path / ".vision_ignored_cameras.json").read_text())
+    assert stored["cameras"][_FACETIME_UID]["name"] == "FaceTime HD Camera"
+
+
+def test_ignoring_one_of_two_identical_elps_exposes_no_name(
+    client: TestClient, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _avf(monkeypatch, [("ELP 4K USB Camera", _ELP_A_UID), ("ELP 4K USB Camera", _ELP_B_UID)])
+    r = client.put("/api/vision/ignored-cameras", json={"unique_ids": [_ELP_B_UID]}, headers=_H)
+    assert r.json()["names"] == []  # would otherwise hide BOTH ELPs in the browser
+
+
+def test_devices_and_role_resolution_skip_an_ignored_camera(tmp_path: Path) -> None:
+    from vention_printer_interface.vision.cameras import save_role_map
+
+    save_role_map(tmp_path / ".vision_roles.json",
+                  {f"macos-uid:{_ELP_A_UID}": "overview", f"macos-uid:{_ELP_B_UID}": "science"})
+    (tmp_path / ".vision_ignored_cameras.json").write_text(json.dumps({"unique_ids": [_ELP_B_UID]}))
+    app = _vision_app(tmp_path, device_enumerator=_elp_devices)
+    with TestClient(app) as c:
+        ids = [d["stable_id"] for d in c.get("/api/vision/devices").json()["devices"]]
+        assert ids == [f"macos-uid:{_ELP_A_UID}"]
+        assert app.state.vision_unresolved_roles == ["science"]  # its only device is ignored
+
+
+def test_science_uid_rejects_an_ignored_camera(
+    client: TestClient, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _avf(monkeypatch, [])
+    client.put("/api/vision/ignored-cameras", json={"unique_ids": [_FACETIME_UID]}, headers=_H)
+    r = client.put("/api/vision/science-uid", json={"unique_id": _FACETIME_UID}, headers=_H)
+    assert r.status_code == 400
+    assert client.get("/api/vision/science-uid").json() == {"unique_id": None}
+
+
+def test_cannot_ignore_the_bound_science_camera(
+    client: TestClient, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _avf(monkeypatch, [])
+    assert client.put("/api/vision/science-uid", json={"unique_id": _ELP_A_UID},
+                      headers=_H).status_code == 200
+    r = client.put("/api/vision/ignored-cameras", json={"unique_ids": [_ELP_A_UID]}, headers=_H)
     assert r.status_code == 400

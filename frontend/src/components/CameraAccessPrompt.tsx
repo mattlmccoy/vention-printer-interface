@@ -39,7 +39,8 @@ export function CameraAccessPrompt({
   const why = hidden
     ? "The browser is hiding the cameras until this site is allowed to use them."
     : anyCam
-      ? "No external camera found — only phone/built-in cameras are visible."
+      ? "No usable camera found — only phone/built-in or ignored cameras are visible "
+        + "(Settings → Camera inventory)."
       : "The browser can't see any cameras. Check the USB connection; on Windows also check "
         + "Settings → Privacy & security → Camera → “Let desktop apps access your camera”.";
 
