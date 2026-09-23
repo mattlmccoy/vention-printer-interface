@@ -38,6 +38,7 @@ export function App() {
   const [err, setErr] = useState<string | null>(null);
   const [dismissedWarn, setDismissedWarn] = useState<string | null>(null); // hidden until warnings change
   const [version, setVersion] = useState<string | null>(null);
+  const [opBuild, setOpBuild] = useState<string | null>(null); // operator's git commit (health.build)
   const [handshake, setHandshake] = useState<string | null>(null);
   const [busy, setBusy] = useState<string | null>(null);
   const [wsFails, setWsFails] = useState(0);
@@ -109,7 +110,7 @@ export function App() {
     const open = () => {
       if (!alive) return;
       ws = new WebSocket(wsUrl(base, "/ws/telemetry"));
-      ws.onopen = () => { setReachable(true); setWsFails(0); api.health().then((h) => { setVersion(h.version); const hs = checkHandshake(UI_API_VERSION, h.api_version); setHandshake(hs.level === "ok" ? null : hs.message); }).catch(() => undefined); };
+      ws.onopen = () => { setReachable(true); setWsFails(0); api.health().then((h) => { setVersion(h.version); setOpBuild(h.build ?? null); const hs = checkHandshake(UI_API_VERSION, h.api_version); setHandshake(hs.level === "ok" ? null : hs.message); }).catch(() => undefined); };
       ws.onmessage = (ev) => {
         if (typeof ev.data !== "string") return;
         const s = JSON.parse(ev.data) as StatusPayload;
@@ -310,7 +311,7 @@ export function App() {
         )}
         <StatusBar state={c?.state ?? "disconnected"} backend={c?.backend ?? "none"} pollHz={pollHz} reachable={reachable}
           estop={c?.telemetry?.estop_triggered ?? null} drivesReady={c?.telemetry?.drives_ready ?? null} heaterOn={c?.heater.on ?? null} heaterOnS={c?.heater.on_s ?? 0} heaterMaxS={c?.heater.max_on_s ?? 0}
-          recActive={status?.recording.active ?? false} recRun={status?.recording.run ?? null} printState={r?.state ?? "idle"} version={version} />
+          recActive={status?.recording.active ?? false} recRun={status?.recording.run ?? null} printState={r?.state ?? "idle"} version={version} build={opBuild} />
         {/* Headless: captures the assigned science camera on the operator's per-layer signal. */}
         <ScienceCaptureClient status={status} onError={setErr} />
         <OverviewTimelapseClient status={status} />

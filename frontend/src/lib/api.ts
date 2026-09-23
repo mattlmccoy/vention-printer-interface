@@ -66,7 +66,7 @@ export interface PathsInfo {
   experiments_root: string; experiments_root_source: string; experiments_root_is_fallback: boolean;
   config_path: string;
 }
-export interface Health { version: string; api_version: string; backend: string; platform: string; paths?: PathsInfo | null }
+export interface Health { version: string; build?: string | null; api_version: string; backend: string; platform: string; paths?: PathsInfo | null }
 // Data offload — verified copy of runs to a picked external drive. See backend offload.py.
 export interface Drive { name: string; path: string; total_bytes: number; free_bytes: number }
 export interface OffloadPlanRow { run: string; at_dest: boolean }
