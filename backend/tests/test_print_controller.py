@@ -323,11 +323,18 @@ def test_macro_runs_on_the_step_machine_and_reports_name() -> None:
         c.arm()
         c.home_all()
         assert wait(lambda: (c.snapshot()["telemetry"] or {}).get("positions", {}).get("2") == 0)
-        c.set_limits(SafetyLimits.bounded(travel_max={"1": 10, "2": 12}))  # short: fast test
+        # Shorten travel ON TOP of make()'s limits. Rebuilding from defaults (bounded(travel_max=..)
+        # alone) dropped make()'s 20 mm/s pistons back to 5 mm/s, so the final wait used ~2.4 s of
+        # the 3 s step timeout; one >0.6 s scheduling stall under full-suite load then FAULTed it.
+        short = {**c.limits.to_dict(), "travel_max": {"1": 10, "2": 12}}
+        c.set_limits(SafetyLimits.bounded(**short))
+        assert c.limits.max_speed[1] == 20 and c.limits.max_speed[2] == 20  # make()'s fast pistons
         rc.start_macro("load_cart", macro_steps("load_cart", c.limits))
         s = rc.snapshot()
         assert s["state"] == "running" and s["macro"] == "load_cart" and s["plan"] is None
-        assert wait(lambda: rc.snapshot()["state"] == "done", timeout=60)
+        assert wait(lambda: rc.snapshot()["state"] != "running", timeout=60)
+        s = rc.snapshot()
+        assert s["state"] == "done", s["reason"]
         tel = c.snapshot()["telemetry"]
         assert tel["positions"]["1"] == 10.0 and tel["positions"]["2"] == 12.0
         assert tel["positions"]["3"] == 0.0 and tel["positions"]["4"] == 0.0
