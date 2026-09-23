@@ -7,18 +7,40 @@
 // real label/deviceId, so selecting the ELP here is reliable. This module is the pure selection +
 // persistence logic; the getUserMedia/<video> wiring lives in the component.
 
+import { isIgnoredInput, loadIgnoreSet, type IgnoreSet } from "./camera_ignore.ts";
+
 const OVERVIEW_CAM_KEY = "vpi.overviewCameraId";
+const NO_IGNORE: IgnoreSet = { deviceIds: [], names: [] };
+
+function defaultStorage(): Storage | null {
+  try {
+    return typeof localStorage === "undefined" ? null : localStorage;
+  } catch {
+    return null;
+  }
+}
 
 export interface VideoInput {
   deviceId: string;
   label: string;
 }
 
-/** The video inputs from `enumerateDevices()`, as our minimal shape. */
-export function videoInputs(devices: { kind: string; deviceId: string; label: string }[]): VideoInput[] {
+/** EVERY video input from `enumerateDevices()`, ignored ones included — only for the Settings
+ *  camera inventory, which must show hidden cameras so they can be un-ignored. */
+export function allVideoInputs(devices: { kind: string; deviceId: string; label: string }[]): VideoInput[] {
   return devices
     .filter((d) => d.kind === "videoinput")
     .map((d) => ({ deviceId: d.deviceId, label: d.label }));
+}
+
+/** The video inputs a picker may show: `enumerateDevices()` minus every camera on the ignore list
+ *  (Settings → Camera inventory). Defaults to the ignore set saved in this browser, so every caller
+ *  filters without having to remember to. */
+export function videoInputs(
+  devices: { kind: string; deviceId: string; label: string }[],
+  ignore: IgnoreSet = loadIgnoreSet(defaultStorage()),
+): VideoInput[] {
+  return allVideoInputs(devices).filter((d) => !isIgnoredInput(d, ignore));
 }
 
 /** True for a built-in / phone / virtual camera we must never auto-pick for the overview (the
@@ -30,12 +52,16 @@ export function isBuiltinOrPhoneLabel(label: string): boolean {
     l.includes("iphone") ||
     l.includes("continuity") ||
     l.includes("desk view") ||
-    l.includes("ipad")
+    l.includes("ipad") ||
+    l.includes("macbook") || // Apple-silicon built-in: "MacBook Pro Camera"
+    l.includes("built-in") ||
+    l.includes("integrated") // Windows laptops: "Integrated Camera"
   );
 }
 
 /** Choose the overview camera's deviceId, or null when the operator must pick one:
- *  1. the saved deviceId, if that camera is still plugged in;
+ *  1. the saved deviceId, if that camera is still plugged in and is neither built-in/phone nor
+ *     ignored (a stale save from before it was ignored must not win);
  *  2. else a camera whose label matches `nameHint` (the assigned overview device's name) and is
  *     not a built-in/phone camera;
  *  3. else the ONLY non-built-in/phone camera, if exactly one exists;
@@ -44,9 +70,13 @@ export function pickOverviewDeviceId(
   inputs: VideoInput[],
   savedId: string | null,
   nameHint: string | null,
+  ignore: IgnoreSet = NO_IGNORE,
 ): string | null {
-  if (savedId && inputs.some((d) => d.deviceId === savedId)) return savedId;
-  const real = inputs.filter((d) => d.label && !isBuiltinOrPhoneLabel(d.label));
+  const usable = inputs.filter(
+    (d) => !isIgnoredInput(d, ignore) && !(d.label && isBuiltinOrPhoneLabel(d.label)),
+  );
+  if (savedId && usable.some((d) => d.deviceId === savedId)) return savedId;
+  const real = usable.filter((d) => d.label);
   if (nameHint) {
     const hint = nameHint.toLowerCase();
     const byName = real.find((d) => d.label.toLowerCase().includes(hint));
