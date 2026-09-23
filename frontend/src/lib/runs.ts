@@ -35,3 +35,10 @@ export function runLocationLabel(locations: string[] | undefined): string | null
   if (locs.includes("local")) return `local + ${drives.join(" + ")}`;
   return `on ${drives.join(" + ")}`;
 }
+
+/** True when a run lives on a drive but NOT locally — the only case a "restore to local" applies
+ *  (pull it back off the drive). Local-only or already-in-both runs are not restorable. */
+export function runIsRestorable(locations: string[] | undefined): boolean {
+  const locs = locations ?? [];
+  return locs.some((l) => l !== "local") && !locs.includes("local");
+}

@@ -49,6 +49,7 @@ test("every route: method + path + body locked", async () => {
     [() => api.recordingStart({ name: "a", notes: "" }), "POST", "/api/recording/start", { name: "a", notes: "" }],
     [() => api.recordingStop(), "POST", "/api/recording/stop", undefined],
     [() => api.recordings(), "GET", "/api/recordings", undefined],
+    [() => api.recordingRestore("20260101_000000_a"), "POST", "/api/recordings/20260101_000000_a/restore", undefined],
     [() => api.jobs(), "GET", "/api/jobs", undefined],
     [() => api.selectJob("/x/y"), "POST", "/api/jobs/select", { path: "/x/y" }],
     [() => api.clearJob(), "POST", "/api/jobs/clear", undefined],

@@ -276,6 +276,8 @@ export const api = {
   analysisRun: (run: string, body: AnalysisRequest = {}) => req<DimensionalReport>("POST", `/api/analysis/${encodeURIComponent(run)}/dimensional`, body),
   recordingSetMeta: (run: string, body: { name?: string; notes?: string }) => req<{ name: string; notes: string }>("PUT", `/api/recordings/${encodeURIComponent(run)}/meta`, body),
   recordingDelete: (run: string) => req<{ run: string; deleted: boolean }>("DELETE", `/api/recordings/${encodeURIComponent(run)}`),
+  // Move an offloaded run from its drive back to the local experiments root (copy, verify, delete drive copy).
+  recordingRestore: (run: string) => req<{ run: string; restored: boolean; files: number }>("POST", `/api/recordings/${encodeURIComponent(run)}/restore`),
   // Reveal a run's metadata on disk in the OS file browser (operator is local). Returns the path.
   recordingReveal: (run: string) => req<{ run: string; path: string; revealed: boolean; note: string }>("POST", `/api/recordings/${encodeURIComponent(run)}/reveal`),
   jobs: () => req<{ jobs: Array<Omit<StatusPayload["job"] & object, "current_layer">>; roots: string[] }>("GET", "/api/jobs"),

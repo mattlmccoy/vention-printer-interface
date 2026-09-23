@@ -13,7 +13,7 @@ import {
   type Metric,
 } from "../../lib/motion.ts";
 import { EventLog } from "../EventLog.tsx";
-import { runStatusChip, runLocationLabel } from "../../lib/runs.ts";
+import { runStatusChip, runLocationLabel, runIsRestorable } from "../../lib/runs.ts";
 import type { Call } from "./types.ts";
 
 const STAGE_LABEL: Record<string, string> = { pre_jet: "pre-jet", post_jet: "post-jet", post_heat: "post-heat" };
@@ -358,6 +358,8 @@ export function RunsView({ status, gates, call, base }: { status: StatusPayload 
       call("delete run", () => api.recordingDelete(sel).then(() => { setSel(""); setViewIdx(-1); return refresh(); }));
     }
   };
+  const restoreRun = () =>
+    call("restore to local", () => api.recordingRestore(sel).then(() => refresh()));
 
   return (
     <div className="view fixed-page runs-view">
@@ -384,6 +386,7 @@ export function RunsView({ status, gates, call, base }: { status: StatusPayload 
                   <span className="btnrow" style={{ display: "inline-flex" }}>
                     <a className="cta primary sm" href={`${base}/api/recordings/${encodeURIComponent(selRun.run)}/archive.zip`} target="_blank" rel="noreferrer" style={{ textDecoration: "none", display: "inline-flex", alignItems: "center" }}>⬇ Download run (.zip)</a>
                     <button className="cta sm" disabled={!gates.reachable} onClick={revealRun} title="Show this run's metadata.json in Finder (operator runs locally)">⧉ Reveal on disk</button>
+                    {runIsRestorable(selRun.locations) && <button className="cta sm" disabled={!gates.reachable} onClick={restoreRun} title="Copy this run from the drive back to the operator's local disk, then remove the drive copy">⬇ Restore to local</button>}
                     <button className="cta danger sm" disabled={!gates.reachable} onClick={delRun}>Delete run</button>
                   </span>
                 </h3>

@@ -102,3 +102,39 @@ def test_move_deletes_local_source_after_verified_copy(env: tuple[TestClient, Pa
     assert (drive / "vpi-runs" / "20260101_000000_a" / "telemetry.csv").exists()
     assert not (exp / "20260101_000000_a").exists()
     assert not (exp / "20260102_000000_b").exists()
+
+
+def test_restore_moves_a_drive_run_back_to_local(
+    env: tuple[TestClient, Path], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    client, tmp = env
+    exp = tmp / "experiments"
+    drive = tmp / "SSD"
+    dr = drive / "vpi-runs" / "20260909_000000_z"  # a run that lives ONLY on the drive
+    dr.mkdir(parents=True)
+    (dr / "telemetry.csv").write_text("t\n9\n")
+    monkeypatch.setenv("VPI_FAKE_DRIVES", str(drive))
+    # it appears in the browser tagged to the drive...
+    z = next(r for r in client.get("/api/recordings").json()["runs"] if r["run"].endswith("_z"))
+    assert z["locations"] == ["SSD"]
+    # ...and restore pulls it back to local and removes the drive copy
+    r = client.post("/api/recordings/20260909_000000_z/restore")
+    assert r.status_code == 200 and r.json()["restored"] is True
+    assert (exp / "20260909_000000_z" / "telemetry.csv").read_text() == "t\n9\n"
+    assert not dr.exists()  # moved, not copied
+
+
+def test_restore_guards_local_only_and_missing_and_bad(
+    env: tuple[TestClient, Path], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    client, tmp = env
+    drive = tmp / "SSD"
+    (drive / "vpi-runs").mkdir(parents=True)
+    monkeypatch.setenv("VPI_FAKE_DRIVES", str(drive))
+    # a local-only run is not on a drive -> 404
+    assert client.post("/api/recordings/20260101_000000_a/restore").status_code == 404
+    # a run that exists nowhere -> 404
+    assert client.post("/api/recordings/20261212_000000_none/restore").status_code == 404
+    # a run present on BOTH local and drive can't overwrite local -> 409
+    (drive / "vpi-runs" / "20260101_000000_a").mkdir()
+    assert client.post("/api/recordings/20260101_000000_a/restore").status_code == 409
