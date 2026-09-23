@@ -377,6 +377,9 @@ button.small { height: 34px; padding: 0 12px; border: 1px solid var(--line-contr
 .fields.adv { max-width: 720px; grid-template-columns: auto minmax(0, 1fr) auto minmax(0, 1fr); }
 .fields.adv .grp { grid-column: 1 / -1; margin-top: 8px; font: 11px var(--font-mono); letter-spacing: .08em; text-transform: uppercase; color: var(--muted); border-bottom: 1px solid var(--line); padding-bottom: 4px; }
 .fields.adv .grp:first-child { margin-top: 0; }
+/* Full-width plain-language help / inline error under a field (Calibrate page). */
+.fields .field-help { grid-column: 1 / -1; margin-top: -6px; color: var(--muted); font-size: 12.5px; line-height: 1.4; }
+.fields .field-err { grid-column: 1 / -1; margin-top: -6px; color: var(--err); font-size: 13px; }
 .est { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
 .est div .l { font: 12px var(--font-mono); letter-spacing: .09em; text-transform: uppercase; color: var(--label); }
 .est div .v { font: 700 30px var(--font-mono); color: var(--fg-strong); margin-top: 6px; }

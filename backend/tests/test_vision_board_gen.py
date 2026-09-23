@@ -374,3 +374,131 @@ def test_dxf_and_svg_include_label_when_requested() -> None:
     doc = ezdxf.read(io.StringIO(dxf.decode("utf-8")))
     texts = doc.modelspace().query("TEXT")
     assert len(texts) >= 1
+
+
+# ---- dictionary sizing + spec validation (fix/charuco-board-calibrate) ----------------------
+# Capacities below are the REAL cv2 values (``getPredefinedDictionary(..).bytesList.shape[0]``,
+# probed on OpenCV 5.0.0): 4X4_50=50, 4X4_100=100, 4X4_250=250, 4X4_1000=1000, 5X5_100=100.
+def _charuco_spec(sx: int, sy: int, dict_name: str = "DICT_4X4_50", sq: float = 10.0,
+                  mk: float = 7.0) -> BoardSpec:
+    return BoardSpec(kind="charuco", squares_x=sx, squares_y=sy, square_length_mm=sq,
+                     marker_length_mm=mk, aruco_dict=dict_name)
+
+
+def test_markers_needed_is_half_the_squares_rounded_down() -> None:
+    from vention_printer_interface.vision.board_gen import markers_needed
+
+    assert markers_needed(9, 12) == 54
+    assert markers_needed(4, 4) == 8
+    assert markers_needed(5, 7) == 17
+    # Cross-check against the real cv2 board's own marker count.
+    assert markers_needed(5, 7) == len(_charuco(_charuco_spec(5, 7)).getIds())
+
+
+def test_dict_capacity_reads_the_real_cv2_dictionary_size() -> None:
+    from vention_printer_interface.vision.board_gen import BoardSpecError, dict_capacity
+
+    assert dict_capacity("DICT_4X4_50") == 50
+    assert dict_capacity("DICT_4X4_1000") == 1000
+    assert dict_capacity("DICT_5X5_100") == 100
+    with pytest.raises(BoardSpecError):
+        dict_capacity("CharucoBoard")  # a real cv2.aruco attribute, but not a dictionary
+
+
+@pytest.mark.parametrize(
+    ("sx", "sy", "expected"),
+    [(4, 4, "DICT_4X4_50"), (10, 10, "DICT_4X4_50"), (11, 10, "DICT_4X4_100"),
+     (9, 12, "DICT_4X4_100"), (20, 20, "DICT_4X4_250"), (40, 40, "DICT_4X4_1000")],
+)
+def test_pick_aruco_dict_is_the_smallest_adequate_4x4(sx: int, sy: int, expected: str) -> None:
+    from vention_printer_interface.vision.board_gen import pick_aruco_dict
+
+    assert pick_aruco_dict(sx, sy) == expected
+
+
+def test_shipped_presets_keep_their_dictionary_under_auto_pick() -> None:
+    from vention_printer_interface.vision.board_gen import pick_aruco_dict
+
+    for spec in BOARD_PRESETS.values():
+        assert pick_aruco_dict(spec.squares_x, spec.squares_y) == spec.aruco_dict
+
+
+@pytest.mark.parametrize(
+    ("spec", "fragment"),
+    [
+        (_charuco_spec(1, 12), "at least 2"),
+        (_charuco_spec(12, 1), "at least 2"),
+        (_charuco_spec(41, 5), "40"),
+        (_charuco_spec(9, 12, "DICT_4X4_50"), "54"),
+        (_charuco_spec(5, 5, "DICT_NOPE"), "unknown"),
+        (_charuco_spec(5, 5, sq=10.0, mk=10.0), "marker"),
+        (_charuco_spec(5, 5, sq=0.0, mk=0.0), "marker"),
+    ],
+)
+def test_validate_charuco_spec_rejects_bad_boards(spec: BoardSpec, fragment: str) -> None:
+    from vention_printer_interface.vision.board_gen import BoardSpecError, validate_charuco_spec
+
+    with pytest.raises(BoardSpecError, match=fragment):
+        validate_charuco_spec(spec)
+
+
+def test_validate_charuco_spec_accepts_good_boards() -> None:
+    from vention_printer_interface.vision.board_gen import validate_charuco_spec
+
+    validate_charuco_spec(_charuco_spec(9, 12, "DICT_4X4_100"))
+    validate_charuco_spec(_charuco_spec(7, 5, "DICT_5X5_100"))
+    validate_charuco_spec(_charuco_spec(2, 2))
+
+
+def test_generation_refuses_a_one_wide_board_before_touching_cv2(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A 1-wide CharucoBoard raises SystemError in cv2 and can leave the process unstable
+    (observed: a later cv2 call dies with SIGTRAP). Generation must never construct one."""
+    import cv2.aruco as aruco
+
+    from vention_printer_interface.vision.board_gen import BoardSpecError
+
+    def _boom(*_a: Any, **_k: Any) -> Any:
+        raise AssertionError("CharucoBoard must not be constructed for an invalid spec")
+
+    monkeypatch.setattr(aruco, "CharucoBoard", _boom)
+    with pytest.raises(BoardSpecError):
+        generate_charuco_svg(_charuco_spec(1, 12))
+    with pytest.raises(BoardSpecError):
+        generate_charuco_dxf(_charuco_spec(12, 1))
+
+
+def test_board_generation_runs_one_at_a_time(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Concurrent requests queue behind one generation slot instead of piling up memory."""
+    import threading
+    import time
+
+    from vention_printer_interface.vision import board_gen
+
+    active = 0
+    peak = 0
+    guard = threading.Lock()
+    real = board_gen._filled_cells
+
+    def _slow_cells(spec: BoardSpec, *, engrave_black: bool) -> Any:
+        nonlocal active, peak
+        with guard:
+            active += 1
+            peak = max(peak, active)
+        time.sleep(0.05)
+        try:
+            return real(spec, engrave_black=engrave_black)
+        finally:
+            with guard:
+                active -= 1
+
+    monkeypatch.setattr(board_gen, "_filled_cells", _slow_cells)
+    spec = _charuco_spec(4, 4)
+    threads = [threading.Thread(target=generate_charuco_svg, args=(spec,)) for _ in range(3)]
+    threads += [threading.Thread(target=generate_charuco_dxf, args=(spec,)) for _ in range(2)]
+    for t in threads:
+        t.start()
+    for t in threads:
+        t.join()
+    assert peak == 1
