@@ -63,3 +63,17 @@ def resolve_run_across(
         if d.is_dir():
             return d, library
     return None
+
+
+def restore_source(roots: list[tuple[str, Path]], run: str) -> Path | None:
+    """The drive directory holding ``run`` (first non-local library), for a restore-to-local move,
+    or ``None`` when the run is local-only or absent (nothing to restore). Raises ``ValueError`` for
+    a traversing / malformed run name."""
+    name = _safe_run_name(run)
+    for library, root in roots:
+        if library == LOCAL:
+            continue
+        d = (Path(root) / name).resolve()
+        if d.parent == Path(root).resolve() and d.is_dir():
+            return d
+    return None

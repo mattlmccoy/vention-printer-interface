@@ -92,9 +92,11 @@ from vention_printer_interface.jobs.store import (
     preview_png,
 )
 from vention_printer_interface.offload import (
+    Drive,
     OffloadJob,
     drive_dict,
     list_drives,
+    move_run,
     offload_plan,
 )
 from vention_printer_interface.paths_config import (
@@ -111,6 +113,7 @@ from vention_printer_interface.protocol import routes as r
 from vention_printer_interface.recording.libraries import (
     merge_runs,
     resolve_run_across,
+    restore_source,
     run_roots,
 )
 from vention_printer_interface.recording.recorder import Recorder, list_runs_in
@@ -1911,9 +1914,15 @@ def create_app(
 
     def _scan_drives() -> list[Any]:
         """Mounted offload drives to include when enumerating/resolving runs. Disabled by
-        ``VPI_DISABLE_DRIVE_SCAN`` so tests stay hermetic (never see the dev's real drives)."""
+        ``VPI_DISABLE_DRIVE_SCAN`` so tests stay hermetic (never see the dev's real drives); a test
+        can still inject explicit fake drive roots via ``VPI_FAKE_DRIVES`` (os.pathsep-joined)."""
         if os.environ.get("VPI_DISABLE_DRIVE_SCAN"):
-            return []
+            fake = os.environ.get("VPI_FAKE_DRIVES", "")
+            return [
+                Drive(name=Path(p).name, path=p, total_bytes=0, free_bytes=0)
+                for p in fake.split(os.pathsep)
+                if p
+            ]
         return list_drives()
 
     def _run_dir_opt(run: str) -> Path | None:
@@ -2017,6 +2026,26 @@ def create_app(
             raise HTTPException(409, "cannot delete the run that is currently recording")
         shutil.rmtree(run_dir)
         return {"run": run, "deleted": True}
+
+    @app.post("/api/recordings/{run}/restore")
+    def recording_restore(run: str) -> dict[str, Any]:
+        """Move an offloaded run from its drive back to the local experiments root (copy -> verify
+        -> delete the drive copy), the reverse of a Move offload. 400 bad name, 404 when the run
+        isn't on any mounted drive, 409 when it's already present locally (a restore can't overwrite)."""
+        try:
+            src = restore_source(run_roots(root, _scan_drives()), run)
+        except ValueError as exc:
+            raise HTTPException(400, "bad run") from exc
+        if src is None:
+            raise HTTPException(404, "run is not on a mounted drive")
+        dest = root / run
+        if dest.exists():
+            raise HTTPException(409, "run is already present locally")
+        res = move_run(src, dest)
+        if not res.verified:
+            raise HTTPException(500, "; ".join(res.errors) or "restore failed verification")
+        ev("recording_restore", {"run": run, "files": res.files_copied})
+        return {"run": run, "restored": True, "files": res.files_copied}
 
     @app.put("/api/recordings/{run}/meta")
     def recording_meta(run: str, body: RecordingMetaBody) -> dict[str, str]:

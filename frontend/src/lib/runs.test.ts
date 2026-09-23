@@ -1,11 +1,19 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { runStatusChip, runLocationLabel } from "./runs.ts";
+import { runStatusChip, runLocationLabel, runIsRestorable } from "./runs.ts";
 
 test("runLocationLabel: local-only or unknown gets no badge", () => {
   assert.equal(runLocationLabel(undefined), null);
   assert.equal(runLocationLabel([]), null);
   assert.equal(runLocationLabel(["local"]), null);
+});
+
+test("runIsRestorable: only a drive-only run can be restored to local", () => {
+  assert.equal(runIsRestorable(["FLIR SSD"]), true);          // drive-only -> restorable
+  assert.equal(runIsRestorable(["local"]), false);            // already local
+  assert.equal(runIsRestorable(["local", "FLIR SSD"]), false); // already local (in both)
+  assert.equal(runIsRestorable([]), false);
+  assert.equal(runIsRestorable(undefined), false);
 });
 
 test("runLocationLabel: drive-resident and both-locations get a badge", () => {

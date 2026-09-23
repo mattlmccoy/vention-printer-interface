@@ -9,6 +9,7 @@ from vention_printer_interface.offload import DEST_SUBDIR, Drive
 from vention_printer_interface.recording.libraries import (
     merge_runs,
     resolve_run_across,
+    restore_source,
     run_roots,
 )
 
@@ -59,3 +60,21 @@ def test_resolve_run_across_rejects_traversal(tmp_path: Path) -> None:
     for bad in ("../evil", "a/b", "", ".", ".."):
         with pytest.raises(ValueError):
             resolve_run_across(roots, bad)
+
+
+def test_restore_source_returns_the_drive_dir_holding_the_run(tmp_path: Path) -> None:
+    local = tmp_path / "exp"
+    drive = tmp_path / "SSD" / DEST_SUBDIR
+    (drive / "R1").mkdir(parents=True)   # on the drive only -> restorable
+    (local / "R2").mkdir(parents=True)   # local only -> not restorable
+    roots = [("local", local), ("SSD", drive)]
+    assert restore_source(roots, "R1") == drive / "R1"  # the drive copy to pull back
+    assert restore_source(roots, "R2") is None          # already local, nothing to restore
+    assert restore_source(roots, "R3") is None           # absent everywhere
+
+
+def test_restore_source_rejects_traversal(tmp_path: Path) -> None:
+    roots = [("local", tmp_path / "exp"), ("SSD", tmp_path / "SSD" / DEST_SUBDIR)]
+    for bad in ("../evil", "a/b", "", "."):
+        with pytest.raises(ValueError):
+            restore_source(roots, bad)
