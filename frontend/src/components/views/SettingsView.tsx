@@ -11,6 +11,7 @@ import { CalibrationBoardPanel } from "../CalibrationBoardPanel.tsx";
 import { CameraRoleAssigner } from "../CameraRoleAssigner.tsx";
 import { CameraSettingsPanel } from "../CameraSettingsPanel.tsx";
 import { CalibrationWizard } from "../CalibrationWizard.tsx";
+import { parseFinalizeInputs } from "../../lib/calib_finalize.ts";
 import { ValidationPanel } from "../ValidationPanel.tsx";
 import { PlotExportButtons } from "../PlotExportButtons.tsx";
 import { pistonMaxPatch, type PistonField } from "../../lib/pistons.ts";
@@ -242,14 +243,12 @@ function CalibrationForm({ call, disabled }: { call: Call; disabled: boolean }) 
     try {
       const image_points = parsePoints(imagePts);
       const world_points_mm = parsePoints(worldPts);
-      const extent = bedExtent.split(",").map(Number);
       if (image_points.some(([x, y]) => !Number.isFinite(x) || !Number.isFinite(y))) throw new Error("bad image point");
       if (world_points_mm.some(([x, y]) => !Number.isFinite(x) || !Number.isFinite(y))) throw new Error("bad world point");
       if (image_points.length !== world_points_mm.length || image_points.length < 4) throw new Error("need >= 4 matched image/world points");
-      if (extent.length !== 4 || extent.some((v) => !Number.isFinite(v))) throw new Error("bed extent needs 4 numbers: x0,y0,x1,y1");
-      const mm = Number(mmPerPx);
-      if (!Number.isFinite(mm) || mm <= 0) throw new Error("mm/px must be a positive number");
-      body = { image_points, world_points_mm, mm_per_px: mm, bed_extent_mm: extent as [number, number, number, number] };
+      const raster = parseFinalizeInputs(mmPerPx, bedExtent); // same bed-image bounds as the backend
+      if (!raster.ok) throw new Error(raster.error);
+      body = { image_points, world_points_mm, mm_per_px: raster.mmPerPx, bed_extent_mm: raster.extent };
     } catch (e) {
       setParseErr(e instanceof Error ? e.message : String(e));
       return;
@@ -268,7 +267,7 @@ function CalibrationForm({ call, disabled }: { call: Call; disabled: boolean }) 
         <span>mm / px</span>
         <input type="number" step="0.01" value={mmPerPx} onChange={(e) => setMmPerPx(e.target.value)} />
         <span>bed extent (mm)</span>
-        <input type="text" placeholder="x0,y0,x1,y1" value={bedExtent} onChange={(e) => setBedExtent(e.target.value)} />
+        <input type="text" placeholder="left,top,right,bottom" value={bedExtent} onChange={(e) => setBedExtent(e.target.value)} />
       </div>
       {parseErr && <div className="errline">{parseErr}</div>}
       <div className="actions one tight">

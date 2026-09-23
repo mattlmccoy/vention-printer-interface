@@ -73,6 +73,49 @@ def reprojection_error(
     return float(np.sqrt((d**2).sum(axis=1).mean()))
 
 
+# Largest bed raster (width x height, px) a calibration may produce. The raster is built on
+# EVERY science capture, so an unbounded one (0.01 mm/px on a 200 mm bed = 20000x20000 px,
+# ~1.2 GB per frame) exhausts memory.
+MAX_BED_IMAGE_PX = 25_000_000
+
+
+def bed_raster_size(
+    mm_per_px: float, bed_extent_mm: tuple[float, float, float, float]
+) -> tuple[int, int]:
+    """``(width, height)`` in px of the bed raster ``warp_to_bed`` builds for these inputs."""
+    x0, y0, x1, y1 = bed_extent_mm
+    return int(round((x1 - x0) / mm_per_px)), int(round((y1 - y0) / mm_per_px))
+
+
+def bed_raster_error(
+    mm_per_px: float, bed_extent_mm: tuple[float, float, float, float]
+) -> str | None:
+    """User-facing reason these raster inputs are unusable, or ``None`` when they are fine.
+
+    Rejects a non-positive / non-finite scale, a reversed or empty extent (``x1 <= x0`` or
+    ``y1 <= y0``), and a raster larger than :data:`MAX_BED_IMAGE_PX`.
+    """
+    import math
+
+    if not (math.isfinite(mm_per_px) and mm_per_px > 0):
+        return f"mm_per_px must be a positive number (got {mm_per_px:g})"
+    x0, y0, x1, y1 = bed_extent_mm
+    if not x1 > x0:
+        return f"bed extent must have x1 > x0 (got x0={x0:g}, x1={x1:g})"
+    if not y1 > y0:
+        return f"bed extent must have y1 > y0 (got y0={y0:g}, y1={y1:g})"
+    out_w, out_h = bed_raster_size(mm_per_px, bed_extent_mm)
+    if out_w * out_h > MAX_BED_IMAGE_PX:
+        w_mm, h_mm = x1 - x0, y1 - y0
+        min_scale = math.ceil(math.sqrt(w_mm * h_mm / MAX_BED_IMAGE_PX) * 1000 - 1e-6) / 1000
+        return (
+            f"mm_per_px {mm_per_px:g} on a {w_mm:g}x{h_mm:g} mm bed makes a "
+            f"{out_w}x{out_h} px image ({out_w * out_h / 1e6:.1f} MP); the limit is "
+            f"{MAX_BED_IMAGE_PX / 1e6:g} MP, so use mm_per_px >= {min_scale:g}"
+        )
+    return None
+
+
 def warp_to_bed(
     image: np.ndarray,
     h_matrix: np.ndarray,
@@ -83,12 +126,16 @@ def warp_to_bed(
 
     `h_matrix` maps image pixels to bed-plane millimeters; `bed_extent_mm` is
     `(x0, y0, x1, y1)` in mm, and the output raster covers exactly that extent.
+    Raises ``ValueError`` (see :func:`bed_raster_error`) rather than allocating an
+    unusable or oversized raster.
     """
     import cv2
 
+    problem = bed_raster_error(mm_per_px, bed_extent_mm)
+    if problem is not None:
+        raise ValueError(f"cannot build the bed image: {problem}")
     x0, y0, x1, y1 = bed_extent_mm
-    out_w = int(round((x1 - x0) / mm_per_px))
-    out_h = int(round((y1 - y0) / mm_per_px))
+    out_w, out_h = bed_raster_size(mm_per_px, bed_extent_mm)
     # mm -> output-pixel: translate by (x0, y0), scale by 1/mm_per_px
     scale = np.array(
         [

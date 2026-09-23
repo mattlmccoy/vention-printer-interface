@@ -120,9 +120,12 @@ from vention_printer_interface.recording.recorder import Recorder, list_runs_in
 from vention_printer_interface.timing_config import TimingConfig, load_timing, save_timing
 from vention_printer_interface.vision.avfoundation import list_avf_cameras
 from vention_printer_interface.vision.board_gen import (
+    BoardSpecError,
     generate_charuco_dxf,
     generate_charuco_svg,
     resolve_preset,
+    validate_charuco_spec,
+    with_auto_dict,
 )
 from vention_printer_interface.vision.cameras import (
     CameraConfig,
@@ -156,6 +159,7 @@ from vention_printer_interface.vision.registration import (
     BoardSpec,
     Calibration,
     apply_homography,
+    bed_raster_error,
     calibrate_intrinsics,
     calibrate_intrinsics_boards,
     calibration_validation_warning,
@@ -178,6 +182,9 @@ log = logging.getLogger(__name__)
 API_VERSION = "0.1"
 LOCAL_ORIGIN_RE = r"^https?://(localhost|127\.0\.0\.1)(:\d+)?$"
 CLIENT_HEADER = "x-vpi-client"
+# GET /api/vision/board reports the ArUco dictionary it drew the board with (auto-picked unless
+# the caller named one), so the UI can show it and hand it to the calibrate session.
+BOARD_DICT_HEADER = "X-Board-Dict"
 SAFE_METHODS = frozenset({"GET", "HEAD", "OPTIONS"})
 RUN_FILES = frozenset(
     {
@@ -289,6 +296,7 @@ def install_cross_origin_policy(app: FastAPI, *, site_origin: str | None) -> Non
         allow_origin_regex=LOCAL_ORIGIN_RE,
         allow_methods=["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
         allow_headers=["content-type", CLIENT_HEADER],
+        expose_headers=[BOARD_DICT_HEADER],
         allow_private_network=True,
         max_age=600,
     )
@@ -469,7 +477,8 @@ class BoardSpecBody(BaseModel):
     squares_y: int = 0
     square_length_mm: float = 0.0
     marker_length_mm: float = 0.0
-    aruco_dict: str = "DICT_4X4_50"
+    # None = auto-pick the smallest adequate 4x4 dictionary (same rule as GET /api/vision/board).
+    aruco_dict: str | None = None
     cols: int = 0
     rows: int = 0
     square_size_mm: float = 0.0
@@ -538,18 +547,22 @@ def _grid_scale_bias(
 
 
 def _board_spec(body: BoardSpecBody) -> BoardSpec:
-    """Convert a request ``BoardSpecBody`` into a domain ``BoardSpec``."""
-    return BoardSpec(
+    """Convert a request ``BoardSpecBody`` into a domain ``BoardSpec``. A ChArUco body with no
+    ``aruco_dict`` gets the auto-picked dictionary (the board endpoint's rule)."""
+    spec = BoardSpec(
         kind=body.kind,
         squares_x=body.squares_x,
         squares_y=body.squares_y,
         square_length_mm=body.square_length_mm,
         marker_length_mm=body.marker_length_mm,
-        aruco_dict=body.aruco_dict,
+        aruco_dict=body.aruco_dict or "DICT_4X4_50",
         cols=body.cols,
         rows=body.rows,
         square_size_mm=body.square_size_mm,
     )
+    if spec.kind == "charuco" and body.aruco_dict is None:
+        spec = with_auto_dict(spec)
+    return spec
 
 
 def _tcp_open(ip: str, port: int, timeout_s: float = 0.5) -> bool:
@@ -2503,7 +2516,7 @@ def create_app(
         squares_y: int | None = None,
         square_mm: float | None = None,
         marker_mm: float | None = None,
-        dict_name: str = Query("DICT_4X4_50", alias="dict"),
+        dict_name: str | None = Query(None, alias="dict"),
         engrave_black: bool = True,
         label: bool = True,
         cut_outline: bool = True,
@@ -2511,22 +2524,18 @@ def create_app(
         """Generate a TRUE-VECTOR ChArUco calibration board (SVG or DXF) for laser engraving.
 
         Either a named ``preset`` (with optional explicit field overrides) or an explicit
-        ``squares_x``/``squares_y``/``square_mm``/``marker_mm`` set must be supplied. Returns
-        the file with the right content-type + an attachment download name; 400 on bad params.
+        ``squares_x``/``squares_y``/``square_mm``/``marker_mm`` set must be supplied. With no
+        ``dict``, the smallest 4x4 ArUco dictionary with enough markers for the grid is used; an
+        explicit ``dict`` that is too small is a 400. The dictionary used is returned in the
+        ``X-Board-Dict`` header. Returns the file with the right content-type + an attachment
+        download name; 400 on bad params (never 500).
         """
         if kind != "charuco":
             raise HTTPException(400, "only kind=charuco is supported")
         if fmt not in ("svg", "dxf"):
             raise HTTPException(400, "format must be 'svg' or 'dxf'")
 
-        # I-1: validate BEFORE touching cv2/board_gen -- an unbounded squares_x/squares_y or a
-        # bogus dict name must never reach board generation (CPU-burn / crash risk).
         import cv2
-        import cv2.aruco as aruco
-
-        dict_allowlist = {name for name in dir(aruco) if name.startswith("DICT_")}
-        if dict_name not in dict_allowlist:
-            raise HTTPException(400, f"unknown aruco dictionary: {dict_name!r}")
 
         try:
             if preset is not None:
@@ -2539,8 +2548,6 @@ def create_app(
                     overrides["square_length_mm"] = square_mm
                 if marker_mm is not None:
                     overrides["marker_length_mm"] = marker_mm
-                if dict_name != "DICT_4X4_50":
-                    overrides["aruco_dict"] = dict_name
                 spec = resolve_preset(preset, **overrides)
                 filename_base = preset
             else:
@@ -2555,51 +2562,54 @@ def create_app(
                     squares_y=squares_y,
                     square_length_mm=square_mm,
                     marker_length_mm=marker_mm,
-                    aruco_dict=dict_name,
                 )
                 filename_base = f"charuco_{squares_x}x{squares_y}"
         except KeyError as exc:
             raise HTTPException(400, f"unknown preset: {preset!r}") from exc
 
-        # Range/consistency validation on the FINAL resolved spec (covers both the explicit
-        # path and a preset with overrides) -- still before any cv2 board-generation compute.
-        if not (1 <= spec.squares_x <= 40):
-            raise HTTPException(400, "squares_x must be between 1 and 40")
-        if not (1 <= spec.squares_y <= 40):
-            raise HTTPException(400, "squares_y must be between 1 and 40")
-        if not (0 < spec.marker_length_mm < spec.square_length_mm):
-            raise HTTPException(400, "marker_mm must be > 0 and less than square_mm")
+        # I-1: validate the FINAL resolved spec BEFORE any cv2 board construction -- a 1-wide
+        # grid, an unbounded grid, or a bogus/too-small dictionary must never reach cv2.
+        try:
+            if dict_name is None:
+                spec = with_auto_dict(spec)
+            else:
+                spec = dataclasses.replace(spec, aruco_dict=dict_name)
+            validate_charuco_spec(spec)
+        except BoardSpecError as exc:
+            raise HTTPException(400, f"invalid board spec: {exc}") from exc
 
         polarity = "black" if engrave_black else "white"
         try:
             if fmt == "svg":
-                svg = generate_charuco_svg(
+                content: str | bytes = generate_charuco_svg(
                     spec, engrave_black=engrave_black, label=label, cut_outline=cut_outline
                 )
-                return Response(
-                    content=svg,
-                    media_type="image/svg+xml",
-                    headers={
-                        "Content-Disposition": (
-                            f'attachment; filename="{filename_base}_{polarity}.svg"'
-                        )
-                    },
+                media_type = "image/svg+xml"
+            else:
+                content = generate_charuco_dxf(
+                    spec, engrave_black=engrave_black, label=label, cut_outline=cut_outline
                 )
-            dxf = generate_charuco_dxf(
-                spec, engrave_black=engrave_black, label=label, cut_outline=cut_outline
-            )
-        except (ValueError, AttributeError, TypeError, cv2.error) as exc:
+                media_type = "application/dxf"
+        # SystemError: cv2 signals some bad board inputs this way (last-resort; validation above
+        # is what keeps them away from cv2, since the process can be unstable afterwards).
+        except (ValueError, AttributeError, TypeError, SystemError, cv2.error) as exc:
             raise HTTPException(400, f"invalid board spec: {exc}") from exc
         return Response(
-            content=dxf,
-            media_type="application/dxf",
+            content=content,
+            media_type=media_type,
             headers={
-                "Content-Disposition": f'attachment; filename="{filename_base}_{polarity}.dxf"'
+                "Content-Disposition": (
+                    f'attachment; filename="{filename_base}_{polarity}.{fmt}"'
+                ),
+                BOARD_DICT_HEADER: spec.aruco_dict,
             },
         )
 
     @app.post("/api/vision/calibrate")
     def vision_calibrate(body: VisionCalibrateBody) -> dict[str, Any]:
+        raster_problem = bed_raster_error(body.mm_per_px, body.bed_extent_mm)
+        if raster_problem is not None:
+            raise HTTPException(400, raster_problem)
         # Bed correspondence points (raw image px <-> world mm on the bed plane).
         bed_image_pts = np.asarray(body.image_points, dtype=float)
         bed_world_pts = np.asarray(body.world_points_mm, dtype=float)
@@ -2678,8 +2688,17 @@ def create_app(
 
     @app.post("/api/vision/calibrate/session")
     def vision_calibrate_session_start(body: CalibSessionBody) -> dict[str, Any]:
-        """Start/reset a guided calibration-capture session. Clears accumulated views."""
+        """Start/reset a guided calibration-capture session. Clears accumulated views.
+
+        A ChArUco board is validated first (grid >= 2 squares per side, marker < square, a
+        dictionary big enough for the markers): cv2 can take the process down on a 1-wide board.
+        """
         spec = _board_spec(body.spec) if body.spec is not None else _DEFAULT_CALIB_SPEC
+        if spec.kind == "charuco":
+            try:
+                validate_charuco_spec(spec)
+            except BoardSpecError as exc:
+                raise HTTPException(400, f"invalid board: {exc}") from exc
         app.state.calib_session_spec = spec
         app.state.calib_session_views = []
         app.state.calib_session_image_size = None
@@ -2760,6 +2779,9 @@ def create_app(
         spec: BoardSpec | None = app.state.calib_session_spec
         if spec is None:
             raise HTTPException(400, "no active calibration session; start one first")
+        raster_problem = bed_raster_error(body.mm_per_px, body.bed_extent_mm)
+        if raster_problem is not None:
+            raise HTTPException(400, raster_problem)
         views: list[BoardDetection] = app.state.calib_session_views
         if not views:
             raise HTTPException(400, "no calibration views captured; capture a board first")
