@@ -46,6 +46,7 @@ from vention_printer_interface.analysis.dimensional import (
     load_report,
 )
 from vention_printer_interface.analysis.lane_b import analyze_lane_b_from_pngs
+from vention_printer_interface.build_info import operator_build
 from vention_printer_interface.control.backlash_cal import (
     BacklashResult,
     default_positions,
@@ -1168,6 +1169,9 @@ def create_app(
     def health() -> dict[str, Any]:
         return {
             "version": __version__,
+            # The operator's git commit: shown in the status bar so an update is visible even
+            # when the hand-bumped version is unchanged. None when not running from a checkout.
+            "build": operator_build(),
             "api_version": API_VERSION,
             "backend": app.state.backend,
             "platform": platform.platform(),

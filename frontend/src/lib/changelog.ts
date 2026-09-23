@@ -11,6 +11,20 @@ export interface Release {
 
 export const CHANGELOG: Release[] = [
   {
+    version: "0.11.0",
+    date: "2026-09-23",
+    changes: [
+      "Data offload: copy or MOVE runs to an external drive with hash verification (read-only disk images are hidden). Runs stay visible and viewable in Runs whether they live on this computer or a drive, can be restored back to local, and Reveal on disk works for drive runs.",
+      "Storage: science stills are no longer saved twice when the camera is uncalibrated (~36% smaller runs; existing runs can be cleaned with the dedup tool), and overview timelapse frames are lighter.",
+      "Printing: opt-in absolute layer seat stops build-height error from accumulating; the timeline follows the running step with a clear 'now' readout; shorter default dwells and tunable print pacing.",
+      "Pistons: in-app backlash calibration with live plots, a re-measure check, a stable recommendation and saved history; per-cylinder max travel and a guard against builds beyond usable travel.",
+      "Cameras & calibration: coverage-gated science-camera calibration with independent scale validation, calibration through the browser camera, an automatic camera-center sweep for the capture pose, and ignoring unwanted cameras.",
+      "Windows: a 'Grant camera access' button, the real reason when a camera can't open, and camera names on Windows.",
+      "Interface: alerts float over the page instead of pushing it down, archived jobs get their own section, a 5 mm jog step, numbers without floating-point noise, and the status bar shows the operator's exact commit so updates are visible.",
+      "Analysis: exportable publication-style plots for backlash, layer accuracy, validation and sweeps.",
+    ],
+  },
+  {
     version: "0.10.4",
     date: "2026-09-20",
     changes: [
