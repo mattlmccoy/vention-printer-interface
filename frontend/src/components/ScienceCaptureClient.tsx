@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import { api } from "../lib/api.ts";
 import {
-  cameraSourceHasContent,
+  cameraSourceStats,
   SCIENCE_CAPTURE_STREAM_CONSTRAINTS,
   SETUP_PREVIEW_CONSTRAINTS,
   waitForCameraFrame,
@@ -9,6 +9,7 @@ import {
 import type { StatusPayload } from "../lib/telemetry.ts";
 import { loadRoleMap } from "../lib/camera_roles.ts";
 import { loadCameraSettings } from "../lib/overview_settings.ts";
+import { blankReason, captureFailureMessage } from "../lib/capture_diagnostics.ts";
 
 const storage = typeof localStorage === "undefined" ? null : localStorage;
 
@@ -20,26 +21,35 @@ const storage = typeof localStorage === "undefined" ? null : localStorage;
  *  JPEG-compressed ON THE CAMERA (uncompressed 20 MP won't fit USB bandwidth), and no browser API
  *  can bypass that. So this is "as lossless as the stream allows", not truly lossless at 20 MP. For
  *  PIXEL-exact stills, pick a lower-resolution UNCOMPRESSED (YUY2) mode if the camera offers one.
- *  Every path rejects blank and near-uniform frames before they can be recorded as captures. */
+ *  Every path rejects blank and near-uniform frames before they can be recorded as captures, and
+ *  every failed path records WHY in `attempts` (it used to fail silently). */
 export async function grabScienceStill(
   stream: MediaStream | null,
   video: HTMLVideoElement | null,
   requested: { width: number; height: number },
-): Promise<Blob | null> {
-  const toPng = (source: CanvasImageSource, w: number, h: number): Promise<Blob | null> => {
+): Promise<{ blob: Blob | null; attempts: string[] }> {
+  const attempts: string[] = [];
+  const why = (e: unknown) => (e instanceof Error ? `${e.name}: ${e.message}` : String(e));
+  const toPng = (source: CanvasImageSource, w: number, h: number, path: string): Promise<Blob | null> => {
     const canvas = document.createElement("canvas");
     canvas.width = w; canvas.height = h;
     const ctx = canvas.getContext("2d");
-    if (!ctx) return Promise.resolve(null);
+    if (!ctx) { attempts.push(`${path}: no 2D canvas`); return Promise.resolve(null); }
     ctx.drawImage(source, 0, 0, w, h);
-    if (!cameraSourceHasContent(canvas, w, h)) return Promise.resolve(null);
-    return new Promise((resolve) => canvas.toBlob((b) => resolve(b), "image/png")); // lossless
+    const stats = cameraSourceStats(canvas, w, h);
+    if (!stats?.ok) { attempts.push(`${path}: ${stats ? blankReason(stats) : "could not be read"} at ${w}x${h}`); return Promise.resolve(null); }
+    return new Promise((resolve) => canvas.toBlob((b) => {
+      if (!b) attempts.push(`${path}: PNG encode failed`);
+      resolve(b);
+    }, "image/png")); // lossless
   };
   const track = stream?.getVideoTracks?.()[0] ?? null;
   const IC = (window as unknown as { ImageCapture?: new (t: MediaStreamTrack) => {
     takePhoto?: (settings?: { imageWidth?: number; imageHeight?: number }) => Promise<Blob>;
     grabFrame: () => Promise<ImageBitmap>;
   } }).ImageCapture;
+  if (!track) attempts.push(`camera: no live track (${stream ? "stream has no video" : "no stream"})`);
+  else if (track.readyState !== "live") attempts.push(`camera: track ${track.readyState}`);
   if (track && IC) {
     const capture = new IC(track);
     if (capture.takePhoto) {
@@ -49,20 +59,25 @@ export async function grabScienceStill(
           imageHeight: requested.height,
         });
         const bitmap = await createImageBitmap(photo);
-        const usable = cameraSourceHasContent(bitmap, bitmap.width, bitmap.height);
+        const stats = cameraSourceStats(bitmap, bitmap.width, bitmap.height);
+        const size = `${bitmap.width}x${bitmap.height}`;
         bitmap.close();
-        if (usable) return photo;
-      } catch { /* fall through to the live stream frame */ }
-    }
+        if (stats?.ok) return { blob: photo, attempts };
+        attempts.push(`photo: ${stats ? blankReason(stats) : "could not be read"} at ${size}`);
+      } catch (e) { attempts.push(`photo ${requested.width}x${requested.height}: ${why(e)}`); }
+    } else attempts.push("photo: takePhoto unsupported");
     try {
       const bmp = await capture.grabFrame();
-      const blob = await toPng(bmp, bmp.width, bmp.height);
+      const blob = await toPng(bmp, bmp.width, bmp.height, "frame");
       bmp.close();
-      if (blob) return blob;
-    } catch { /* fall through to drawing the video element */ }
+      if (blob) return { blob, attempts };
+    } catch (e) { attempts.push(`frame: ${why(e)}`); }
+  } else if (track) attempts.push("photo/frame: ImageCapture unavailable");
+  if (!video || video.videoWidth === 0) {
+    attempts.push(`video: no picture (${video ? `${video.videoWidth}x${video.videoHeight}` : "no element"})`);
+    return { blob: null, attempts };
   }
-  if (!video || video.videoWidth === 0) return null;
-  return await toPng(video, video.videoWidth, video.videoHeight);
+  return { blob: await toPng(video, video.videoWidth, video.videoHeight, "video"), attempts };
 }
 
 /** Headless client-side SCIENCE capture (the wrong-camera fix). During a recorded print it holds the
@@ -175,17 +190,20 @@ export function ScienceCaptureClient({ status, onError }: {
     let cancelled = false;
     (async () => {
       const desired = loadCameraSettings(storage, "science").resolution.split("x").map(Number);
-      const blob = await grabScienceStill(streamRef.current, videoRef.current, {
+      const { blob, attempts } = await grabScienceStill(streamRef.current, videoRef.current, {
         width: Number.isFinite(desired[0]) ? desired[0] : 1920,
         height: Number.isFinite(desired[1]) ? desired[1] : 1080,
       });
       if (cancelled) return;
+      const msg = (e: unknown) => (e instanceof Error ? e.message : String(e));
       if (!blob) {
         stop();
         try {
           await api.scienceClientFallback(cr.seq);
+          // The operator took this one; keep the browser's reason visible for diagnosis.
+          console.warn(`science capture layer ${cadLayer ?? layer}: browser grab failed (${attempts.join("; ")}); operator fallback took it`);
         } catch (error) {
-          onError(`Science capture failed for layer ${cadLayer ?? layer}: ${error instanceof Error ? error.message : String(error)}`);
+          onError(captureFailureMessage({ layer: cadLayer ?? layer, attempts, upload: null, fallback: msg(error) }));
         }
         return;
       }
@@ -195,8 +213,8 @@ export function ScienceCaptureClient({ status, onError }: {
         stop();
         try {
           await api.scienceClientFallback(cr.seq);
-        } catch {
-          onError(`Science capture failed for layer ${cadLayer ?? layer}: ${error instanceof Error ? error.message : String(error)}`);
+        } catch (fallbackError) {
+          onError(captureFailureMessage({ layer: cadLayer ?? layer, attempts, upload: msg(error), fallback: msg(fallbackError) }));
         }
       }
     })();

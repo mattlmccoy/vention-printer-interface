@@ -31,6 +31,7 @@ export async function captureScienceStillOnce(storage: Storage | null): Promise<
   video.playsInline = true;
 
   // Same fallback ladder as the print-capture client: full still constraints, then a lighter preview.
+  const reasons: string[] = [];
   for (const constraints of [SCIENCE_CAPTURE_STREAM_CONSTRAINTS, SETUP_PREVIEW_CONSTRAINTS]) {
     let stream: MediaStream | null = null;
     const controller = new AbortController();
@@ -40,16 +41,17 @@ export async function captureScienceStillOnce(storage: Storage | null): Promise<
       });
       video.srcObject = stream;
       await waitForCameraFrame(video, controller.signal);
-      const blob = await grabScienceStill(stream, video, requested);
+      const { blob, attempts } = await grabScienceStill(stream, video, requested);
       if (blob) return blob;
-    } catch {
-      /* try the next (lighter) constraint set */
+      reasons.push(...attempts);
+    } catch (e) {
+      reasons.push(`open: ${e instanceof Error ? `${e.name}: ${e.message}` : String(e)}`); // try the next (lighter) set
     } finally {
       stream?.getTracks().forEach((t) => t.stop());
       video.srcObject = null;
     }
   }
   throw new Error(
-    "Could not grab a science frame — check the camera is connected and not open elsewhere.",
+    `Could not grab a science frame — check the camera is connected and not open elsewhere. (${reasons.join("; ") || "no reason recorded"})`,
   );
 }
