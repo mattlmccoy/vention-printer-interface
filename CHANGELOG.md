@@ -3,6 +3,19 @@
 Notable changes to the Vention Printer Interface. Versions follow semantic versioning; each entry
 corresponds to a tagged merge to `main`.
 
+## v0.12.0 — 2026-09-23
+
+### Added
+- **Camera controls on the Mac.** macOS browsers expose none of a USB camera's controls, so the operator now reads and sets them directly (exposure, gain, brightness, contrast, saturation, hue, sharpness, gamma, white balance, backlight, power-line frequency, focus, zoom), with each control's real range and factory default.
+- **Reset camera settings to default.** One button per camera clears the saved capture settings and sliders, returns the browser controls to auto, and (on the Mac) restores the camera's factory settings, reporting anything it couldn't reset.
+- **Configure → Prime → Start.** A primed bed now belongs to the plan it was primed for and is used up by a print. The Print tab shows the three steps; START is blocked until the bed is primed and becomes "START ANYWAY…" when it was primed for a different plan or already used.
+
+### Changed
+- **Priming page redesign.** Every step is a numbered row of the moves it runs with the targets editable inline; a powder bar (needed vs in the feed) and one status line stay pinned at the top, Back/Next at the bottom.
+
+### Fixed
+- Running a priming move right after typing a new target could use the previously saved target; Run now always moves to the value shown.
+
 ## v0.11.1 — 2026-09-23
 
 ### Added
