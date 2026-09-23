@@ -3,6 +3,15 @@
 Notable changes to the Vention Printer Interface. Versions follow semantic versioning; each entry
 corresponds to a tagged merge to `main`.
 
+## v0.13.0 — 2026-09-23
+
+### Added
+- **Lightweight camera mode** (Settings → Camera settings; on by default on Windows). For cameras that share a slow USB path — the lab PC runs both ELPs through a hub behind a USB-Ethernet adapter, where two streams at 1080p+ truncate frames. Live views run at 1280×720 @ 15 fps (measured clean for both cameras together), and every science still — during prints and Camera Studio snapshots — is taken at full resolution, lossless, with that camera alone: other live views pause for a moment and resume. Off (the Mac): full-quality streaming as before.
+- **Camera views reconnect by themselves** when a stream drops (e.g. a cable pulled at a gantry end), with a visible message, instead of staying black until a reload.
+
+### Changed
+- **The print waits for each science still.** At a capture pose the print now holds until the operator has stored that still (or 10 s, then continues and logs `capture_missed`), instead of a fixed hold only. Prints with no camera capturing are never held; the existing capture hold still applies as the minimum settle.
+
 ## v0.12.1 — 2026-09-23
 
 ### Fixed
