@@ -1,8 +1,9 @@
-import { useEffect, useState, type ReactNode } from "react";
+import { useEffect, useRef, useState, type ReactNode } from "react";
 import { api } from "../../lib/api.ts";
 import { fmtMm, fmtSecs, heightMismatch, type Gates } from "../../lib/format.ts";
 import type { StatusPayload } from "../../lib/telemetry.ts";
 import { compilePrint, describeStep, type PrintSettings } from "../../lib/print_settings.ts";
+import { phrase, currentTimelineIndex, currentStage, PHASE_LABEL, TIMELINE_NOISE } from "../../lib/timeline.ts";
 import { estimateDurationS } from "../../lib/estimate.ts";
 import { CrossSection } from "../CrossSection.tsx";
 import { RoutinePanel } from "../RoutinePanel.tsx";
@@ -14,27 +15,6 @@ import type { Call } from "./types.ts";
 const CMP_STAGES = ["pre_jet", "post_jet", "post_heat"] as const;
 const CMP_STAGE_LABEL: Record<string, string> = { pre_jet: "pre-jet", post_jet: "post-jet", post_heat: "post-heat" };
 
-const PHASE_LABEL: Record<string, string> = { thin_precoat: "precoat", printing: "printing", postcoat: "postcoat", setup: "setup", finish: "finishing" };
-const TIMELINE_NOISE = new Set(["set_speed", "set_accel", "wait"]);
-
-export function phrase(step: ReturnType<typeof compilePrint>[number] | null, plan: PrintSettings | null): string {
-  if (!step || !plan) return "";
-  const v = step.value ?? 0;
-  switch (step.kind) {
-    case "home": return step.axis ? `homing ${({ 1: "build", 2: "feed", 3: "printhead", 4: "recoater" } as Record<number, string>)[step.axis]}` : "homing";
-    case "move_rel": return step.axis === 1 ? `build piston down ${v} mm` : `feed piston up ${Math.abs(v)} mm`;
-    case "move_abs":
-      if (step.axis === 4) return v === plan.recoater_end_mm ? "spreading powder" : v === plan.heater_end_mm ? "heater pass" : "recoater returning";
-      if (step.axis === 3) return v === plan.printhead_end_mm ? "printhead pass" : "printhead returning";
-      if (step.axis === 2) return `feed piston to ${v} mm`;
-      return `build piston to ${v} mm`;
-    case "dwell": return "settling";
-    case "heater": return v ? "heater on" : "heater off";
-    case "wait": return "waiting for motion";
-    default: return describeStep(step);
-  }
-}
-
 export function PrintView({ status, gates, call, base, onJob, onRuns }: { status: StatusPayload | null; gates: Gates; call: Call; base: string; onJob: () => void; onRuns: () => void }) {
   const c = status?.controller;
   const r = status?.print;
@@ -45,6 +25,10 @@ export function PrintView({ status, gates, call, base, onJob, onRuns }: { status
   const active = !!r && (r.state === "running" || r.state === "paused");
   const paused = r?.state === "paused";
   const isMacro = !!r?.macro;
+
+  // The active timeline row auto-scrolls into view as the print advances (running only — while paused
+  // the operator is scrolling the list themselves to pick a jump target, so we don't yank it).
+  const activeRowRef = useRef<HTMLButtonElement | null>(null);
 
   // science-cam stills for the running recording, polled so the CAD-vs-actual compare fills in live.
   const recRun = status?.recording.run ?? null;
@@ -109,8 +93,15 @@ export function PrintView({ status, gates, call, base, onJob, onRuns }: { status
   // ---- timeline rows (meaningful actions), grouped by phase/layer; jump-to-step while paused.
   const timelineRows = steps.filter((s) => !TIMELINE_NOISE.has(s.kind));
   const activeStepIdx = r?.current_step?.index ?? -1;
-  let curRowIndex = -1;
-  for (const s of timelineRows) { if (s.index <= activeStepIdx) curRowIndex = s.index; else break; }
+  const curRowIndex = currentTimelineIndex(timelineRows, activeStepIdx);
+  const curStage = active ? currentStage(timelineRows, activeStepIdx, plan) : null;
+  useEffect(() => {
+    if (paused || curRowIndex < 0) return; // don't fight the operator's manual scroll while paused
+    const el = activeRowRef.current;
+    if (!el) return;
+    const smooth = !window.matchMedia?.("(prefers-reduced-motion: reduce)").matches;
+    el.scrollIntoView({ block: "nearest", behavior: smooth ? "smooth" : "auto" });
+  }, [curRowIndex, paused]);
   const timelineNodes: ReactNode[] = [];
   let lastGroup = "";
   for (const s of timelineRows) {
@@ -118,7 +109,7 @@ export function PrintView({ status, gates, call, base, onJob, onRuns }: { status
     if (group !== lastGroup) { lastGroup = group; timelineNodes.push(<div key={`h${s.index}`} className="tl-head">{group}</div>); }
     const isCur = s.index === curRowIndex;
     timelineNodes.push(
-      <button key={s.index} className={`tl-row${isCur ? " on" : ""}`} disabled={!paused}
+      <button key={s.index} ref={isCur ? activeRowRef : undefined} className={`tl-row${isCur ? " on" : ""}`} disabled={!paused}
         onClick={() => { if (paused && window.confirm(`Jump to step ${s.index}? The routine continues from there — you are responsible for the machine state.`)) call("seek", () => api.printSeek(s.index)); }}>
         <span className="n">{s.index}</span><span className="l">{phrase(s, plan) || describeStep(s)}</span>
       </button>
@@ -155,6 +146,13 @@ export function PrintView({ status, gates, call, base, onJob, onRuns }: { status
     <div className="card timeline-card">
       <h3>timeline<span className="hint" style={{ textTransform: "none", letterSpacing: 0, fontWeight: 400 }}>{paused ? "click a step to jump" : "pause to jump"}</span></h3>
       <div className="timeline">{timelineNodes}</div>
+      {curStage && (
+        <div className={`tl-now${paused ? " paused" : ""}`}>
+          <span className="tl-now-lbl">{paused ? "paused at" : "now"}</span>
+          <span className="tl-now-action">{curStage.action}</span>
+          <span className="tl-now-group">{curStage.group} · step {curStage.stepIndex}</span>
+        </div>
+      )}
     </div>
   ) : null;
 
