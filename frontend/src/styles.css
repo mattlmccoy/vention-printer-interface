@@ -187,6 +187,14 @@ button.small { height: 34px; padding: 0 12px; border: 1px solid var(--line-contr
 .timeline .tl-row.on { border-color: var(--accent); color: var(--fg-strong); background: var(--warn-bg); }
 .timeline .tl-row.on .n { color: var(--accent); }
 
+/* Current-stage readout pinned under the scrolling timeline — the "what is the machine doing now". */
+.tl-now { display: flex; flex-wrap: wrap; align-items: baseline; gap: 6px 12px; margin-top: 12px; padding: 10px 12px; border: 1px solid var(--accent); border-left-width: 4px; border-radius: var(--radius); background: var(--warn-bg); }
+.tl-now.paused { border-color: var(--line-control); background: var(--panel); }
+.tl-now-lbl { font: 11px var(--font-mono); letter-spacing: .1em; text-transform: uppercase; color: var(--accent); }
+.tl-now.paused .tl-now-lbl { color: var(--muted); }
+.tl-now-action { font-size: 16px; font-weight: 600; color: var(--fg-strong); }
+.tl-now-group { font: 12px var(--font-mono); color: var(--muted); margin-left: auto; }
+
 /* ---- clean fixed-layout pages (Print state-aware; reusable .card) ---- */
 .print-view { display: block; padding: 24px 28px; }
 .print-view > * { padding: 0; min-width: 0; }
