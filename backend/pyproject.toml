@@ -1,6 +1,6 @@
 [project]
 name = "vention-printer-interface"
-version = "0.13.0"
+version = "0.13.1"
 description = "Operator backend + UI for the Vention MachineMotion 2 binder-jet printer (family of the FLIR Research Interface and T&C Power Interface)"
 requires-python = ">=3.11,<3.14"
 license = { text = "MIT" }

@@ -79,6 +79,23 @@ def test_list_drives_excludes_readonly_dmgs_and_system_volumes() -> None:
     assert drives[0].free_bytes == 900 and drives[0].path == "/Volumes/FieldSSD"
 
 
+def test_list_drives_excludes_hidden_macos_system_volumes() -> None:
+    # Captured on the lab Mac 2026-09-23 (psutil disk_partitions(all=False)): the APFS Recovery
+    # volume mounts READ-WRITE under /Volumes, so the rw + /Volumes rule offered it as an offload
+    # destination. macOS marks it (and DMGs) `dontbrowse`; a real drive has no such flag.
+    from vention_printer_interface.offload import _Part
+    parts = [
+        _Part("/dev/disk3s3", "/Volumes/Recovery", "apfs",
+              "rw,local,dovolfs,dontbrowse,journaled,multilabel"),
+        _Part("/dev/disk5s1", "/Volumes/Kiro CLI", "hfs",
+              "ro,nosuid,local,dovolfs,dontbrowse,ignore-ownership,multilabel"),
+        _Part("/dev/disk6s1", "/Volumes/FLIR SSD", "exfat",
+              "rw,nosuid,local,ignore-ownership,noatime"),
+    ]
+    drives = list_drives(platform="darwin", parts=parts, usage=lambda _m: (2000, 900))
+    assert [d.name for d in drives] == ["FLIR SSD"]
+
+
 def test_copy_run_skips_os_junk(tmp_path: Path) -> None:
     src = tmp_path / "r"
     _write(src / "data.csv", b"x")

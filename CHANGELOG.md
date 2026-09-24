@@ -3,6 +3,11 @@
 Notable changes to the Vention Printer Interface. Versions follow semantic versioning; each entry
 corresponds to a tagged merge to `main`.
 
+## v0.13.1 — 2026-09-23
+
+### Fixed
+- **The Mac's Recovery volume is no longer offered as an offload drive.** macOS mounts the APFS Recovery volume read-write under `/Volumes`, so it passed the drive filter and showed up next to real SSDs in Offload. Volumes macOS hides from Finder (`dontbrowse`) are now excluded.
+
 ## v0.13.0 — 2026-09-23
 
 ### Added
