@@ -86,8 +86,11 @@ def _is_external(platform: str, p: _Part) -> bool:
     """A real, WRITABLE, user-mountable offload target — not a system volume or read-only DMG.
     Mirrors the FLIR storage filter. The ``ro`` mount flag is what excludes a mounted disk image
     (e.g. an app installer showing 0 bytes free)."""
-    if "ro" in p.opts.split(","):
+    opts = p.opts.split(",")
+    if "ro" in opts:
         return False  # read-only mounts (mounted DMGs, read-only NTFS) are never targets
+    if "dontbrowse" in opts:
+        return False  # macOS hidden system volume (APFS Recovery mounts rw under /Volumes)
     if platform == "darwin":
         return p.mountpoint.startswith("/Volumes/") and Path(p.mountpoint).name != "Macintosh HD"
     if platform == "linux":

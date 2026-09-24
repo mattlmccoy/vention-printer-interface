@@ -6,4 +6,4 @@ and is forced off on any fault, disconnect, E-STOP, or watchdog expiry. Only
 ``device/machinemotion.py`` opens sockets to the controller.
 """
 
-__version__ = "0.13.0"
+__version__ = "0.13.1"
