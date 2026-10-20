@@ -30,6 +30,12 @@ import threading
 from dataclasses import replace
 from typing import Any
 
+from vention_printer_interface.vision.board_layout import (
+    BoardLayoutError,
+    Layout,
+    TextItem,
+    board_layout,
+)
 from vention_printer_interface.vision.region_merge import Region, merge_rects
 from vention_printer_interface.vision.registration import BoardSpec
 
@@ -146,6 +152,11 @@ BOARD_PRESETS: dict[str, BoardSpec] = {
     ),
 }
 
+# Presets that must fit a round build cylinder get a circular cut by default (diameter, mm).
+# small_cylinder: the build cylinder bore measures ~99.2 mm; a 98.5 mm cut (~98.3-98.4 mm after
+# kerf) drops in with ~0.4 mm a side. The 64 mm pattern needs >= 92.5 mm (90.5 across + clearance).
+PRESET_CUT_DIAMETER_MM: dict[str, float] = {"small_cylinder": 98.5}
+
 # Colour every filled cell engraves in (single engrave layer). Polarity chooses which cells.
 _ENGRAVE_COLOR = "#000000"
 # The board outline is a CUT, not an engrave: a stroked-only red path (SVG) / a polyline on a
@@ -231,7 +242,9 @@ class _Cell:
         self.h = h
 
 
-def _filled_cells(spec: BoardSpec, *, engrave_black: bool) -> list[_Cell]:
+def _filled_cells(
+    spec: BoardSpec, *, engrave_black: bool, origin: tuple[float, float] | None = None
+) -> list[_Cell]:
     """Compute every filled rectangle (in mm, quiet-zone offset applied) for one polarity.
 
     ``sq``  — solid non-marker (black) squares (only on the black-fill polarity).
@@ -240,7 +253,7 @@ def _filled_cells(spec: BoardSpec, *, engrave_black: bool) -> list[_Cell]:
     """
     board, marker_squares, marker_size = _board_geometry(spec)
     dictionary = board.getDictionary()
-    margin = _quiet_zone_mm(spec)
+    ox, oy = origin if origin is not None else (_quiet_zone_mm(spec), _quiet_zone_mm(spec))
     sq = spec.square_length_mm
     mk = spec.marker_length_mm
     inset = (sq - mk) / 2
@@ -250,8 +263,8 @@ def _filled_cells(spec: BoardSpec, *, engrave_black: bool) -> list[_Cell]:
     cells: list[_Cell] = []
     for row in range(spec.squares_y):
         for col in range(spec.squares_x):
-            x0 = margin + col * sq
-            y0 = margin + row * sq
+            x0 = ox + col * sq
+            y0 = oy + row * sq
             marker_id = marker_squares.get((col, row))
             if marker_id is None:
                 # non-marker square == solid BLACK; filled only on the black polarity.
@@ -278,48 +291,8 @@ def _filled_cells(spec: BoardSpec, *, engrave_black: bool) -> list[_Cell]:
     return cells
 
 
-# Caliper check: a bar of a round length engraved in the top quiet zone, so a finished board's
-# true scale can be measured directly (a laser job imported at the wrong DPI comes out x0.75 or
-# x1.33). The longest of these that fits the pattern width is used.
-_SCALE_LENGTHS_MM = (100.0, 50.0, 20.0, 10.0)
-_SCALE_TICK_MM = 10.0
-
-
-def _scale_bar(spec: BoardSpec) -> tuple[float, list[tuple[float, float, float, float]]] | None:
-    """``(length_mm, rects)`` for the scale bar, or ``None`` when no listed length fits.
-
-    The bar's OUTER edges are exactly ``length_mm`` apart (end ticks sit inside them), so calipers
-    across the end ticks read the length. Bar, end ticks and 10 mm ticks touch, so they merge into
-    one engraved shape. Placed in the top margin, at most ~0.6 margin deep, clear of the pattern.
-    """
-    board_w = spec.squares_x * spec.square_length_mm
-    fits = [n for n in _SCALE_LENGTHS_MM if n <= board_w]
-    if not fits:
-        return None
-    length = fits[0]
-    margin = _quiet_zone_mm(spec)
-    t = margin * 0.04  # bar thickness (1 mm on a 25 mm margin)
-    x0, y0 = margin, margin * 0.3
-    rects = [(x0, y0, length, t)]  # the bar
-    rects.append((x0, y0, t, margin * 0.24))  # end ticks, inside the outer edges
-    rects.append((x0 + length - t, y0, t, margin * 0.24))
-    k = 1
-    while k * _SCALE_TICK_MM < length - 1e-9:  # minor ticks, centred on each 10 mm mark
-        rects.append((x0 + k * _SCALE_TICK_MM - t / 2, y0, t, margin * 0.12))
-        k += 1
-    return length, rects
-
-
-def _scale_text(spec: BoardSpec, length: float) -> tuple[str, float, float, float]:
-    """``(text, x, baseline_y, font_mm)`` for the scale bar's length label, right of the bar."""
-    margin = _quiet_zone_mm(spec)
-    return f"{length:g} mm", margin + length + margin * 0.15, margin * 0.3 + margin * 0.22, (
-        margin * 0.25
-    )
-
-
 def _filled_regions(
-    spec: BoardSpec, *, engrave_black: bool, scale_bar: bool = True
+    spec: BoardSpec, *, engrave_black: bool, layout: Layout
 ) -> list[tuple[str, Region]]:
     """The filled cells merged into contiguous regions, per class (``sq``/``bit``/``mg``).
 
@@ -329,11 +302,10 @@ def _filled_regions(
     (checker squares, diagonal bits) stay separate regions — see ``region_merge``.
     """
     by_cls: dict[str, list[tuple[float, float, float, float]]] = {}
-    for c in _filled_cells(spec, engrave_black=engrave_black):
+    for c in _filled_cells(spec, engrave_black=engrave_black, origin=layout.origin):
         by_cls.setdefault(c.cls, []).append((c.x, c.y, c.w, c.h))
-    bar = _scale_bar(spec) if scale_bar else None
-    if bar is not None:  # engraved in BOTH polarities: it is a mark, not part of the pattern
-        by_cls["scale"] = bar[1]
+    if layout.scale_rects:  # engraved in BOTH polarities: it is a mark, not part of the pattern
+        by_cls["scale"] = list(layout.scale_rects)
     return [(cls, region) for cls, rects in by_cls.items() for region in merge_rects(rects)]
 
 
@@ -343,21 +315,16 @@ def _svg_path_d(region: Region) -> str:
     )
 
 
-def _label_text(spec: BoardSpec) -> str:
-    """Human-readable spec engraved on the board so a photographed board is self-identifying."""
+def _svg_text(t: TextItem) -> str:
+    anchor = ' text-anchor="middle"' if t.anchor == "middle" else ""
     return (
-        f"{spec.aruco_dict} {spec.squares_x}x{spec.squares_y} "
-        f"sq={spec.square_length_mm:g}mm mk={spec.marker_length_mm:g}mm"
+        f'<text class="{t.cls}" x="{t.x:.4f}" y="{t.baseline_y:.4f}"{anchor} '
+        f'font-family="monospace" font-size="{t.font_mm:g}" fill="{_ENGRAVE_COLOR}">{t.text}</text>'
     )
 
 
 def _render_charuco_svg(
-    spec: BoardSpec,
-    *,
-    engrave_black: bool = True,
-    label: bool = True,
-    cut_outline: bool = True,
-    scale_bar: bool = True,
+    spec: BoardSpec, layout: Layout, *, engrave_black: bool = True, cut_outline: bool = True
 ) -> str:
     """Render the ChArUco board as a true-vector SVG string at exact mm scale.
 
@@ -365,14 +332,11 @@ def _render_charuco_svg(
     unit == 1 mm); every contiguous filled area is ONE ``<path>`` (outer loop + hole loops,
     ``fill-rule="evenodd"``) at exact mm. See the module docstring for
     the ``engrave_black`` polarity contract. When ``cut_outline`` (default) a red, stroke-only
-    ``<path>`` traces the board's outer rectangle as a CUT contour (kept out of the engrave fills
-    so the laser cuts the board free without engraving that line).
+    ``<path>`` traces the board's outer rectangle (or a ``<circle>``, for a circular cut) as a
+    CUT contour (kept out of the engrave fills so the laser cuts the board free without engraving
+    that line). Positions come from ``layout`` (see ``board_layout``).
     """
-    board_w = spec.squares_x * spec.square_length_mm
-    board_h = spec.squares_y * spec.square_length_mm
-    margin = _quiet_zone_mm(spec)
-    total_w = board_w + 2 * margin
-    total_h = board_h + 2 * margin
+    total_w, total_h = layout.total_w, layout.total_h
 
     parts: list[str] = [
         '<?xml version="1.0" encoding="UTF-8"?>',
@@ -381,27 +345,19 @@ def _render_charuco_svg(
             f'height="{total_h:g}mm" viewBox="0 0 {total_w:g} {total_h:g}">'
         ),
     ]
-    for cls, region in _filled_regions(spec, engrave_black=engrave_black, scale_bar=scale_bar):
+    for cls, region in _filled_regions(spec, engrave_black=engrave_black, layout=layout):
         parts.append(
             f'<path class="{cls}" d="{_svg_path_d(region)}" fill="{_ENGRAVE_COLOR}" '
             'fill-rule="evenodd"/>'
         )
-    bar = _scale_bar(spec) if scale_bar else None
-    if bar is not None:
-        text, tx, ty_bar, font_bar = _scale_text(spec, bar[0])
+    parts.extend(_svg_text(t) for t in layout.texts)
+    if cut_outline and layout.circle is not None:
+        cx, cy, r = layout.circle
         parts.append(
-            f'<text class="scale" x="{tx:.4f}" y="{ty_bar:.4f}" font-family="monospace" '
-            f'font-size="{font_bar:g}" fill="{_ENGRAVE_COLOR}">{text}</text>'
+            f'<circle class="cut" cx="{cx:g}" cy="{cy:g}" r="{r:g}" '
+            f'fill="none" stroke="{_CUT_COLOR}" stroke-width="{_CUT_STROKE_MM:g}"/>'
         )
-    if label:
-        font = min(margin * 0.5, board_w * 0.05) or 3.0
-        ty = total_h - margin * 0.3
-        parts.append(
-            f'<text class="label" x="{margin:.4f}" y="{ty:.4f}" '
-            f'font-family="monospace" font-size="{font:g}" fill="{_ENGRAVE_COLOR}">'
-            f"{_label_text(spec)}</text>"
-        )
-    if cut_outline:
+    elif cut_outline:
         parts.append(
             f'<path class="cut" d="M0 0 H{total_w:g} V{total_h:g} H0 Z" '
             f'fill="none" stroke="{_CUT_COLOR}" stroke-width="{_CUT_STROKE_MM:g}"/>'
@@ -411,12 +367,7 @@ def _render_charuco_svg(
 
 
 def _render_charuco_dxf(
-    spec: BoardSpec,
-    *,
-    engrave_black: bool = True,
-    label: bool = True,
-    cut_outline: bool = True,
-    scale_bar: bool = True,
+    spec: BoardSpec, layout: Layout, *, engrave_black: bool = True, cut_outline: bool = True
 ) -> bytes:
     """Render the ChArUco board as a DXF byte string (units = mm) via ``ezdxf``.
 
@@ -430,6 +381,7 @@ def _render_charuco_dxf(
     """
     import ezdxf
     from ezdxf import const, units
+    from ezdxf.enums import TextEntityAlignment
 
     doc = ezdxf.new()  # type: ignore[attr-defined]  # ezdxf re-exports new() without __all__
     doc.units = units.MM
@@ -437,13 +389,9 @@ def _render_charuco_dxf(
     doc.layers.add(_CUT_LAYER, color=1)  # ACI 1 = red = cut
     msp = doc.modelspace()
 
-    board_w = spec.squares_x * spec.square_length_mm
-    board_h = spec.squares_y * spec.square_length_mm
-    margin = _quiet_zone_mm(spec)
-    total_w = board_w + 2 * margin
-    total_h = board_h + 2 * margin
+    total_w, total_h = layout.total_w, layout.total_h
 
-    for _cls, region in _filled_regions(spec, engrave_black=engrave_black, scale_bar=scale_bar):
+    for _cls, region in _filled_regions(spec, engrave_black=engrave_black, layout=layout):
         # DXF y is up; flip so the board reads the same orientation as the SVG (y down).
         loops = [[(x, total_h - y) for x, y in loop] for loop in region.loops]
         hatch = msp.add_hatch(color=7, dxfattribs={"layer": _ENGRAVE_LAYER})  # solid fill
@@ -451,26 +399,37 @@ def _render_charuco_dxf(
             flags = const.BOUNDARY_PATH_EXTERNAL if k == 0 else const.BOUNDARY_PATH_DEFAULT
             hatch.paths.add_polyline_path(loop, is_closed=True, flags=flags)
             msp.add_lwpolyline(loop, close=True, dxfattribs={"layer": _ENGRAVE_LAYER})
-    if cut_outline:
+    if cut_outline and layout.circle is not None:
+        cx, cy, r = layout.circle
+        msp.add_circle((cx, total_h - cy), r, dxfattribs={"layer": _CUT_LAYER})
+    elif cut_outline:
         msp.add_lwpolyline(
             [(0.0, 0.0), (total_w, 0.0), (total_w, total_h), (0.0, total_h)],
             close=True,
             dxfattribs={"layer": _CUT_LAYER},
         )
-    bar = _scale_bar(spec) if scale_bar else None
-    if bar is not None:
-        bar_text, tx, ty_bar, font_bar = _scale_text(spec, bar[0])
-        msp.add_text(
-            bar_text, height=font_bar, dxfattribs={"layer": _ENGRAVE_LAYER}
-        ).set_placement((tx, total_h - ty_bar))
-    if label:
-        font = min(margin * 0.5, board_w * 0.05) or 3.0
-        text = msp.add_text(_label_text(spec), height=font, dxfattribs={"layer": _ENGRAVE_LAYER})
-        text.set_placement((margin, margin * 0.3))
+    for t in layout.texts:
+        align = (TextEntityAlignment.CENTER if t.anchor == "middle"
+                 else TextEntityAlignment.LEFT)  # both on the baseline
+        msp.add_text(t.text, height=t.font_mm, dxfattribs={"layer": _ENGRAVE_LAYER}).set_placement(
+            (t.x, total_h - t.baseline_y), align=align
+        )
 
     stream = io.StringIO()
     doc.write(stream)
     return stream.getvalue().encode("utf-8")
+
+
+def _layout(
+    spec: BoardSpec, *, cut_diameter_mm: float | None, scale_bar: bool, label: bool
+) -> Layout:
+    """``board_layout`` with its errors raised as ``BoardSpecError`` (user-facing, a 400)."""
+    try:
+        return board_layout(
+            spec, cut_diameter_mm=cut_diameter_mm, scale_bar=scale_bar, label=label
+        )
+    except BoardLayoutError as exc:
+        raise BoardSpecError(str(exc)) from exc
 
 
 def generate_charuco_svg(
@@ -480,17 +439,15 @@ def generate_charuco_svg(
     label: bool = True,
     cut_outline: bool = True,
     scale_bar: bool = True,
+    cut_diameter_mm: float | None = None,
 ) -> str:
     """Validate ``spec`` (see :func:`validate_charuco_spec`), then render it as a true-vector
     SVG (see :func:`_render_charuco_svg`). Generations run one at a time."""
     validate_charuco_spec(spec)
+    layout = _layout(spec, cut_diameter_mm=cut_diameter_mm, scale_bar=scale_bar, label=label)
     with _GENERATION_LOCK:
         return _render_charuco_svg(
-            spec,
-            engrave_black=engrave_black,
-            label=label,
-            cut_outline=cut_outline,
-            scale_bar=scale_bar,
+            spec, layout, engrave_black=engrave_black, cut_outline=cut_outline
         )
 
 
@@ -501,15 +458,13 @@ def generate_charuco_dxf(
     label: bool = True,
     cut_outline: bool = True,
     scale_bar: bool = True,
+    cut_diameter_mm: float | None = None,
 ) -> bytes:
     """Validate ``spec`` (see :func:`validate_charuco_spec`), then render it as a DXF (see
     :func:`_render_charuco_dxf`). Generations run one at a time."""
     validate_charuco_spec(spec)
+    layout = _layout(spec, cut_diameter_mm=cut_diameter_mm, scale_bar=scale_bar, label=label)
     with _GENERATION_LOCK:
         return _render_charuco_dxf(
-            spec,
-            engrave_black=engrave_black,
-            label=label,
-            cut_outline=cut_outline,
-            scale_bar=scale_bar,
+            spec, layout, engrave_black=engrave_black, cut_outline=cut_outline
         )

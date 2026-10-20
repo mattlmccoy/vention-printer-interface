@@ -900,6 +900,47 @@ def test_board_endpoint_scale_bar_defaults_on_and_can_be_turned_off(client: Test
     assert '<path class="scale"' not in off.text
 
 
+def test_board_endpoint_small_cylinder_preset_defaults_to_a_98p5mm_circle(
+    client: TestClient,
+) -> None:
+    r = client.get("/api/vision/board", params={"format": "svg", "preset": "small_cylinder"})
+    assert r.status_code == 200
+    assert '<circle class="cut" cx="49.25" cy="49.25" r="49.25"' in r.text
+    assert 'width="98.5mm"' in r.text
+
+
+def test_board_endpoint_cut_diameter_zero_means_rectangle(client: TestClient) -> None:
+    r = client.get("/api/vision/board", params={
+        "format": "svg", "preset": "small_cylinder", "cut_diameter_mm": 0})
+    assert r.status_code == 200
+    assert '<circle class="cut"' not in r.text and '<path class="cut"' in r.text
+
+
+def test_board_endpoint_other_presets_stay_rectangular(client: TestClient) -> None:
+    r = client.get("/api/vision/board", params={"format": "svg", "preset": "medium_5x7"})
+    assert r.status_code == 200 and '<circle class="cut"' not in r.text
+
+
+def test_board_endpoint_custom_board_can_take_a_circular_cut(client: TestClient) -> None:
+    r = client.get("/api/vision/board", params={
+        "format": "dxf", "squares_x": 4, "squares_y": 4, "square_mm": 16, "marker_mm": 12,
+        "cut_diameter_mm": 100})
+    assert r.status_code == 200
+    import io
+
+    import ezdxf
+
+    msp = ezdxf.read(io.StringIO(r.content.decode())).modelspace()
+    assert len(msp.query('CIRCLE[layer=="CUT"]')) == 1
+
+
+def test_board_endpoint_circle_too_small_is_a_400(client: TestClient) -> None:
+    r = client.get("/api/vision/board", params={
+        "format": "svg", "preset": "small_cylinder", "cut_diameter_mm": 80})
+    assert r.status_code == 400
+    assert "circle" in r.json()["detail"]
+
+
 # ---- I-1: GET /api/vision/board must validate params -> 400 (never 500 / CPU-burn) ----------
 def test_board_endpoint_dict_not_a_real_aruco_dictionary_name_returns_400(
     client: TestClient,

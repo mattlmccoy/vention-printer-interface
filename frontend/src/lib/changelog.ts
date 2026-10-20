@@ -11,6 +11,13 @@ export interface Release {
 
 export const CHANGELOG: Release[] = [
   {
+    version: "0.13.3",
+    date: "2026-10-20",
+    changes: [
+      "Calibration boards can be cut square (to sit on the aluminium substrate) or round (to drop into the build cylinder); the small board defaults to a 98.5 mm circle for the ~99.2 mm bore.",
+    ],
+  },
+  {
     version: "0.13.2",
     date: "2026-10-20",
     changes: [

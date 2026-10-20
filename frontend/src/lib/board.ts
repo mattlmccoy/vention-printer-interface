@@ -5,7 +5,7 @@
  * for each, and the same query is reused (with format=svg) to render a non-saved inline preview. */
 
 export const BOARD_PRESETS = [
-  { value: "small_cylinder", label: "small — fits Ø101.6 mm (4 in) cylinder top" },
+  { value: "small_cylinder", label: "small — 4×4 (round Ø98.5 for the cylinder, or square)" },
   { value: "medium_5x7", label: "medium — 5×7" },
   { value: "large_6x9", label: "large — 6×9" },
 ] as const;
@@ -21,6 +21,8 @@ export interface BoardConfig {
   cutOutline: boolean;
   /** Engrave a round-length caliper bar (e.g. 100 mm) in the top margin to check the true size. */
   scaleBar: boolean;
+  /** Circular cut diameter in mm (for a round build cylinder); 0 = rectangular cut. */
+  cutDiameterMm: number;
   squaresX: number;
   squaresY: number;
   squareMm: number;
@@ -33,6 +35,7 @@ export const DEFAULT_BOARD: BoardConfig = {
   engraveBlack: true,
   cutOutline: true,
   scaleBar: true,
+  cutDiameterMm: 0,
   squaresX: 5,
   squaresY: 7,
   squareMm: 12,
@@ -56,7 +59,31 @@ export function boardQuery(cfg: BoardConfig, formatOverride?: BoardFormat): stri
   p.set("engrave_black", String(cfg.engraveBlack));
   p.set("cut_outline", String(cfg.cutOutline));
   p.set("scale_bar", String(cfg.scaleBar));
+  p.set("cut_diameter_mm", String(cfg.cutDiameterMm));
   return p.toString();
+}
+
+/** Circular-cut default per preset — mirrors backend board_gen.PRESET_CUT_DIAMETER_MM. */
+export const PRESET_CUT_DIAMETER_MM: Partial<Record<BoardPreset, number>> = { small_cylinder: 98.5 };
+
+/** Switch preset: a named preset brings its own cut (the small board drops into the ~99.2 mm
+ *  build cylinder bore, so it is cut round at 98.5 mm); Custom keeps whatever cut you had. */
+export function withPreset(cfg: BoardConfig, preset: BoardConfig["preset"]): BoardConfig {
+  if (preset === "custom") return { ...cfg, preset };
+  return { ...cfg, preset, cutDiameterMm: PRESET_CUT_DIAMETER_MM[preset] ?? 0 };
+}
+
+/** Default round-cut diameter: the small board's bore-fitting circle (the backend refuses, with the
+ *  diameter it needs, a circle too small for a bigger pattern). */
+export const DEFAULT_ROUND_CUT_MM = PRESET_CUT_DIAMETER_MM.small_cylinder ?? 98.5;
+
+export type CutShape = "square" | "round";
+
+/** Square cut (e.g. to sit the board on the aluminium substrate, closer to the print plane) or
+ *  round cut (to drop it into the build cylinder). Round keeps a diameter you already set. */
+export function withCutShape(cfg: BoardConfig, shape: CutShape): BoardConfig {
+  if (shape === "square") return { ...cfg, cutDiameterMm: 0 };
+  return { ...cfg, cutDiameterMm: cfg.cutDiameterMm > 0 ? cfg.cutDiameterMm : DEFAULT_ROUND_CUT_MM };
 }
 
 /** Grid bounds — mirror backend board_gen.MIN_SQUARES / MAX_SQUARES. A board 1 square wide makes
