@@ -2927,6 +2927,7 @@ def create_app(
             "centroid_px": (float(centroid[0]), float(centroid[1])),
             "tilt_deg": view_tilt_deg(detection.image_points, detection.object_points),
             "image_size": (int(image.shape[1]), int(image.shape[0])),
+            "corners_px": np.asarray(detection.image_points, float).reshape(-1, 2).tolist(),
         })
         return {
             "captured": True,
