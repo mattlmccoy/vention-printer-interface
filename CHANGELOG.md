@@ -3,6 +3,11 @@
 Notable changes to the Vention Printer Interface. Versions follow semantic versioning; each entry
 corresponds to a tagged merge to `main`.
 
+## v0.13.4 — 2026-10-20
+
+### Fixed
+- **A calibration is only applied to science stills of the size it was fitted on.** In lightweight camera mode (the Windows PC), Calibrate/Validate photos came from the ≤1080p stream while print stills are raw full-resolution frames, and the operator applied the calibration to every still regardless of size — wrong millimetres with no error, and Validate (same photo path as Calibrate) would still have passed. Now: Calibrate and Validate take their photo with the same full-resolution capture as print stills; a calibration session refuses photos of a second size; validation refuses a photo of another size; a print still of another size is stored but not measured, and its sidecar says why (`calibration.applied`, `skipped_reason`, the real `image_size`). The Calibrate and Validate pages show the photo size and warn when the science camera's resolution no longer matches the calibration.
+
 ## v0.13.3 — 2026-10-20
 
 ### Changed

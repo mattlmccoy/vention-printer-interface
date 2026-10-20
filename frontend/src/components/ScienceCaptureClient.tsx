@@ -89,6 +89,33 @@ export async function grabScienceStill(
   return { blob: await toPng(video, video.videoWidth, video.videoHeight, "video"), attempts };
 }
 
+/** Lightweight camera mode's science still: pause the other live views (camera bus), open the science
+ *  camera ALONE at `resolution`, grab the RAW frame (lossless PNG, never the camera's JPEG photo),
+ *  close, resume. The print client AND the Calibrate/Validate panels use this one function, so a
+ *  calibration is fitted on stills of the same size and source as the print stills it is applied to
+ *  (the operator refuses to measure a still of another size). */
+export async function fullResScienceStill(
+  deviceId: string,
+  resolution: string,
+  video: HTMLVideoElement,
+): Promise<{ blob: Blob | null; attempts: string[]; openMs: number; totalMs: number }> {
+  const [w, h] = resolution.split("x").map(Number);
+  const requested = { width: Number.isFinite(w) ? w : 1920, height: Number.isFinite(h) ? h : 1080 };
+  const r = await captureFullResStill({
+    bus: cameraBus,
+    releaseMs: 300,
+    open: async () => {
+      const s = await navigator.mediaDevices.getUserMedia({ video: fullResConstraints(deviceId, resolution) });
+      video.srcObject = s;
+      await waitForCameraFrame(video, new AbortController().signal, 8000);
+      return s;
+    },
+    grab: (s) => grabScienceStill(s, video, requested, { skipPhoto: true }),
+  });
+  video.srcObject = null;
+  return r;
+}
+
 /** Headless client-side SCIENCE capture (the wrong-camera fix). During a recorded print it holds the
  * ASSIGNED science camera open (opened by its browser deviceId — reliable on macOS, unlike the
  * server's cv2 device index that mis-resolves two identical ELPs), heartbeats the operator so the
@@ -218,18 +245,7 @@ export function ScienceCaptureClient({ status, onError }: {
       const video = videoRef.current;
       const { blob, attempts } = light && deviceId && video
         ? await (async () => {
-          const r = await captureFullResStill({
-            bus: cameraBus,
-            releaseMs: 300,
-            open: async () => {
-              const s = await navigator.mediaDevices.getUserMedia({ video: fullResConstraints(deviceId, resolution) });
-              video.srcObject = s;
-              await waitForCameraFrame(video, new AbortController().signal, 8000);
-              return s;
-            },
-            grab: (s) => grabScienceStill(s, video, requested, { skipPhoto: true }),
-          });
-          video.srcObject = null;
+          const r = await fullResScienceStill(deviceId, resolution, video);
           console.info(`science still layer ${cadLayer ?? layer} ${stage}: full-res open ${Math.round(r.openMs)} ms, total ${Math.round(r.totalMs)} ms (lightweight camera mode)`);
           return r;
         })()

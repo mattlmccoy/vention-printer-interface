@@ -163,6 +163,8 @@ def test_write_capture_fills_missing_meta_with_none(tmp_path):
         "distortion_coeffs": None,
         "bed_homography": None,
         "validation": None,
+        "applied": None,
+        "skipped_reason": None,
     }
 
 

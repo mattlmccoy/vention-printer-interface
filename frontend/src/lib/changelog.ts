@@ -11,6 +11,14 @@ export interface Release {
 
 export const CHANGELOG: Release[] = [
   {
+    version: "0.13.4",
+    date: "2026-10-20",
+    changes: [
+      "A calibration is only applied to science stills of the size it was fitted on; other sizes are stored but not measured, with the reason recorded.",
+      "Calibrate and Validate take their photo the same way print stills are taken (full resolution in lightweight mode), and warn when the camera resolution no longer matches the calibration.",
+    ],
+  },
+  {
     version: "0.13.3",
     date: "2026-10-20",
     changes: [

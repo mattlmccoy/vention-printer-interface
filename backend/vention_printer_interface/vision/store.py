@@ -53,6 +53,9 @@ _SIDECAR_TEMPLATE: dict[str, Any] = {
         "distortion_coeffs": None,
         "bed_homography": None,
         "validation": None,
+        # False when the calibration was NOT applied to this still (fitted at another image size)
+        "applied": None,
+        "skipped_reason": None,
     },
     "images": None,
     "registered_space": None,

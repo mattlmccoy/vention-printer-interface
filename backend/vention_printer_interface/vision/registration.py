@@ -538,6 +538,24 @@ def load_calibration(path: Path) -> Calibration | None:
     )
 
 
+def calibration_size_mismatch(image: np.ndarray, calibration: Calibration) -> str | None:
+    """Why ``calibration`` must NOT be applied to ``image``, or ``None`` when it may.
+
+    Intrinsics (K, distortion) and the bed homography hold only at the image size they were
+    fitted on; applied to another size they give wrong millimetres with no error. A legacy
+    calibration with no recorded ``image_size`` is allowed (it cannot be checked)."""
+    if calibration.image_size is None:
+        return None
+    h, w = int(image.shape[0]), int(image.shape[1])
+    cw, ch = int(calibration.image_size[0]), int(calibration.image_size[1])
+    if (w, h) == (cw, ch):
+        return None
+    return (
+        f"photo is {w}x{h} but calibration {calibration.version} was fitted on {cw}x{ch} "
+        "photos; not measured (recalibrate at this resolution, or capture at the calibrated one)"
+    )
+
+
 def register_frame(
     image: np.ndarray, calibration: Calibration | None
 ) -> tuple[np.ndarray, dict[str, Any] | None]:
@@ -550,6 +568,8 @@ def register_frame(
     """
     if calibration is None:
         return image, None
+    if calibration_size_mismatch(image, calibration) is not None:
+        return image, None  # never claim bed-plane mm from a calibration fitted at another size
     if calibration.camera_matrix is not None:
         dist_coeffs = (
             calibration.dist_coeffs if calibration.dist_coeffs is not None else np.zeros(5)

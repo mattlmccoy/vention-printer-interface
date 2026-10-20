@@ -3,6 +3,7 @@ import { api, type VisionValidateScaleResult } from "../lib/api.ts";
 import { captureScienceStillOnce } from "../lib/science_still.ts";
 import { ToleranceBand } from "./ToleranceBand.tsx";
 import { PlotExportButtons } from "./PlotExportButtons.tsx";
+import { CalibrationSizeNote } from "./CalibrationSizeNote.tsx";
 import type { Call } from "./views/types.ts";
 
 // The bought board's nominal geometry (17x17 INNER corners, 4.5mm nominal pitch). The nominal pitch
@@ -45,6 +46,7 @@ export function ValidationPanel({ call, printing }: { call: Call; printing: bool
         the science camera (same source as your prints) to measure real world-mm accuracy.
       </div>
       {printing && <div className="lock">printing in progress — validation is disabled until the print finishes</div>}
+      <CalibrationSizeNote />
       <div className="fields" style={{ marginTop: 16 }}>
         <span>known pitch (mm, caliper-measured)</span>
         <input type="number" step="0.001" value={knownPitchMm} onChange={(e) => setKnownPitchMm(e.target.value)} disabled={printing} />
@@ -63,7 +65,7 @@ export function ValidationPanel({ call, printing }: { call: Call; printing: bool
             limit={result.target_mm}
             unit="mm"
             mode="max"
-            hint={`rms ${result.rms_mm.toFixed(3)} mm · scale bias ${result.scale_bias.toFixed(4)} · ${result.n_points} corners`}
+            hint={`rms ${result.rms_mm.toFixed(3)} mm · scale bias ${result.scale_bias.toFixed(4)} · ${result.n_points} corners${result.image_size ? ` · ${result.image_size[0]}×${result.image_size[1]} photo` : ""}`}
           />
           {result.per_point && result.per_point.length > 0 && (
             <PlotExportButtons

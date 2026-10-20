@@ -5,6 +5,7 @@ import { boardDefError, describeBoardDef, loadBoardDef, sameBoardDef, sessionSpe
 import { bedImageSize, parseFinalizeInputs } from "../lib/calib_finalize.ts";
 import { calibrationReady } from "../lib/vision.ts";
 import { captureScienceStillOnce } from "../lib/science_still.ts";
+import { CalibrationSizeNote } from "./CalibrationSizeNote.tsx";
 import type { Call } from "./views/types.ts";
 
 const storage = typeof localStorage === "undefined" ? null : localStorage;
@@ -120,6 +121,7 @@ export function CalibrationWizard({ call, printing }: { call: Call; printing: bo
       {session && (
         <div className="kv">
           <span>views captured</span><span>{session.n_views}</span>
+          <span>photo size</span><span>{session.image_size ? `${session.image_size[0]}×${session.image_size[1]}` : "—"}</span>
           <span>ready to finalize</span><span>{covEnough ? "yes — coverage met" : "no — fill the coverage map"}</span>
         </div>
       )}
@@ -165,8 +167,10 @@ export function CalibrationWizard({ call, printing }: { call: Call; printing: bo
           <span>intrinsics RMS</span><span>{result.intrinsics_rms.toFixed(4)} px</span>
           <span>reprojection error</span><span>{result.reprojection_error.toFixed(4)} mm</span>
           <span>calibration version</span><span>{result.calibration_version}</span>
+          {result.image_size && <><span>fitted on photos of</span><span>{result.image_size[0]}×{result.image_size[1]} — print stills must be this size</span></>}
         </div>
       )}
+      <CalibrationSizeNote refreshKey={result ? 1 : 0} />
     </>
   );
 }
