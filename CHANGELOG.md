@@ -3,6 +3,14 @@
 Notable changes to the Vention Printer Interface. Versions follow semantic versioning; each entry
 corresponds to a tagged merge to `main`.
 
+## v0.14.0 — 2026-10-20
+
+### Added
+- **One-button science-camera calibration** (Settings → Calibrate). Place the ChArUco board (on the substrate or in the cylinder), press Start, confirm the planned recoater positions, and watch. The science camera rides the recoater, so the console sweeps it across the board inside a safety window you set (default 0–523 mm, remembered), approaching every position from the same side, and takes each still the same way print stills are taken. The operator fits lens distortion and the print-plane mapping at the capture pose (bed +X = increasing recoater mm, origin at the board's first corner) and checks scale against the recoater encoder. Pass needs ≥ 5 usable photos, lens fit ≤ 0.5 px RMS and encoder-shift ≤ 0.1 mm RMS; only a passing run can be saved. The calibration records the board placement and thickness (the board's top face is assumed to be the print plane for now) and only covers the area where corners were seen.
+
+### Fixed
+- **The manual calibration could never finish with a board that fills the frame.** Coverage now counts where board corners land, not the board's centre; the manual gate (under Advanced) is ≥ 6 views, ≥ 6 of 9 cells and 2 tilt ranges.
+
 ## v0.13.4 — 2026-10-20
 
 ### Fixed

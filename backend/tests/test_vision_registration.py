@@ -541,3 +541,26 @@ def test_warp_to_bed_refuses_an_oversized_raster_instead_of_allocating_it() -> N
     img = np.zeros((48, 64, 3), np.uint8)
     with pytest.raises(ValueError, match="20000x20000"):
         warp_to_bed(img, np.eye(3), mm_per_px=0.01, bed_extent_mm=(0, 0, 200, 200))
+
+
+def test_provenance_round_trips_and_old_files_load_with_empty_provenance(tmp_path) -> None:
+    import json
+
+    import numpy as np
+
+    from vention_printer_interface.vision.registration import (
+        Calibration,
+        load_calibration,
+        save_calibration,
+    )
+
+    cal = Calibration(H=np.eye(3), mm_per_px=0.1, bed_extent_mm=(0.0, 0.0, 10.0, 10.0),
+                      version="cal-prov", reprojection_error=0.0,
+                      provenance={"placement": "cylinder", "board_thickness_mm": 3.175})
+    p = tmp_path / "cal.json"
+    save_calibration(p, cal)
+    assert load_calibration(p).provenance == {"placement": "cylinder", "board_thickness_mm": 3.175}
+    raw = json.loads(p.read_text())
+    raw.pop("provenance")
+    p.write_text(json.dumps(raw))
+    assert load_calibration(p).provenance == {}

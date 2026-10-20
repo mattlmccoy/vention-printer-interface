@@ -13,6 +13,8 @@ import { CameraInventoryPanel } from "../CameraInventoryPanel.tsx";
 import { CameraSettingsPanel } from "../CameraSettingsPanel.tsx";
 import { LightweightCameraToggle } from "../LightweightCameraToggle.tsx";
 import { CalibrationWizard } from "../CalibrationWizard.tsx";
+import { AutoCalibrationPanel } from "../AutoCalibrationPanel.tsx";
+import { waitSettled as sharedWaitSettled } from "../../lib/autocal.ts";
 import { parseFinalizeInputs } from "../../lib/calib_finalize.ts";
 import { ValidationPanel } from "../ValidationPanel.tsx";
 import { PlotExportButtons } from "../PlotExportButtons.tsx";
@@ -340,18 +342,7 @@ function CaptureCalibration({ status, gates, call }: { status: StatusPayload | n
   const [progress, setProgress] = useState({ done: 0, total: 0 });
   const [best, setBest] = useState<CenterSweepBest | null>(null);
   const [autoErr, setAutoErr] = useState<string | null>(null);
-  const sleep = (ms: number) => new Promise<void>((r) => setTimeout(r, ms));
-  const waitSettled = async (axis: number, timeoutMs = 6000) => {
-    const t0 = Date.now();
-    while (Date.now() - t0 < timeoutMs) {
-      try {
-        const s = await api.status();
-        if (s.controller?.telemetry?.motion_complete?.[String(axis)] !== false) break;
-      } catch { /* transient */ }
-      await sleep(200);
-    }
-    await sleep(400);  // let gantry vibration settle before the shot
-  };
+  const waitSettled = (axis: number) => sharedWaitSettled(() => api.status(), axis);  // + 400 ms settle
   const findCenter = async () => {
     if (!window.confirm("Auto-find the overhead center? The recoater sweeps through several positions, capturing the science camera at each, then recommends the pose that centers the build piston. Keep clear of the gantry.")) return;
     const storage = typeof localStorage === "undefined" ? null : localStorage;
@@ -711,8 +702,12 @@ export function SettingsView({ status, gates, call, base, onOpenQuickStart }: {
           {sel === "board" && <CalibrationBoardPanel base={base} />}
           {sel === "calib" && (
             <div className="grid-gap">
-              <div className="hint" style={{ marginTop: 0 }}>Capture ≥3 board views from different bed positions / tilts, then finalize with "use the last board view as the bed reference" ticked — that sets the bed plane so mm map to the bed, not the camera.</div>
-              <CalibrationWizard call={call} printing={gates.printActive} />
+              <AutoCalibrationPanel status={status} printing={gates.printActive} />
+              <details>
+                <summary>Advanced (manual capture)</summary>
+                <div className="hint">Capture ≥6 board views across the frame and at two or more tilts, then finalize with "use the last board view as the bed reference" ticked — that sets the bed plane so mm map to the bed, not the camera.</div>
+                <CalibrationWizard call={call} printing={gates.printActive} />
+              </details>
             </div>
           )}
           {sel === "validate" && <ValidationPanel call={call} printing={gates.printActive} />}

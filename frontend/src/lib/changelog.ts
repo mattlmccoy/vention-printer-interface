@@ -11,6 +11,14 @@ export interface Release {
 
 export const CHANGELOG: Release[] = [
   {
+    version: "0.14.0",
+    date: "2026-10-20",
+    changes: [
+      "One-button science-camera calibration: place the board, press Start, confirm the planned recoater positions and watch; the camera sweeps the board inside your safety window, and only a passing run can be saved.",
+      "The manual calibration can now finish: coverage counts where board corners land, not the board centre (manual mode is under Advanced).",
+    ],
+  },
+  {
     version: "0.13.4",
     date: "2026-10-20",
     changes: [
