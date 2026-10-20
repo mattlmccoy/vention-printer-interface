@@ -25,11 +25,13 @@ from __future__ import annotations
 
 import math
 from dataclasses import dataclass
+from typing import Any
 
 import numpy as np
 
 from vention_printer_interface.vision.registration import (
     MAX_BED_IMAGE_PX,
+    Calibration,
     apply_homography,
     bed_raster_error,
     compute_homography,
@@ -37,6 +39,10 @@ from vention_printer_interface.vision.registration import (
 )
 
 MIN_CORNERS = 4  # a view needs at least this many ChArUco corners to be used
+# Pass rule (spec §7, "my call"; tune after the first real run).
+MIN_VIEWS = 5
+MAX_REPROJ_PX = 0.5
+MAX_SHIFT_RMS_MM = 0.1
 CAPTURE_POSE_TOL_MM = 0.15  # the capture-pose view must be read back within this of the pose
 
 
@@ -187,4 +193,42 @@ def solve_autocal(
         shift_worst_mm=float(dist_mm.max()), scale_ratio=scale_ratio, n_views=len(usable),
         image_size=(int(image_size[0]), int(image_size[1])), valid_region_mm=region,
         capture_view_corners=int(len(np.asarray(cap.image_points).reshape(-1, 2))),
+    )
+
+
+def judge(result: AutocalResult) -> tuple[bool, list[str]]:
+    """Pass/fail with one plain sentence per failed limit (never a bare "failed")."""
+    reasons: list[str] = []
+    if result.n_views < MIN_VIEWS:
+        reasons.append(f"only {result.n_views} usable photos; need at least {MIN_VIEWS}")
+    if result.reprojection_rms_px > MAX_REPROJ_PX:
+        reasons.append(
+            f"lens fit error {result.reprojection_rms_px:.2g} px is above the "
+            f"{MAX_REPROJ_PX:g} px limit"
+        )
+    if result.shift_rms_mm > MAX_SHIFT_RMS_MM:
+        reasons.append(
+            f"encoder-shift check {result.shift_rms_mm:.2g} mm RMS is above the "
+            f"{MAX_SHIFT_RMS_MM:g} mm limit (scale {result.scale_ratio:.4f} of the recoater's)"
+        )
+    return not reasons, reasons
+
+
+def to_calibration(
+    result: AutocalResult, *, version: str, provenance: dict[str, Any]
+) -> Calibration:
+    """The persisted calibration for a passing run. ``reprojection_error`` (mm, the field the
+    manual flow fills with its homography residual) carries the run's encoder-shift RMS."""
+    return Calibration(
+        H=result.H,
+        mm_per_px=result.mm_per_px,
+        bed_extent_mm=result.bed_extent_mm,
+        version=version,
+        reprojection_error=result.shift_rms_mm,
+        camera_matrix=result.camera_matrix,
+        dist_coeffs=result.dist_coeffs,
+        distortion_model="opencv-5",
+        image_size=result.image_size,
+        validation={},
+        provenance=dict(provenance),
     )

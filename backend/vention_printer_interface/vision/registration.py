@@ -453,6 +453,9 @@ class Calibration:
     distortion_model: str = "opencv-5"
     image_size: tuple[int, int] | None = None
     validation: dict[str, Any] = field(default_factory=dict)
+    # How this calibration was made (e.g. the automatic sweep: board placement, board thickness, the
+    # plane it holds on). Missing in older files -> {}.
+    provenance: dict[str, Any] = field(default_factory=dict)
 
 
 def save_calibration(path: Path, calib: Calibration) -> None:
@@ -535,6 +538,7 @@ def load_calibration(path: Path) -> Calibration | None:
         distortion_model=payload.get("distortion_model", "opencv-5"),
         image_size=image_size,
         validation=payload.get("validation") or {},
+        provenance=payload.get("provenance") or {},
     )
 
 

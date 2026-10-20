@@ -117,3 +117,40 @@ def test_extent_and_mm_per_px_are_sane() -> None:
     assert bed_raster_error(res.mm_per_px, res.bed_extent_mm) is None
     assert 0.05 <= res.mm_per_px <= 0.2  # ~11.7 px/mm at 120 mm height -> ~0.09 mm/px
     assert len(res.valid_region_mm) >= 3
+
+
+# ---- verdict + saved calibration ------------------------------------------------------------
+def test_judge_passes_a_good_synthetic_run() -> None:
+    from vention_printer_interface.vision.autocal_solve import judge
+
+    views, truth = synth_views(spec=SPEC)
+    res = solve_autocal(views, capture_recoater_mm=truth.capture_mm, image_size=SIZE)
+    assert judge(res) == (True, [])
+
+
+def test_judge_names_each_failed_limit() -> None:
+    import dataclasses
+
+    from vention_printer_interface.vision.autocal_solve import judge
+
+    views, truth = synth_views(spec=SPEC)
+    res = solve_autocal(views, capture_recoater_mm=truth.capture_mm, image_size=SIZE)
+    bad = dataclasses.replace(res, n_views=3, reprojection_rms_px=0.9, shift_rms_mm=0.3)
+    passed, reasons = judge(bad)
+    assert passed is False and len(reasons) == 3
+    text = " ".join(reasons)
+    for value, limit in (("3", "5"), ("0.9", "0.5"), ("0.3", "0.1")):
+        assert value in text and limit in text
+
+
+def test_to_calibration_carries_the_mapping_and_provenance() -> None:
+    from vention_printer_interface.vision.autocal_solve import to_calibration
+
+    views, truth = synth_views(spec=SPEC)
+    res = solve_autocal(views, capture_recoater_mm=truth.capture_mm, image_size=SIZE)
+    prov = {"method": "auto-sweep", "placement": "substrate", "board_thickness_mm": 3.175}
+    cal = to_calibration(res, version="cal-test", provenance=prov)
+    assert cal.version == "cal-test" and cal.image_size == SIZE
+    assert np.array_equal(cal.H, res.H) and cal.mm_per_px == res.mm_per_px
+    assert cal.bed_extent_mm == res.bed_extent_mm
+    assert cal.provenance == prov
