@@ -26,7 +26,11 @@ import numpy as np
 from vention_printer_interface.vision.events import CaptureRequest, label_to_stage
 from vention_printer_interface.vision.frame_integrity import frame_truncation
 from vention_printer_interface.vision.frame_source import Frame, FrameSource
-from vention_printer_interface.vision.registration import Calibration, register_frame
+from vention_printer_interface.vision.registration import (
+    Calibration,
+    calibration_size_mismatch,
+    register_frame,
+)
 from vention_printer_interface.vision.store import append_manifest, write_capture
 
 log = logging.getLogger(__name__)
@@ -275,7 +279,7 @@ class VisionService:
                 "auto_white_balance": frame.settings.get("auto_white_balance"),
             },
             "lens_notes": None,
-            "calibration": self._calibration_meta(),
+            "calibration": _calibration_metadata(self._calibration, frame.image),
             "registered_space": registered_space,
         }
 
@@ -331,16 +335,17 @@ class VisionService:
             return frame, True
         return frame, False
 
-    def _calibration_meta(self) -> dict[str, Any] | None:
-        return _calibration_metadata(self._calibration)
-
-
-def _calibration_metadata(calibration: Calibration | None) -> dict[str, Any] | None:
+def _calibration_metadata(calibration: Calibration | None, image: Any) -> dict[str, Any] | None:
+    """The sidecar's calibration block. ``applied`` says whether this still was actually measured
+    with the calibration; when not, ``skipped_reason`` says why (a different image size)."""
     if calibration is None:
         return None
+    skipped = calibration_size_mismatch(image, calibration)
     return {
         "version": calibration.version,
-        "image_size": None,
+        "image_size": list(calibration.image_size) if calibration.image_size else None,
+        "applied": skipped is None,
+        "skipped_reason": skipped,
         "camera_matrix": None,
         "distortion_model": None,
         "distortion_coeffs": None,
@@ -387,7 +392,7 @@ def store_uploaded(
                    "device_id": None, "device_index": None},
         "capture": {"requested": None,
                     "actual": {"width": int(image.shape[1]), "height": int(image.shape[0])}},
-        "calibration": _calibration_metadata(calibration),
+        "calibration": _calibration_metadata(calibration, image),
         "registered_space": registered_space,
         "source": "client",
     }

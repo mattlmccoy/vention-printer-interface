@@ -185,6 +185,7 @@ from vention_printer_interface.vision.registration import (
     bed_raster_error,
     calibrate_intrinsics,
     calibrate_intrinsics_boards,
+    calibration_size_mismatch,
     calibration_validation_warning,
     compute_homography,
     detect_board,
@@ -2337,6 +2338,10 @@ def create_app(
         return {
             "cameras": active_roles,
             "calibration": calib.version if calib is not None else None,
+            # the photo size the loaded calibration was fitted on (it is applied only at this size)
+            "calibration_image_size": (
+                list(calib.image_size) if calib is not None and calib.image_size else None
+            ),
             "queue": {"drops": vision.drops if vision is not None else 0},
             "active": bool(active_roles),
             "roles_resolved": not unresolved,
@@ -2862,8 +2867,10 @@ def create_app(
     def _calib_session_state() -> dict[str, Any]:
         spec: BoardSpec | None = app.state.calib_session_spec
         views: list[BoardDetection] = app.state.calib_session_views
+        size = app.state.calib_session_image_size
         return {
             "n_views": len(views),
+            "image_size": list(size) if size is not None else None,
             "spec": dataclasses.asdict(spec) if spec is not None else None,
             "ready": len(views) >= _MIN_CALIB_VIEWS,
             "coverage": dataclasses.asdict(coverage(app.state.calib_session_cov)),
@@ -2895,7 +2902,19 @@ def create_app(
     def _accumulate_calibration_view(image: np.ndarray, spec: BoardSpec) -> dict[str, Any]:
         """Detect the session board in one frame and, if found, accumulate it. Shared by the
         server-grab and browser-upload capture endpoints so both feed calibration identically.
-        Never raises on a blank/board-less frame: reports ``{captured: false, reason}``."""
+        Never raises on a blank/board-less frame: reports ``{captured: false, reason}``.
+        All photos of a session must be ONE size: intrinsics are fitted at a single resolution."""
+        size = (int(image.shape[1]), int(image.shape[0]))
+        first = app.state.calib_session_image_size
+        if first is not None and tuple(first) != size:
+            return {
+                "captured": False,
+                "reason": (
+                    f"photo size {size[0]}x{size[1]} differs from this session's earlier photos "
+                    f"({first[0]}x{first[1]}); keep the science camera at one resolution, or "
+                    "start a new session"
+                ),
+            }
         detection = detect_board(image, spec)
         if detection is None:
             return {"captured": False, "reason": "no board detected in frame"}
@@ -3023,6 +3042,7 @@ def create_app(
             "reprojection_error": err,
             "calibration_version": version,
             "n_views": len(views),
+            "image_size": [image_size[0], image_size[1]],
         }
 
     # ---- checkerboard-validation mode --------------------------------------------------------
@@ -3066,6 +3086,9 @@ def create_app(
         corners -> undistort -> bed-mm homography -> rigid (no-scale) align onto the known grid ->
         residuals (mm). A separate scale_bias catches a pure scale error the no-scale fit ignores.
         ``passed`` is advisory vs ``target_mm`` (the ±0.05 mm band)."""
+        mismatch = calibration_size_mismatch(image, calib)
+        if mismatch is not None:  # scoring it would validate a calibration prints never use
+            raise HTTPException(400, f"validation {mismatch}")
         detection = detect_board(image, spec)
         if detection is None:
             raise HTTPException(400, "checkerboard not detected in frame")
@@ -3087,6 +3110,7 @@ def create_app(
             "n_points": int(len(known_mm)),
             "target_mm": target_mm,
             "passed": bool(scored["max_mm"] <= target_mm),
+            "image_size": [int(image.shape[1]), int(image.shape[0])],
         }
 
     @app.post("/api/vision/validate/scale-upload")

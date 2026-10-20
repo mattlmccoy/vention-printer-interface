@@ -1596,7 +1596,9 @@ def test_validate_scale_upload_runs_through_a_real_calibration(tmp_path: Path) -
                      "use_last_capture_as_bed": True})
         assert app.state.vision.calibration is not None  # a calibration is now active
         # Browser-image validate reaches detection end-to-end; a blank frame -> "not detected", 400.
-        ok, buf = cv2.imencode(".png", np.full((480, 640, 3), 255, np.uint8))
+        # (At the calibrated photo size: another size is refused before detection.)
+        w, h = app.state.vision.calibration.image_size
+        ok, buf = cv2.imencode(".png", np.full((h, w, 3), 255, np.uint8))
         r = c.post("/api/vision/validate/scale-upload"
                    "?cols=9&rows=6&square_size_mm=20&certified_mm=20", content=bytes(buf.tobytes()))
         assert r.status_code == 400 and "detect" in r.json()["detail"].lower()

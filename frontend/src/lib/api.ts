@@ -99,7 +99,7 @@ export interface BacklashSession { state: "idle" | "running" | "done" | "cancell
 // Persisted backlash cal history (survives restarts) — see backend control/backlash_history.py.
 export interface BacklashHistoryItem { id: string; saved_utc: string; axis: number; recommended_mm: number | null; n_positions: number }
 export interface BacklashRecord { id: string; saved_utc: string; axis: number; recommended_mm: number | null; positions: BacklashPositionResult[] }
-export interface VisionStatus { cameras: string[]; calibration: string | null; queue: { drops: number }; active: boolean; roles_resolved: boolean; unresolved: string[] }
+export interface VisionStatus { cameras: string[]; calibration: string | null; calibration_image_size?: [number, number] | null; queue: { drops: number }; active: boolean; roles_resolved: boolean; unresolved: string[] }
 export interface VisionCameraSpec { role: string; index: number; path: string | null; backend: number | null; width: number | null; height: number | null }
 export interface VisionCameras { overview: VisionCameraSpec; science: VisionCameraSpec }
 // GET /api/vision/devices (A7) — see backend vention_printer_interface/api/app.py's
@@ -179,8 +179,8 @@ export interface VisionBoardSpecBody {
 }
 // GET/POST /api/vision/calibrate/session — see backend app.py's `_calib_session_state`.
 export interface CalibCoverage { cells_filled: number; tilt_bins_filled: number; enough: boolean; gaps: string[]; total_views: number }
-export interface VisionCalibSession { n_views: number; spec: Record<string, unknown> | null; ready: boolean; coverage?: CalibCoverage }
-export interface VisionValidateScaleResult { rms_mm: number; max_mm: number; scale_bias: number; n_points: number; target_mm: number; passed: boolean; per_point?: Array<{ error_mm: number }> }
+export interface VisionCalibSession { n_views: number; image_size?: [number, number] | null; spec: Record<string, unknown> | null; ready: boolean; coverage?: CalibCoverage }
+export interface VisionValidateScaleResult { rms_mm: number; max_mm: number; scale_bias: number; n_points: number; target_mm: number; passed: boolean; per_point?: Array<{ error_mm: number }>; image_size?: [number, number] }
 // Camera-center sweep (browser-driven): the client steps the recoater + captures a science frame
 // per pose; the server scores each frame's bore offset and picks the centering recoater pose.
 export interface CenterSweepSample { recoater_mm: number; offset_px: number | null }
@@ -205,6 +205,7 @@ export interface VisionCalibFinalizeResult {
   reprojection_error: number;
   calibration_version: string;
   n_views: number;
+  image_size?: [number, number];
 }
 // POST /api/vision/validate result — see backend app.py's `vision_validate`.
 export interface VisionValidateResult { rms_mm: number; max_mm: number; per_point: unknown; scale_bias: number; n_points: number }

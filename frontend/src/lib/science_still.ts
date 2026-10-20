@@ -13,7 +13,8 @@ import {
 } from "./camera_ready.ts";
 import { loadRoleMap } from "./camera_roles.ts";
 import { loadCameraSettings } from "./overview_settings.ts";
-import { grabScienceStill } from "../components/ScienceCaptureClient.tsx";
+import { lightweightEnabled } from "./camera_mode.ts";
+import { fullResScienceStill, grabScienceStill } from "../components/ScienceCaptureClient.tsx";
 
 export async function captureScienceStillOnce(storage: Storage | null): Promise<Blob> {
   const deviceId = loadRoleMap(storage).science;
@@ -24,11 +25,23 @@ export async function captureScienceStillOnce(storage: Storage | null): Promise<
   if (!md?.getUserMedia) {
     throw new Error("This browser can't open cameras (getUserMedia unavailable).");
   }
-  const [w, h] = loadCameraSettings(storage, "science").resolution.split("x").map(Number);
+  const resolution = loadCameraSettings(storage, "science").resolution;
+  const [w, h] = resolution.split("x").map(Number);
   const requested = { width: w || 1920, height: h || 1080 };
   const video = document.createElement("video");
   video.muted = true;
   video.playsInline = true;
+
+  // Lightweight camera mode: print stills are raw full-resolution frames taken with the science
+  // camera alone, so calibration/validation stills must be taken the same way — a calibration only
+  // holds at the photo size it was fitted on (2026-10-20: these used the <=1080p stream instead).
+  if (lightweightEnabled()) {
+    const r = await fullResScienceStill(deviceId, resolution, video);
+    if (r.blob) return r.blob;
+    throw new Error(
+      `Could not grab a full-resolution science frame (lightweight camera mode): ${r.attempts.join("; ") || "no reason recorded"}`,
+    );
+  }
 
   // Same fallback ladder as the print-capture client: full still constraints, then a lighter preview.
   const reasons: string[] = [];
