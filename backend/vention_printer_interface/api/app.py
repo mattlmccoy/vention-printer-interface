@@ -134,6 +134,7 @@ from vention_printer_interface.recording.recorder import Recorder, list_runs_in
 from vention_printer_interface.timing_config import TimingConfig, load_timing, save_timing
 from vention_printer_interface.vision.avfoundation import list_avf_cameras
 from vention_printer_interface.vision.board_gen import (
+    PRESET_CUT_DIAMETER_MM,
     BoardSpecError,
     generate_charuco_dxf,
     generate_charuco_svg,
@@ -2684,11 +2685,14 @@ def create_app(
         label: bool = True,
         cut_outline: bool = True,
         scale_bar: bool = True,
+        cut_diameter_mm: float | None = None,
     ) -> Response:
         """Generate a TRUE-VECTOR ChArUco calibration board (SVG or DXF) for laser engraving.
 
         Each black (or white) area is one filled shape; ``scale_bar`` adds a round-length
-        caliper bar in the top margin so the engraved board's true size can be checked.
+        caliper bar so the engraved board's true size can be checked. ``cut_diameter_mm`` > 0
+        cuts the board as a circle of that diameter (for a round build cylinder), 0 as the
+        rectangle; omitted, the preset's default applies (``small_cylinder``: a 100 mm circle).
 
         Either a named ``preset`` (with optional explicit field overrides) or an explicit
         ``squares_x``/``squares_y``/``square_mm``/``marker_mm`` set must be supplied. With no
@@ -2746,6 +2750,8 @@ def create_app(
             raise HTTPException(400, f"invalid board spec: {exc}") from exc
 
         polarity = "black" if engrave_black else "white"
+        if cut_diameter_mm is None and preset is not None:
+            cut_diameter_mm = PRESET_CUT_DIAMETER_MM.get(preset)
         try:
             if fmt == "svg":
                 content: str | bytes = generate_charuco_svg(
@@ -2754,6 +2760,7 @@ def create_app(
                     label=label,
                     cut_outline=cut_outline,
                     scale_bar=scale_bar,
+                    cut_diameter_mm=cut_diameter_mm,
                 )
                 media_type = "image/svg+xml"
             else:
@@ -2763,6 +2770,7 @@ def create_app(
                     label=label,
                     cut_outline=cut_outline,
                     scale_bar=scale_bar,
+                    cut_diameter_mm=cut_diameter_mm,
                 )
                 media_type = "application/dxf"
         # SystemError: cv2 signals some bad board inputs this way (last-resort; validation above

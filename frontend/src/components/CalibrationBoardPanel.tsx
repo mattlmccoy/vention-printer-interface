@@ -1,7 +1,7 @@
 import { useEffect, useState } from "react";
 import {
   BOARD_PRESETS, DEFAULT_BOARD, boardConfigError, boardGeometry, boardQuery, fetchBoardPreview, markersNeeded, pickArucoDict,
-  type BoardConfig,
+  withPreset, type BoardConfig,
 } from "../lib/board.ts";
 import { boardDefFromConfig, saveBoardDef } from "../lib/board_def.ts";
 
@@ -81,7 +81,7 @@ export function CalibrationBoardPanel({ base }: { base: string }) {
       </div>
       <div className="fields" style={{ marginTop: 16 }}>
         <span title="A stock size, or Custom to enter your own grid + square/marker dimensions.">preset</span>
-        <select value={cfg.preset} onChange={(e) => set({ preset: e.target.value as BoardConfig["preset"] })}>
+        <select value={cfg.preset} onChange={(e) => setCfg((c) => withPreset(c, e.target.value as BoardConfig["preset"]))}>
           {BOARD_PRESETS.map((p) => <option key={p.value} value={p.value}>{p.label}</option>)}
           <option value="custom">custom — enter your own size</option>
         </select>
@@ -111,6 +111,11 @@ export function CalibrationBoardPanel({ base }: { base: string }) {
           <input type="checkbox" checked={cfg.cutOutline} onChange={(e) => set({ cutOutline: e.target.checked })} />
           {" "}cut the board out (red CUT layer at the perimeter)
         </label>
+        <span data-tip="Cut the board as a circle of this diameter so it drops into a round build cylinder (the pattern, scale bar and label are fitted inside it with 1 mm to spare). 0 cuts a rectangle.">round cut Ø (mm)</span>
+        <span className="row" style={{ gap: 6 }}>
+          <input type="number" min={0} step={0.5} value={cfg.cutDiameterMm} onChange={(e) => set({ cutDiameterMm: Math.max(0, Number(e.target.value) || 0) })} style={{ width: 80 }} />
+          <span className="hint" style={{ margin: 0 }}>{cfg.cutDiameterMm > 0 ? "circle" : "rectangle"}</span>
+        </span>
         <span data-tip="Engraves a bar of a round length (100 mm when it fits) in the top margin. Measure it with calipers after engraving: if it isn't that length, the laser job was scaled.">scale bar</span>
         <label className="row">
           <input type="checkbox" checked={cfg.scaleBar} onChange={(e) => set({ scaleBar: e.target.checked })} />

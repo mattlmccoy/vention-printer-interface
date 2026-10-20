@@ -5,7 +5,7 @@
  * for each, and the same query is reused (with format=svg) to render a non-saved inline preview. */
 
 export const BOARD_PRESETS = [
-  { value: "small_cylinder", label: "small — fits Ø101.6 mm (4 in) cylinder top" },
+  { value: "small_cylinder", label: "small — round cut, fits a Ø100 mm cylinder" },
   { value: "medium_5x7", label: "medium — 5×7" },
   { value: "large_6x9", label: "large — 6×9" },
 ] as const;
@@ -21,6 +21,8 @@ export interface BoardConfig {
   cutOutline: boolean;
   /** Engrave a round-length caliper bar (e.g. 100 mm) in the top margin to check the true size. */
   scaleBar: boolean;
+  /** Circular cut diameter in mm (for a round build cylinder); 0 = rectangular cut. */
+  cutDiameterMm: number;
   squaresX: number;
   squaresY: number;
   squareMm: number;
@@ -33,6 +35,7 @@ export const DEFAULT_BOARD: BoardConfig = {
   engraveBlack: true,
   cutOutline: true,
   scaleBar: true,
+  cutDiameterMm: 0,
   squaresX: 5,
   squaresY: 7,
   squareMm: 12,
@@ -56,7 +59,18 @@ export function boardQuery(cfg: BoardConfig, formatOverride?: BoardFormat): stri
   p.set("engrave_black", String(cfg.engraveBlack));
   p.set("cut_outline", String(cfg.cutOutline));
   p.set("scale_bar", String(cfg.scaleBar));
+  p.set("cut_diameter_mm", String(cfg.cutDiameterMm));
   return p.toString();
+}
+
+/** Circular-cut default per preset — mirrors backend board_gen.PRESET_CUT_DIAMETER_MM. */
+export const PRESET_CUT_DIAMETER_MM: Partial<Record<BoardPreset, number>> = { small_cylinder: 100 };
+
+/** Switch preset: a named preset brings its own cut (the small board drops into a Ø100 mm
+ *  cylinder, so it is cut round); Custom keeps whatever cut you had. */
+export function withPreset(cfg: BoardConfig, preset: BoardConfig["preset"]): BoardConfig {
+  if (preset === "custom") return { ...cfg, preset };
+  return { ...cfg, preset, cutDiameterMm: PRESET_CUT_DIAMETER_MM[preset] ?? 0 };
 }
 
 /** Grid bounds — mirror backend board_gen.MIN_SQUARES / MAX_SQUARES. A board 1 square wide makes

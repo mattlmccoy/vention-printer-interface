@@ -341,7 +341,9 @@ def test_dxf_roundtrips_and_entity_count_matches_svg_regions() -> None:
 
 
 # --- M-3: generate -> detect round trip (strengthens the "detectable" guarantee) -------------
-def _rasterize_black_polarity(spec: BoardSpec, *, px_per_mm: float) -> np.ndarray:
+def _rasterize_black_polarity(
+    spec: BoardSpec, *, px_per_mm: float, cut_diameter_mm: float | None = None
+) -> np.ndarray:
     """Draw the generated (engrave_black=True) board geometry to a numpy image.
 
     White background, the generated regions filled black with the even-odd rule the SVG
@@ -350,7 +352,9 @@ def _rasterize_black_polarity(spec: BoardSpec, *, px_per_mm: float) -> np.ndarra
     no rendering path other than the one this test is verifying. Exact for rectilinear loops:
     every vertical edge toggles the pixels to its right (pixel centres), then XOR along x.
     """
-    svg = generate_charuco_svg(spec, engrave_black=True, label=False)
+    svg = generate_charuco_svg(
+        spec, engrave_black=True, label=False, cut_diameter_mm=cut_diameter_mm
+    )
     m = _SVG_OPEN_RE.search(svg)
     assert m is not None
     total_w, total_h = (float(v) for v in m.group("vb").split()[2:4])
@@ -527,14 +531,14 @@ def test_board_generation_runs_one_at_a_time(monkeypatch: pytest.MonkeyPatch) ->
     guard = threading.Lock()
     real = board_gen._filled_cells
 
-    def _slow_cells(spec: BoardSpec, *, engrave_black: bool) -> Any:
+    def _slow_cells(spec: BoardSpec, *, engrave_black: bool, **kw: Any) -> Any:
         nonlocal active, peak
         with guard:
             active += 1
             peak = max(peak, active)
         time.sleep(0.05)
         try:
-            return real(spec, engrave_black=engrave_black)
+            return real(spec, engrave_black=engrave_black, **kw)
         finally:
             with guard:
                 active -= 1
@@ -593,3 +597,105 @@ def test_scale_bar_is_engraved_in_both_polarities_and_in_the_dxf() -> None:
     dxf = generate_charuco_dxf(_SPEC, label=False)
     texts = [t.dxf.text for t in ezdxf.read(io.StringIO(dxf.decode())).modelspace().query("TEXT")]
     assert "100 mm" in texts
+
+
+# ---- circular cut: the small board must drop into a 100 mm cylinder ---------------------------
+# 2026-10-20: the small board was cut as a 96 mm square (135.8 mm across the corners) and could
+# not go into the Ø100 mm build cylinder. A circular cut keeps the 64 mm pattern (90.5 mm across)
+# and moves the scale bar + label into the curved gaps.
+_CIRCLE_CLEARANCE_MM = 1.0
+
+
+def _circle(svg: str) -> tuple[float, float, float]:
+    m = re.search(
+        r'<circle class="cut" cx="(?P<cx>[-\d.]+)" cy="(?P<cy>[-\d.]+)" r="(?P<r>[-\d.]+)" '
+        r'fill="none" stroke="#ff0000"',
+        svg,
+    )
+    assert m is not None, "no circular cut in the SVG"
+    return float(m.group("cx")), float(m.group("cy")), float(m.group("r"))
+
+
+def test_circular_cut_is_a_100mm_circle_on_a_100mm_canvas() -> None:
+    svg = generate_charuco_svg(resolve_preset("small_cylinder"), cut_diameter_mm=100.0)
+    assert _circle(svg) == (50.0, 50.0, 50.0)
+    m = _SVG_OPEN_RE.search(svg)
+    assert m is not None and m.group("w") == "100mm" and m.group("h") == "100mm"
+    assert '<path class="cut"' not in svg  # no square outline any more
+
+
+def test_everything_engraved_sits_inside_the_circle_with_clearance() -> None:
+    spec = resolve_preset("small_cylinder")
+    svg = generate_charuco_svg(spec, cut_diameter_mm=100.0)
+    cx, cy, r = _circle(svg)
+    for region in _regions(svg):
+        for loop in region["loops"]:
+            for x, y in loop:
+                assert math.hypot(x - cx, y - cy) <= r - _CIRCLE_CLEARANCE_MM + 1e-6, (
+                    region["cls"], x, y)
+    # the pattern is centred, so it has the same clearance on every side
+    sq = [r_ for r_ in _regions(svg) if r_["cls"] in ("sq", "bit")]
+    xs = [x for r_ in sq for loop in r_["loops"] for x, _ in loop]
+    assert min(xs) + max(xs) == pytest.approx(2 * cx)
+
+
+def test_circular_board_keeps_a_scale_bar_and_names_its_length_in_the_label() -> None:
+    svg = generate_charuco_svg(resolve_preset("small_cylinder"), cut_diameter_mm=100.0)
+    scale = [r_ for r_ in _regions(svg) if r_["cls"] == "scale"]
+    assert len(scale) == 1
+    x0, _, x1, _ = _bbox(scale[0])
+    assert x1 - x0 == pytest.approx(50.0, abs=1e-6)
+    assert "bar=50mm" in svg  # no room beside the bar, so the label carries its length
+
+
+def test_circular_board_label_is_centred_and_fits_inside_the_circle() -> None:
+    svg = generate_charuco_svg(resolve_preset("small_cylinder"), cut_diameter_mm=100.0)
+    cx, cy, r = _circle(svg)
+    m = re.search(
+        r'<text class="label" x="(?P<x>[-\d.]+)" y="(?P<y>[-\d.]+)" text-anchor="middle" '
+        r'font-family="monospace" font-size="(?P<f>[-\d.]+)"[^>]*>(?P<t>[^<]+)</text>',
+        svg,
+    )
+    assert m is not None, "label missing or not centred"
+    x, y, f = float(m.group("x")), float(m.group("y")), float(m.group("f"))
+    half_w = len(m.group("t")) * 0.6 * f / 2  # monospace advance ~0.6 em
+    assert x == pytest.approx(cx)
+    for corner_y in (y, y - f):  # baseline and an ascender-height top
+        assert math.hypot(half_w, corner_y - cy) <= r - _CIRCLE_CLEARANCE_MM
+
+
+def test_circular_board_is_still_fully_detected() -> None:
+    from vention_printer_interface.vision.registration import detect_board
+
+    spec = resolve_preset("small_cylinder")
+    image = _rasterize_black_polarity(spec, px_per_mm=10.0, cut_diameter_mm=100.0)
+    detection = detect_board(image, spec)
+    assert detection is not None
+    n_inner = (spec.squares_x - 1) * (spec.squares_y - 1)
+    assert {int(i) for i in detection.ids.ravel()} == set(range(n_inner))
+
+
+def test_a_circle_too_small_for_the_pattern_is_refused() -> None:
+    from vention_printer_interface.vision.board_gen import BoardSpecError
+
+    with pytest.raises(BoardSpecError, match="circle"):
+        generate_charuco_svg(resolve_preset("small_cylinder"), cut_diameter_mm=80.0)
+
+
+def test_dxf_circular_cut_is_a_circle_on_the_cut_layer() -> None:
+    import io
+
+    import ezdxf
+
+    dxf = generate_charuco_dxf(resolve_preset("small_cylinder"), cut_diameter_mm=100.0)
+    msp = ezdxf.read(io.StringIO(dxf.decode())).modelspace()
+    circles = msp.query('CIRCLE[layer=="CUT"]')
+    assert len(circles) == 1
+    assert circles[0].dxf.radius == pytest.approx(50.0)
+    assert len(msp.query('LWPOLYLINE[layer=="CUT"]')) == 0
+
+
+def test_small_cylinder_preset_defaults_to_the_100mm_circle() -> None:
+    from vention_printer_interface.vision.board_gen import PRESET_CUT_DIAMETER_MM
+
+    assert PRESET_CUT_DIAMETER_MM == {"small_cylinder": 100.0}

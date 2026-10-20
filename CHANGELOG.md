@@ -3,6 +3,11 @@
 Notable changes to the Vention Printer Interface. Versions follow semantic versioning; each entry
 corresponds to a tagged merge to `main`.
 
+## v0.13.3 — 2026-10-20
+
+### Changed
+- **The small calibration board is cut round so it fits the Ø100 mm build cylinder.** It used to be cut as a 96 mm square (135.8 mm across the corners). The `small_cylinder` preset now cuts a 100 mm circle with the 64 mm pattern centred; the 50 mm scale bar and the label (which names the bar length) sit in the curved gaps, everything at least 1 mm inside the cut. Any board can take a round cut (`cut_diameter_mm`, console: "round cut Ø"); a circle too small for the pattern is refused with the diameter it would need.
+
 ## v0.13.2 — 2026-10-20
 
 ### Fixed

@@ -2,8 +2,22 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import {
   DEFAULT_BOARD, PRESET_GEOMETRY, boardConfigError, boardGeometry, boardQuery, fetchBoardPreview, markersNeeded, pickArucoDict,
-  type BoardConfig,
+  withPreset, type BoardConfig,
 } from "./board.ts";
+
+test("boardQuery sends the cut diameter (0 = rectangle)", () => {
+  assert.equal(new URLSearchParams(boardQuery(DEFAULT_BOARD)).get("cut_diameter_mm"), "0");
+  const circle = boardQuery({ ...DEFAULT_BOARD, cutDiameterMm: 100 });
+  assert.equal(new URLSearchParams(circle).get("cut_diameter_mm"), "100");
+});
+
+test("choosing the small cylinder preset switches to its 100 mm circular cut, others to a rectangle", () => {
+  const small = withPreset(DEFAULT_BOARD, "small_cylinder");
+  assert.equal(small.preset, "small_cylinder");
+  assert.equal(small.cutDiameterMm, 100);
+  assert.equal(withPreset(small, "large_6x9").cutDiameterMm, 0);
+  assert.equal(withPreset(small, "custom").cutDiameterMm, 100); // custom keeps what you had
+});
 
 test("boardQuery sends the cut-outline flag (on by default, off when disabled)", () => {
   assert.equal(new URLSearchParams(boardQuery(DEFAULT_BOARD)).get("cut_outline"), "true");

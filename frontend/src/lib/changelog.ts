@@ -11,6 +11,13 @@ export interface Release {
 
 export const CHANGELOG: Release[] = [
   {
+    version: "0.13.3",
+    date: "2026-10-20",
+    changes: [
+      "The small calibration board is cut as a 100 mm circle so it drops into the build cylinder; any board can take a round cut (round cut Ø).",
+    ],
+  },
+  {
     version: "0.13.2",
     date: "2026-10-20",
     changes: [
