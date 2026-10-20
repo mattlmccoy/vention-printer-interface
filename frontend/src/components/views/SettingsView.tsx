@@ -13,6 +13,7 @@ import { CameraInventoryPanel } from "../CameraInventoryPanel.tsx";
 import { CameraSettingsPanel } from "../CameraSettingsPanel.tsx";
 import { LightweightCameraToggle } from "../LightweightCameraToggle.tsx";
 import { CalibrationWizard } from "../CalibrationWizard.tsx";
+import { AutoCalibrationPanel } from "../AutoCalibrationPanel.tsx";
 import { waitSettled as sharedWaitSettled } from "../../lib/autocal.ts";
 import { parseFinalizeInputs } from "../../lib/calib_finalize.ts";
 import { ValidationPanel } from "../ValidationPanel.tsx";
@@ -701,8 +702,12 @@ export function SettingsView({ status, gates, call, base, onOpenQuickStart }: {
           {sel === "board" && <CalibrationBoardPanel base={base} />}
           {sel === "calib" && (
             <div className="grid-gap">
-              <div className="hint" style={{ marginTop: 0 }}>Capture ≥3 board views from different bed positions / tilts, then finalize with "use the last board view as the bed reference" ticked — that sets the bed plane so mm map to the bed, not the camera.</div>
-              <CalibrationWizard call={call} printing={gates.printActive} />
+              <AutoCalibrationPanel status={status} printing={gates.printActive} />
+              <details>
+                <summary>Advanced (manual capture)</summary>
+                <div className="hint">Capture ≥6 board views across the frame and at two or more tilts, then finalize with "use the last board view as the bed reference" ticked — that sets the bed plane so mm map to the bed, not the camera.</div>
+                <CalibrationWizard call={call} printing={gates.printActive} />
+              </details>
             </div>
           )}
           {sel === "validate" && <ValidationPanel call={call} printing={gates.printActive} />}

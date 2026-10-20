@@ -445,7 +445,7 @@ export const api = {
 };
 
 export interface AutocalStartBody {
-  spec: { kind: "charuco"; squares_x: number; squares_y: number; square_length_mm: number; marker_length_mm: number; aruco_dict?: string | null };
+  spec: VisionBoardSpecBody;  // a ChArUco spec (sessionSpecFromDef)
   window_min_mm: number;
   window_max_mm: number;
   step_mm?: number;

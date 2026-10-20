@@ -135,7 +135,7 @@ export function CalibrationWizard({ call, printing }: { call: Call; printing: bo
             }))}
           </div>
           <div className="hint" style={{ marginTop: 4, textTransform: "none", letterSpacing: 0 }}>
-            {session.coverage.tilt_bins_filled}/3 tilt angles{session.coverage.gaps.includes("tilt") ? " — tilt the board more" : " ✓"} · {session.coverage.total_views} views{session.coverage.enough ? " · ✓ enough" : ""}
+            {session.coverage.cells_filled}/9 cells (need 6) · {session.coverage.tilt_bins_filled} tilt ranges (need 2){session.coverage.gaps.includes("tilt") ? " — tilt the board more" : " ✓"} · {session.coverage.total_views} views (need 6){session.coverage.enough ? " · ✓ enough" : ""}
           </div>
         </div>
       )}
