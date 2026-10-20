@@ -53,6 +53,10 @@ from vention_printer_interface.vision.registration import (
 
 DEFAULT_WINDOW = (0.0, 523.0)  # Matt, 2026-10-20: 523 mm is the farthest safe extent (blade)
 PLANE_NOTE = "board top surface, assumed print plane"
+# Every sweep position (incl. the capture pose) is approached going DOWN in mm. Prints reach the
+# capture pose from above for pre_jet and from below for post_jet, so recoater backlash can offset
+# post_jet stills; recorded so it can be checked once backlash on axis 4 is measured.
+APPROACH_NOTE = "from above (descending mm)"
 
 
 class AutocalBoard(BaseModel):
@@ -182,11 +186,12 @@ def register_autocal_routes(
             raise HTTPException(400, "could not decode uploaded image")
         size = (int(image.shape[1]), int(image.shape[0]))
         if s["image_size"] is not None and tuple(s["image_size"]) != size:
+            # A resolution change FAILS the run: a calibration only holds at one photo size, and a
+            # quiet "board not found" would let a sweep finish on the old size and pass.
             first = s["image_size"]
-            return {"usable": False, "corners": 0, "image_size": list(size),
-                    "reason": (f"photo size {size[0]}x{size[1]} differs from this run's "
-                               f"{first[0]}x{first[1]}; keep the science camera at one "
-                               "resolution and start again")}
+            raise HTTPException(409, (
+                f"photo size {size[0]}x{size[1]} differs from this run's {first[0]}x{first[1]}; "
+                "keep the science camera at one resolution and start again"))
         det = detect_board(image, s["spec"])
         pts = (np.zeros((0, 2)) if det is None
                else np.asarray(det.image_points, float).reshape(-1, 2))
@@ -241,7 +246,7 @@ def register_autocal_routes(
         provenance = {
             "method": "auto-sweep", "placement": s["placement"],
             "board_thickness_mm": s["board_thickness_mm"], "plane_note": PLANE_NOTE,
-            "capture_recoater_mm": s["plan"].capture_mm,
+            "capture_recoater_mm": s["plan"].capture_mm, "approach": APPROACH_NOTE,
             "window": {"min_mm": s["window"][0], "max_mm": s["window"][1]},
             "board": dataclasses.asdict(s["spec"]), "scale_ratio": res.scale_ratio,
             "shift_rms_mm": res.shift_rms_mm, "shift_worst_mm": res.shift_worst_mm,

@@ -36,6 +36,7 @@ export function AutoCalibrationPanel({ status, printing }: { status: StatusPaylo
   const [err, setErr] = useState<string | null>(null);
   const [returnArmed, setReturnArmed] = useState(false);
   const stopRef = useRef(false);
+  const runningRef = useRef(false);
 
   useEffect(() => {
     api.printSettings().then((p) => {
@@ -45,10 +46,14 @@ export function AutoCalibrationPanel({ status, printing }: { status: StatusPaylo
     api.autocalWindow().then((w) => { setWinMin(String(w.min_mm)); setWinMax(String(w.max_mm)); }).catch(() => undefined);
   }, []);
 
-  const problems = [
-    ...(printing ? ["A print is running — wait until it finishes."] : []),
-    ...preflight({ status, capturePoseMm: capturePose, scienceAssigned: !!loadRoleMap(storage).science, boardOk: !boardErr }),
-  ];
+  const check = (s: StatusPayload | null) => preflight({
+    status: s, capturePoseMm: capturePose, scienceAssigned: !!loadRoleMap(storage).science, boardOk: !boardErr,
+    printActive: printing || s?.print?.state === "running" || s?.print?.state === "paused",  // = gates.printActive
+  });
+  const problems = check(status);
+  // Re-check against a FRESH status right before any motion (the machine can change while the
+  // confirm screen is open: power-cycle -> unreferenced, a print starting, ...).
+  const freshProblems = async () => check(await api.status().catch(() => null));
   const busy = phase === "running" || phase === "solving";
 
   const plan = async () => {
@@ -63,12 +68,16 @@ export function AutoCalibrationPanel({ status, printing }: { status: StatusPaylo
   };
 
   const run = async () => {
-    if (!session) return;
+    if (!session || runningRef.current) return;
+    const blockers = await freshProblems();
+    if (blockers.length) { setErr(`Not moving: ${blockers.join(" ")}`); return; }
+    runningRef.current = true;
     stopRef.current = false;
     setPhase("running"); setErr(null);
     try {
       const outcome = await runSweep(
-        { poses: session.poses, preApproachMm: session.pre_approach_mm, captureMm: session.capture_mm },
+        { poses: session.poses, preApproachMm: session.pre_approach_mm, captureMm: session.capture_mm,
+          windowMinMm: session.window.min_mm, windowMaxMm: session.window.max_mm },
         {
           move: async (mm) => { await api.move(RECOATER_AXIS, "abs", mm); },
           settle: () => waitSettled(() => api.status(), RECOATER_AXIS),
@@ -98,6 +107,8 @@ export function AutoCalibrationPanel({ status, printing }: { status: StatusPaylo
     } catch (e) {
       setErr(e instanceof Error ? e.message : String(e));
       setPhase("idle");
+    } finally {
+      runningRef.current = false;
     }
   };
 
@@ -107,7 +118,9 @@ export function AutoCalibrationPanel({ status, printing }: { status: StatusPaylo
   };
   const returnToPose = async () => {
     setReturnArmed(false);
-    try { await api.move(RECOATER_AXIS, "abs", capturePose); } catch (e) { setErr(e instanceof Error ? e.message : String(e)); }
+    const blockers = await freshProblems();
+    if (blockers.length) { setErr(`Not moving: ${blockers.join(" ")}`); return; }
+    try { await api.move(RECOATER_AXIS, "abs", session?.capture_mm ?? capturePose); } catch (e) { setErr(e instanceof Error ? e.message : String(e)); }
   };
 
   const last = shots.at(-1);
@@ -148,7 +161,7 @@ export function AutoCalibrationPanel({ status, printing }: { status: StatusPaylo
       )}
       {phase === "confirm" && session && (
         <div className="warnline">
-          The recoater will move to {cleanNum(session.pre_approach_mm, 1)} mm, then step down through {session.poses.length} positions
+          The recoater (now at {(() => { const v = status?.controller?.telemetry?.positions?.[String(RECOATER_AXIS)]; return typeof v === "number" ? `${cleanNum(v, 1)} mm` : "an unknown position"; })()}) will move to {cleanNum(session.pre_approach_mm, 1)} mm, then step down through {session.poses.length} positions
           ({cleanNum(session.poses[0], 1)} → {cleanNum(session.poses.at(-1) ?? 0, 1)} mm), all inside {cleanNum(session.window.min_mm, 1)}–{cleanNum(session.window.max_mm, 1)} mm.
           About {Math.round((session.poses.length + 1) * SECONDS_PER_POSE)} s. Keep clear of the gantry.
           <div className="actions one tight" style={{ marginTop: 8 }}>

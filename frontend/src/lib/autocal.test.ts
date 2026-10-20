@@ -30,7 +30,8 @@ test("preflight lists every missing item", () => {
   assert.match(preflight({ status: null, ...ready }).join(" "), /operator/);
 });
 
-function fakeDeps(usableAt: (mm: number) => boolean, stopAfterMoves = Infinity) {
+function fakeDeps(usableAt: (mm: number) => boolean, stopAfterMoves = Infinity, startMm = 470, stopOnSample = -1) {
+  let samples = 0;
   const calls: string[] = [];
   let moves = 0;
   return {
@@ -39,14 +40,14 @@ function fakeDeps(usableAt: (mm: number) => boolean, stopAfterMoves = Infinity) 
       move: async (mm: number) => { moves++; calls.push(`move ${mm}`); },
       settle: async () => { calls.push("settle"); },
       capture: async () => { calls.push("capture"); return new Blob(["x"]); },
-      readMm: async () => Number(calls.filter((c) => c.startsWith("move")).at(-1)!.split(" ")[1]),
-      sample: async (_b: Blob, mm: number) => { calls.push(`sample ${mm}`); return { usable: usableAt(mm) }; },
-      stopped: () => moves >= stopAfterMoves,
+      readMm: async () => { const m = calls.filter((c) => c.startsWith("move")).at(-1); return m ? Number(m.split(" ")[1]) : startMm; },
+      sample: async (_b: Blob, mm: number) => { samples++; calls.push(`sample ${mm}`); return { usable: usableAt(mm) }; },
+      stopped: () => moves >= stopAfterMoves || (stopOnSample >= 0 && samples >= stopOnSample),
       stopMotion: async () => { calls.push("stop"); },
     },
   };
 }
-const plan = { poses: [473.3, 468.3, 463.3, 458.3, 453.3], preApproachMm: 478.3, captureMm: 463.3 };
+const plan = { poses: [473.3, 468.3, 463.3, 458.3, 453.3], preApproachMm: 478.3, captureMm: 463.3, windowMinMm: 0, windowMaxMm: 523 };
 
 test("runSweep visits the pre-approach then every pose in order", async () => {
   const { calls, d } = fakeDeps(() => true);
@@ -82,4 +83,38 @@ test("waitSettled waits for motion_complete then settles", async () => {
   await waitSettled(async () => status({ complete: seq[Math.min(i++, 2)] }), 4, { sleep: async (ms) => { slept.push(ms); }, settleMs: 400 });
   assert.equal(i, 3);
   assert.equal(slept.at(-1), 400);
+});
+
+// ---- final-review fixes ---------------------------------------------------------------------
+test("runSweep refuses, with no motion, when the recoater starts outside the safety window", async () => {
+  const { calls, d } = fakeDeps(() => true, Infinity, 950);  // parked at the far end
+  await assert.rejects(runSweep(plan, d), /outside the safety window/);
+  assert.equal(calls.filter((c) => c.startsWith("move")).length, 0);
+});
+
+test("runSweep refuses, with no motion, when the start position cannot be read", async () => {
+  const { calls, d } = fakeDeps(() => true, Infinity, Number.NaN);
+  await assert.rejects(runSweep(plan, d), /position/);
+  assert.equal(calls.filter((c) => c.startsWith("move")).length, 0);
+});
+
+test("Stop pressed during the last photo still ends as stopped (nothing solved)", async () => {
+  const { calls, d } = fakeDeps(() => true, Infinity, 470, plan.poses.length);  // stop after the last sample
+  assert.equal(await runSweep(plan, d), "stopped");
+  assert.equal(calls.at(-1), "stop");
+});
+
+test("Stop pressed on the early-exit photo below the capture pose ends as stopped", async () => {
+  const { d } = fakeDeps((mm) => mm > 460, Infinity, 470, 4);  // 4th sample (458.3) is the loss
+  assert.equal(await runSweep(plan, d), "stopped");
+});
+
+test("preflight blocks when the recoater position is not being read", () => {
+  const st = status();
+  (st.controller.telemetry as unknown as { positions: Record<string, number> }).positions = {};
+  assert.match(preflight({ status: st, ...ready }).join(" "), /position/i);
+});
+
+test("preflight blocks while a print is running", () => {
+  assert.match(preflight({ status: status(), ...ready, printActive: true }).join(" "), /print/i);
 });

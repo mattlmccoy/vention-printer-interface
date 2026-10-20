@@ -96,6 +96,7 @@ def test_full_run_passes_and_saves_a_calibration_with_provenance(tmp_path: Path)
         assert prov["method"] == "auto-sweep" and prov["placement"] == "substrate"
         assert prov["board_thickness_mm"] == 3.175
         assert "print plane" in prov["plane_note"]
+        assert prov["approach"] == "from above (descending mm)"
 
 
 def test_save_before_a_passing_solve_is_409(tmp_path: Path) -> None:
@@ -123,8 +124,9 @@ def test_sample_of_another_size_is_refused(tmp_path: Path) -> None:  # Review Fo
         assert c.post(f"/api/vision/autocal/sample?recoater_mm={CAPTURE}",
                       content=_photo(0.0)).json()["usable"] is True
         r = c.post(f"/api/vision/autocal/sample?recoater_mm={CAPTURE - 5}",
-                   content=_photo(-5.0, size=(800, 600))).json()
-        assert r["usable"] is False and "size" in r["reason"]
+                   content=_photo(-5.0, size=(800, 600)))
+        # A resolution change FAILS the run (409 + reason), never a silent "board not found".
+        assert r.status_code == 409 and "size" in r.json()["detail"]
         assert len(c.get("/api/vision/autocal/session").json()["samples"]) == 1
 
 
