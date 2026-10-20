@@ -2,7 +2,7 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import {
   DEFAULT_BOARD, PRESET_GEOMETRY, boardConfigError, boardGeometry, boardQuery, fetchBoardPreview, markersNeeded, pickArucoDict,
-  withPreset, type BoardConfig,
+  withCutShape, withPreset, type BoardConfig,
 } from "./board.ts";
 
 test("boardQuery sends the cut diameter (0 = rectangle)", () => {
@@ -108,4 +108,18 @@ test("fetchBoardPreview surfaces the backend's error detail instead of hiding it
   assert.deepEqual(r2, { ok: false, error: "500 Internal Server Error" });
   const r3 = await fetchBoardPreview("u", undefined, async () => { throw new TypeError("Failed to fetch"); });
   assert.deepEqual(r3, { ok: false, error: "could not reach the operator: Failed to fetch" });
+});
+
+test("the small board can be cut square (to sit on the aluminium substrate) or round (to drop into the cylinder)", () => {
+  const small = withPreset(DEFAULT_BOARD, "small_cylinder");
+  const square = withCutShape(small, "square");
+  assert.equal(square.cutDiameterMm, 0);
+  assert.equal(new URLSearchParams(boardQuery(square)).get("cut_diameter_mm"), "0");
+  const round = withCutShape(square, "round");
+  assert.equal(round.cutDiameterMm, 98.5); // back to the bore-fitting circle
+});
+
+test("switching to round keeps a diameter you already typed", () => {
+  const custom = { ...withPreset(DEFAULT_BOARD, "custom"), cutDiameterMm: 92.6 };
+  assert.equal(withCutShape(custom, "round").cutDiameterMm, 92.6);
 });

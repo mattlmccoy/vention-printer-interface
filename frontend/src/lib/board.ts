@@ -5,7 +5,7 @@
  * for each, and the same query is reused (with format=svg) to render a non-saved inline preview. */
 
 export const BOARD_PRESETS = [
-  { value: "small_cylinder", label: "small — round cut Ø98.5 mm, fits the ~99.2 mm bore" },
+  { value: "small_cylinder", label: "small — 4×4 (round Ø98.5 for the cylinder, or square)" },
   { value: "medium_5x7", label: "medium — 5×7" },
   { value: "large_6x9", label: "large — 6×9" },
 ] as const;
@@ -71,6 +71,19 @@ export const PRESET_CUT_DIAMETER_MM: Partial<Record<BoardPreset, number>> = { sm
 export function withPreset(cfg: BoardConfig, preset: BoardConfig["preset"]): BoardConfig {
   if (preset === "custom") return { ...cfg, preset };
   return { ...cfg, preset, cutDiameterMm: PRESET_CUT_DIAMETER_MM[preset] ?? 0 };
+}
+
+/** Default round-cut diameter: the small board's bore-fitting circle (the backend refuses, with the
+ *  diameter it needs, a circle too small for a bigger pattern). */
+export const DEFAULT_ROUND_CUT_MM = PRESET_CUT_DIAMETER_MM.small_cylinder ?? 98.5;
+
+export type CutShape = "square" | "round";
+
+/** Square cut (e.g. to sit the board on the aluminium substrate, closer to the print plane) or
+ *  round cut (to drop it into the build cylinder). Round keeps a diameter you already set. */
+export function withCutShape(cfg: BoardConfig, shape: CutShape): BoardConfig {
+  if (shape === "square") return { ...cfg, cutDiameterMm: 0 };
+  return { ...cfg, cutDiameterMm: cfg.cutDiameterMm > 0 ? cfg.cutDiameterMm : DEFAULT_ROUND_CUT_MM };
 }
 
 /** Grid bounds — mirror backend board_gen.MIN_SQUARES / MAX_SQUARES. A board 1 square wide makes

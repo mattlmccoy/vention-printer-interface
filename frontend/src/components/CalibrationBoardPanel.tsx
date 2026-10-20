@@ -1,7 +1,7 @@
 import { useEffect, useState } from "react";
 import {
   BOARD_PRESETS, DEFAULT_BOARD, boardConfigError, boardGeometry, boardQuery, fetchBoardPreview, markersNeeded, pickArucoDict,
-  withPreset, type BoardConfig,
+  withCutShape, withPreset, type BoardConfig,
 } from "../lib/board.ts";
 import { boardDefFromConfig, saveBoardDef } from "../lib/board_def.ts";
 
@@ -111,10 +111,15 @@ export function CalibrationBoardPanel({ base }: { base: string }) {
           <input type="checkbox" checked={cfg.cutOutline} onChange={(e) => set({ cutOutline: e.target.checked })} />
           {" "}cut the board out (red CUT layer at the perimeter)
         </label>
-        <span data-tip="Cut the board as a circle of this diameter so it drops into a round build cylinder (the pattern, scale bar and label are fitted inside it with 1 mm to spare). 0 cuts a rectangle.">round cut Ø (mm)</span>
+        <span data-tip="Square: sit the board on the aluminium substrate (closer to the print plane). Round: drop it into the build cylinder (the pattern, scale bar and label are fitted inside the circle with 1 mm to spare).">cut shape</span>
         <span className="row" style={{ gap: 6 }}>
-          <input type="number" min={0} step={0.5} value={cfg.cutDiameterMm} onChange={(e) => set({ cutDiameterMm: Math.max(0, Number(e.target.value) || 0) })} style={{ width: 80 }} />
-          <span className="hint" style={{ margin: 0 }}>{cfg.cutDiameterMm > 0 ? "circle" : "rectangle"}</span>
+          <select value={cfg.cutDiameterMm > 0 ? "round" : "square"} onChange={(e) => setCfg((c) => withCutShape(c, e.target.value as "square" | "round"))}>
+            <option value="square">square — sits on the substrate</option>
+            <option value="round">round — drops into the cylinder</option>
+          </select>
+          {cfg.cutDiameterMm > 0 && <>
+            Ø <input type="number" min={1} step={0.1} value={cfg.cutDiameterMm} onChange={(e) => set({ cutDiameterMm: Math.max(0, Number(e.target.value) || 0) })} style={{ width: 72 }} /> mm
+          </>}
         </span>
         <span data-tip="Engraves a bar of a round length (100 mm when it fits) in the top margin. Measure it with calipers after engraving: if it isn't that length, the laser job was scaled.">scale bar</span>
         <label className="row">
