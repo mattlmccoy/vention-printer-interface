@@ -11,6 +11,14 @@ export interface Release {
 
 export const CHANGELOG: Release[] = [
   {
+    version: "0.13.2",
+    date: "2026-10-20",
+    changes: [
+      "Calibration boards engrave as solid shapes: each black area is one filled shape instead of one rectangle per marker bit, the DXF gets solid fills, and SVG is marked as the recommended laser format.",
+      "Calibration boards carry a caliper scale bar (100 mm, or 50 mm on the small board) so the engraved size can be checked.",
+    ],
+  },
+  {
     version: "0.13.1",
     date: "2026-09-23",
     changes: [

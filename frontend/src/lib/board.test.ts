@@ -11,6 +11,12 @@ test("boardQuery sends the cut-outline flag (on by default, off when disabled)",
   assert.equal(new URLSearchParams(off).get("cut_outline"), "false");
 });
 
+test("boardQuery sends the scale-bar flag (on by default, off when disabled)", () => {
+  assert.equal(new URLSearchParams(boardQuery(DEFAULT_BOARD)).get("scale_bar"), "true");
+  const off = boardQuery({ ...DEFAULT_BOARD, scaleBar: false });
+  assert.equal(new URLSearchParams(off).get("scale_bar"), "false");
+});
+
 test("boardQuery uses preset name and omits explicit geometry for a named preset", () => {
   const q = new URLSearchParams(boardQuery({ ...DEFAULT_BOARD, preset: "large_6x9" }));
   assert.equal(q.get("preset"), "large_6x9");

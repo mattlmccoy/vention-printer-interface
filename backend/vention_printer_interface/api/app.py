@@ -2683,8 +2683,12 @@ def create_app(
         engrave_black: bool = True,
         label: bool = True,
         cut_outline: bool = True,
+        scale_bar: bool = True,
     ) -> Response:
         """Generate a TRUE-VECTOR ChArUco calibration board (SVG or DXF) for laser engraving.
+
+        Each black (or white) area is one filled shape; ``scale_bar`` adds a round-length
+        caliper bar in the top margin so the engraved board's true size can be checked.
 
         Either a named ``preset`` (with optional explicit field overrides) or an explicit
         ``squares_x``/``squares_y``/``square_mm``/``marker_mm`` set must be supplied. With no
@@ -2745,12 +2749,20 @@ def create_app(
         try:
             if fmt == "svg":
                 content: str | bytes = generate_charuco_svg(
-                    spec, engrave_black=engrave_black, label=label, cut_outline=cut_outline
+                    spec,
+                    engrave_black=engrave_black,
+                    label=label,
+                    cut_outline=cut_outline,
+                    scale_bar=scale_bar,
                 )
                 media_type = "image/svg+xml"
             else:
                 content = generate_charuco_dxf(
-                    spec, engrave_black=engrave_black, label=label, cut_outline=cut_outline
+                    spec,
+                    engrave_black=engrave_black,
+                    label=label,
+                    cut_outline=cut_outline,
+                    scale_bar=scale_bar,
                 )
                 media_type = "application/dxf"
         # SystemError: cv2 signals some bad board inputs this way (last-resort; validation above

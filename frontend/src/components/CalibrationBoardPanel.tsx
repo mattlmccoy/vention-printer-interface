@@ -96,10 +96,10 @@ export function CalibrationBoardPanel({ base }: { base: string }) {
           <span title="Side length of each ArUco marker (mm) — must be smaller than the square.">marker (mm)</span>
           <input type="number" min={0} step={0.5} value={cfg.markerMm} onChange={(e) => set({ markerMm: Number(e.target.value) })} style={{ width: 80 }} />
         </>}
-        <span title="SVG for laser cutters that take vector art; DXF for CAD/CAM.">format</span>
+        <span title="SVG carries filled shapes — laser software (Trotec Ruby, LightBurn) engraves them as fills. DXF has fills only as hatches, which some laser software ignores and traces as outlines.">format</span>
         <select value={cfg.format} onChange={(e) => set({ format: e.target.value as BoardConfig["format"] })}>
-          <option value="svg">SVG</option>
-          <option value="dxf">DXF</option>
+          <option value="svg">SVG — recommended for the laser (filled shapes)</option>
+          <option value="dxf">DXF — CAD/CAM (fills as hatches)</option>
         </select>
         <span title="Engrave the dark elements; invert if your top ABS layer is the light color.">engrave polarity</span>
         <label className="row">
@@ -110,6 +110,11 @@ export function CalibrationBoardPanel({ base }: { base: string }) {
         <label className="row">
           <input type="checkbox" checked={cfg.cutOutline} onChange={(e) => set({ cutOutline: e.target.checked })} />
           {" "}cut the board out (red CUT layer at the perimeter)
+        </label>
+        <span data-tip="Engraves a bar of a round length (100 mm when it fits) in the top margin. Measure it with calipers after engraving: if it isn't that length, the laser job was scaled.">scale bar</span>
+        <label className="row">
+          <input type="checkbox" checked={cfg.scaleBar} onChange={(e) => set({ scaleBar: e.target.checked })} />
+          {" "}engrave a caliper scale bar (check the board's true size)
         </label>
       </div>
       {err && <div className="errline">{err}</div>}

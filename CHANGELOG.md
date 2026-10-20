@@ -3,6 +3,14 @@
 Notable changes to the Vention Printer Interface. Versions follow semantic versioning; each entry
 corresponds to a tagged merge to `main`.
 
+## v0.13.2 — 2026-10-20
+
+### Fixed
+- **Calibration boards engrave as solid shapes, not a grid of outlines.** Each black area is now one filled shape (outer edge + holes for white bits) instead of one rectangle per marker bit (489 on the 5×7 board, now 39). A DXF board engraved on Trotec Ruby came out as empty outlined boxes because DXF rectangles carry no fill; the DXF now adds a solid hatch per area, and the SVG (filled shapes) is labelled as the recommended laser format. Squares that only touch at a corner stay separate shapes.
+
+### Added
+- **Caliper scale bar on calibration boards** (on by default): a 100 mm bar (50 mm on the small board) with 10 mm ticks in the top margin, so the engraved board's true size can be checked.
+
 ## v0.13.1 — 2026-09-23
 
 ### Fixed
