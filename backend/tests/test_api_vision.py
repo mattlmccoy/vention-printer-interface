@@ -900,13 +900,13 @@ def test_board_endpoint_scale_bar_defaults_on_and_can_be_turned_off(client: Test
     assert '<path class="scale"' not in off.text
 
 
-def test_board_endpoint_small_cylinder_preset_defaults_to_a_100mm_circle(
+def test_board_endpoint_small_cylinder_preset_defaults_to_a_98p5mm_circle(
     client: TestClient,
 ) -> None:
     r = client.get("/api/vision/board", params={"format": "svg", "preset": "small_cylinder"})
     assert r.status_code == 200
-    assert '<circle class="cut" cx="50" cy="50" r="50"' in r.text
-    assert 'width="100mm"' in r.text
+    assert '<circle class="cut" cx="49.25" cy="49.25" r="49.25"' in r.text
+    assert 'width="98.5mm"' in r.text
 
 
 def test_board_endpoint_cut_diameter_zero_means_rectangle(client: TestClient) -> None:

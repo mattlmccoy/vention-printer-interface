@@ -5,7 +5,7 @@
  * for each, and the same query is reused (with format=svg) to render a non-saved inline preview. */
 
 export const BOARD_PRESETS = [
-  { value: "small_cylinder", label: "small — round cut, fits a Ø100 mm cylinder" },
+  { value: "small_cylinder", label: "small — round cut Ø98.5 mm, fits the ~99.2 mm bore" },
   { value: "medium_5x7", label: "medium — 5×7" },
   { value: "large_6x9", label: "large — 6×9" },
 ] as const;
@@ -64,10 +64,10 @@ export function boardQuery(cfg: BoardConfig, formatOverride?: BoardFormat): stri
 }
 
 /** Circular-cut default per preset — mirrors backend board_gen.PRESET_CUT_DIAMETER_MM. */
-export const PRESET_CUT_DIAMETER_MM: Partial<Record<BoardPreset, number>> = { small_cylinder: 100 };
+export const PRESET_CUT_DIAMETER_MM: Partial<Record<BoardPreset, number>> = { small_cylinder: 98.5 };
 
-/** Switch preset: a named preset brings its own cut (the small board drops into a Ø100 mm
- *  cylinder, so it is cut round); Custom keeps whatever cut you had. */
+/** Switch preset: a named preset brings its own cut (the small board drops into the ~99.2 mm
+ *  build cylinder bore, so it is cut round at 98.5 mm); Custom keeps whatever cut you had. */
 export function withPreset(cfg: BoardConfig, preset: BoardConfig["preset"]): BoardConfig {
   if (preset === "custom") return { ...cfg, preset };
   return { ...cfg, preset, cutDiameterMm: PRESET_CUT_DIAMETER_MM[preset] ?? 0 };

@@ -2692,7 +2692,7 @@ def create_app(
         Each black (or white) area is one filled shape; ``scale_bar`` adds a round-length
         caliper bar so the engraved board's true size can be checked. ``cut_diameter_mm`` > 0
         cuts the board as a circle of that diameter (for a round build cylinder), 0 as the
-        rectangle; omitted, the preset's default applies (``small_cylinder``: a 100 mm circle).
+        rectangle; omitted, the preset's default applies (``small_cylinder``: a 98.5 mm circle).
 
         Either a named ``preset`` (with optional explicit field overrides) or an explicit
         ``squares_x``/``squares_y``/``square_mm``/``marker_mm`` set must be supplied. With no

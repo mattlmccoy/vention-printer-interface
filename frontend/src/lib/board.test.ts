@@ -11,12 +11,12 @@ test("boardQuery sends the cut diameter (0 = rectangle)", () => {
   assert.equal(new URLSearchParams(circle).get("cut_diameter_mm"), "100");
 });
 
-test("choosing the small cylinder preset switches to its 100 mm circular cut, others to a rectangle", () => {
+test("choosing the small cylinder preset switches to its 98.5 mm circular cut, others to a rectangle", () => {
   const small = withPreset(DEFAULT_BOARD, "small_cylinder");
   assert.equal(small.preset, "small_cylinder");
-  assert.equal(small.cutDiameterMm, 100);
+  assert.equal(small.cutDiameterMm, 98.5); // slips into the ~99.2 mm bore
   assert.equal(withPreset(small, "large_6x9").cutDiameterMm, 0);
-  assert.equal(withPreset(small, "custom").cutDiameterMm, 100); // custom keeps what you had
+  assert.equal(withPreset(small, "custom").cutDiameterMm, 98.5); // custom keeps what you had
 });
 
 test("boardQuery sends the cut-outline flag (on by default, off when disabled)", () => {

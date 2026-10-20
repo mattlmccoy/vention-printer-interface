@@ -153,8 +153,9 @@ BOARD_PRESETS: dict[str, BoardSpec] = {
 }
 
 # Presets that must fit a round build cylinder get a circular cut by default (diameter, mm).
-# small_cylinder: the 64 mm pattern is 90.5 mm across the corners, inside Ø100 with clearance.
-PRESET_CUT_DIAMETER_MM: dict[str, float] = {"small_cylinder": 100.0}
+# small_cylinder: the build cylinder bore measures ~99.2 mm; a 98.5 mm cut (~98.3-98.4 mm after
+# kerf) drops in with ~0.4 mm a side. The 64 mm pattern needs >= 92.5 mm (90.5 across + clearance).
+PRESET_CUT_DIAMETER_MM: dict[str, float] = {"small_cylinder": 98.5}
 
 # Colour every filled cell engraves in (single engrave layer). Polarity chooses which cells.
 _ENGRAVE_COLOR = "#000000"

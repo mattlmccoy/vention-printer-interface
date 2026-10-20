@@ -6,9 +6,9 @@ Two cut shapes:
   and its length sit in the top margin, the spec label in the bottom margin.
 * **circle** (``cut_diameter_mm``): for a board that must drop into a round build cylinder. The
   small 4x4 board was cut as a 96 mm square (135.8 mm across the corners) and could not go into
-  the Ø100 mm cylinder (2026-10-20). The pattern is centred in the circle; the scale bar goes in
-  the curved gap above it and the label (which then also names the bar length) in the gap below,
-  each placed only where it stays ``CLEARANCE_MM`` inside the cut.
+  the build cylinder, ~99.2 mm bore (2026-10-20). The pattern is centred in the circle; the scale
+  bar goes in the curved gap above it and the label (which then also names the bar length) in the
+  gap below, each placed only where it stays ``CLEARANCE_MM`` inside the cut.
 
 All coordinates are mm, y down (SVG convention); the DXF writer flips y.
 """

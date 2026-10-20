@@ -695,7 +695,9 @@ def test_dxf_circular_cut_is_a_circle_on_the_cut_layer() -> None:
     assert len(msp.query('LWPOLYLINE[layer=="CUT"]')) == 0
 
 
-def test_small_cylinder_preset_defaults_to_the_100mm_circle() -> None:
+def test_small_cylinder_preset_defaults_to_a_circle_that_slips_into_the_99p2mm_bore() -> None:
+    # The build cylinder bore measures ~99.2 mm (Matt, 2026-10-20). A 98.5 mm cut (~98.3-98.4 mm
+    # after kerf) leaves ~0.4 mm a side so the board drops in without binding.
     from vention_printer_interface.vision.board_gen import PRESET_CUT_DIAMETER_MM
 
-    assert PRESET_CUT_DIAMETER_MM == {"small_cylinder": 100.0}
+    assert PRESET_CUT_DIAMETER_MM == {"small_cylinder": 98.5}
