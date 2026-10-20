@@ -891,6 +891,15 @@ def test_board_endpoint_engrave_black_false_differs(client: TestClient) -> None:
     assert r_true.text != r_false.text
 
 
+def test_board_endpoint_scale_bar_defaults_on_and_can_be_turned_off(client: TestClient) -> None:
+    base = {"format": "svg", "preset": "medium_5x7"}
+    on = client.get("/api/vision/board", params=base)
+    off = client.get("/api/vision/board", params={**base, "scale_bar": "false"})
+    assert on.status_code == 200 and off.status_code == 200
+    assert '<path class="scale"' in on.text and ">100 mm</text>" in on.text
+    assert '<path class="scale"' not in off.text
+
+
 # ---- I-1: GET /api/vision/board must validate params -> 400 (never 500 / CPU-burn) ----------
 def test_board_endpoint_dict_not_a_real_aruco_dictionary_name_returns_400(
     client: TestClient,

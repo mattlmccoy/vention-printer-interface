@@ -25,35 +25,46 @@ from vention_printer_interface.vision.board_gen import (
 from vention_printer_interface.vision.registration import BoardSpec
 
 # --- regex parsers over the generated SVG (attribute order is fixed by the writer) -----------
-_RECT_RE = re.compile(
-    r'<rect class="(?P<cls>[a-z]+)" x="(?P<x>[-\d.]+)" y="(?P<y>[-\d.]+)" '
-    r'width="(?P<w>[-\d.]+)" height="(?P<h>[-\d.]+)"'
+# Each contiguous filled area is ONE <path> (outer loop + hole loops, fill-rule even-odd); the
+# board used to be one <rect> per cell, which Trotec Ruby traced as a grid of outlines.
+_REGION_RE = re.compile(
+    r'<path class="(?P<cls>sq|bit|mg|scale)" d="(?P<d>[^"]+)" fill="#000000" '
+    r'fill-rule="evenodd"/>'
 )
 _SVG_OPEN_RE = re.compile(
     r'<svg[^>]*\bwidth="(?P<w>[^"]+)"[^>]*\bheight="(?P<h>[^"]+)"[^>]*\bviewBox="(?P<vb>[^"]+)"'
 )
 
 
-def _rects(svg: str) -> list[dict[str, Any]]:
+def _regions(svg: str) -> list[dict[str, Any]]:
+    """Every filled region: ``{"cls", "loops": [[(x, y), ...], ...]}`` parsed from its path."""
     out: list[dict[str, Any]] = []
-    for m in _RECT_RE.finditer(svg):
-        out.append(
-            {
-                "cls": m.group("cls"),
-                "x": float(m.group("x")),
-                "y": float(m.group("y")),
-                "w": float(m.group("w")),
-                "h": float(m.group("h")),
-            }
-        )
+    for m in _REGION_RE.finditer(svg):
+        loops = []
+        for sub in m.group("d").split("M")[1:]:
+            nums = [float(v) for v in re.findall(r"[-\d.]+", sub)]
+            loops.append(list(zip(nums[0::2], nums[1::2], strict=True)))
+        out.append({"cls": m.group("cls"), "loops": loops})
     return out
 
 
-def _covered(rects: list[dict[str, Any]], px: float, py: float) -> bool:
-    for r in rects:
-        if r["x"] <= px <= r["x"] + r["w"] and r["y"] <= py <= r["y"] + r["h"]:
-            return True
-    return False
+def _in_region(region: dict[str, Any], px: float, py: float) -> bool:
+    inside = False
+    for loop in region["loops"]:
+        for (x1, y1), (x2, y2) in zip(loop, loop[1:] + loop[:1], strict=True):
+            if (y1 > py) != (y2 > py) and px < x1 + (py - y1) * (x2 - x1) / (y2 - y1):
+                inside = not inside
+    return inside
+
+
+def _covered(regions: list[dict[str, Any]], px: float, py: float) -> bool:
+    return any(_in_region(r, px, py) for r in regions)
+
+
+def _bbox(region: dict[str, Any]) -> tuple[float, float, float, float]:
+    pts = [p for loop in region["loops"] for p in loop]
+    xs, ys = [p[0] for p in pts], [p[1] for p in pts]
+    return min(xs), min(ys), max(xs), max(ys)
 
 
 # --- canonical-board helpers, captured from the real cv2.aruco object ------------------------
@@ -116,14 +127,46 @@ def test_svg_width_height_viewbox_exact_mm() -> None:
 
 
 # --- checker rect count == black-square count ------------------------------------------------
-def test_filled_checker_rect_count_matches_black_squares() -> None:
+def test_filled_checker_region_count_matches_black_squares() -> None:
     svg = generate_charuco_svg(_SPEC, label=False)
-    sq_rects = [r for r in _rects(svg) if r["cls"] == "sq"]
-    assert len(sq_rects) == _n_black_squares(_SPEC)
-    # every checker rect is exactly one square in size, at exact mm.
-    for r in sq_rects:
-        assert r["w"] == pytest.approx(_SPEC.square_length_mm)
-        assert r["h"] == pytest.approx(_SPEC.square_length_mm)
+    sq = [r for r in _regions(svg) if r["cls"] == "sq"]
+    # checker squares touch only at corners, so each stays its own region (never a pinched
+    # outline joining two squares at a point).
+    assert len(sq) == _n_black_squares(_SPEC)
+    for r in sq:
+        assert len(r["loops"]) == 1 and len(r["loops"][0]) == 4
+        x0, y0, x1, y1 = _bbox(r)
+        assert x1 - x0 == pytest.approx(_SPEC.square_length_mm)
+        assert y1 - y0 == pytest.approx(_SPEC.square_length_mm)
+
+
+def test_board_has_no_per_cell_rectangles_only_evenodd_regions() -> None:
+    svg = generate_charuco_svg(_SPEC, label=False)
+    assert "<rect" not in svg
+    assert _regions(svg), "no filled regions parsed"
+    assert svg.count("<path") == len(_regions(svg)) + 1  # + the red cut outline
+
+
+def test_each_markers_black_bits_merge_into_its_4_connected_areas() -> None:
+    """Region count is read from reality: cv2's own bit image for every marker, split into
+    4-connected black areas by cv2.connectedComponents. One area -> one engraved shape."""
+    import cv2
+    import cv2.aruco as aruco
+
+    d = aruco.getPredefinedDictionary(getattr(aruco, _SPEC.aruco_dict))
+    grid = int(d.markerSize) + 2
+    expected = 0
+    for marker_id in _marker_squares(_SPEC).values():
+        black = (d.generateImageMarker(marker_id, grid, borderBits=1) == 0).astype(np.uint8)
+        n_labels, _ = cv2.connectedComponents(black, connectivity=4)
+        expected += n_labels - 1  # minus the background label
+    bits = [r for r in _regions(generate_charuco_svg(_SPEC, label=False)) if r["cls"] == "bit"]
+    assert len(bits) == expected
+    n_cells = sum(
+        int((d.generateImageMarker(i, grid, borderBits=1) == 0).sum())
+        for i in _marker_squares(_SPEC).values()
+    )
+    assert len(bits) < n_cells / 5  # was one shape per black cell
 
 
 # --- marker bits match generateImageMarker for a sampled id ----------------------------------
@@ -131,7 +174,7 @@ def test_marker_bit_rects_match_cv2_for_sampled_id() -> None:
     import cv2.aruco as aruco
 
     svg = generate_charuco_svg(_SPEC, label=False)
-    rects = _rects(svg)
+    bits = [r for r in _regions(svg) if r["cls"] == "bit"]
     m = _SVG_OPEN_RE.search(svg)
     assert m is not None
     board_w = _SPEC.squares_x * _SPEC.square_length_mm
@@ -157,21 +200,13 @@ def test_marker_bit_rects_match_cv2_for_sampled_id() -> None:
     marker_x0 = margin + col * _SPEC.square_length_mm + inset
     marker_y0 = margin + row * _SPEC.square_length_mm + inset
 
-    got_black: set[tuple[int, int]] = set()
-    for rc in rects:
-        if rc["cls"] != "bit":
-            continue
-        # keep only bit rects inside this marker's footprint
-        if not (marker_x0 - 1e-6 <= rc["x"] < marker_x0 + _SPEC.marker_length_mm - 1e-6):
-            continue
-        if not (marker_y0 - 1e-6 <= rc["y"] < marker_y0 + _SPEC.marker_length_mm - 1e-6):
-            continue
-        c = int(round((rc["x"] - marker_x0) / cell))
-        r = int(round((rc["y"] - marker_y0) / cell))
-        got_black.add((c, r))
-        assert rc["w"] == pytest.approx(cell)
-        assert rc["h"] == pytest.approx(cell)
-
+    # every bit cell centre is filled exactly when cv2 says the bit is black.
+    got_black = {
+        (c, r)
+        for r in range(grid)
+        for c in range(grid)
+        if _covered(bits, marker_x0 + (c + 0.5) * cell, marker_y0 + (r + 0.5) * cell)
+    }
     assert got_black == expected_black
     assert len(got_black) > 0
 
@@ -180,10 +215,10 @@ def test_marker_bit_rects_match_cv2_for_sampled_id() -> None:
 def test_engrave_black_false_is_exact_complement_within_pattern() -> None:
     svg_t = generate_charuco_svg(_SPEC, engrave_black=True, label=False)
     svg_f = generate_charuco_svg(_SPEC, engrave_black=False, label=False)
-    rects_t = _rects(svg_t)
-    rects_f = _rects(svg_f)
+    rects_t = _regions(svg_t)
+    rects_f = _regions(svg_f)
 
-    # checker (solid-square) rects only appear on the black-fill polarity.
+    # checker (solid-square) regions only appear on the black-fill polarity.
     assert len([r for r in rects_t if r["cls"] == "sq"]) == _n_black_squares(_SPEC)
     assert len([r for r in rects_f if r["cls"] == "sq"]) == 0
 
@@ -279,7 +314,7 @@ def test_dxf_cut_outline_is_a_closed_polyline_on_its_own_cut_layer() -> None:
 
 
 # --- DXF round-trip + entity count -----------------------------------------------------------
-def test_dxf_roundtrips_and_entity_count_matches_svg_filled_cells() -> None:
+def test_dxf_roundtrips_and_entity_count_matches_svg_regions() -> None:
     import io
 
     import ezdxf
@@ -287,14 +322,21 @@ def test_dxf_roundtrips_and_entity_count_matches_svg_filled_cells() -> None:
 
     for engrave_black in (True, False):
         svg = generate_charuco_svg(_SPEC, engrave_black=engrave_black, label=False)
-        n_filled = len(_rects(svg))
+        regions = _regions(svg)
+        n_loops = sum(len(r["loops"]) for r in regions)
         dxf = generate_charuco_dxf(_SPEC, engrave_black=engrave_black, label=False)
         assert isinstance(dxf, bytes)
         doc = ezdxf.read(io.StringIO(dxf.decode("utf-8")))
         assert int(doc.units) == int(units.MM)
         msp = doc.modelspace()
-        # engrave fills live on the ENGRAVE layer; the CUT-layer perimeter is separate.
-        assert len(msp.query('LWPOLYLINE[layer=="ENGRAVE"]')) == n_filled
+        # engrave geometry lives on the ENGRAVE layer: each loop as an outline AND each region
+        # as a SOLID hatch (DXF has no fill otherwise — outlines alone engraved as a grid of
+        # empty boxes on Trotec Ruby). The CUT-layer perimeter is separate.
+        assert len(msp.query('LWPOLYLINE[layer=="ENGRAVE"]')) == n_loops
+        hatches = msp.query('HATCH[layer=="ENGRAVE"]')
+        assert len(hatches) == len(regions)
+        assert all(h.dxf.solid_fill == 1 for h in hatches)
+        assert sum(len(h.paths) for h in hatches) == n_loops
         assert len(msp.query('LWPOLYLINE[layer=="CUT"]')) == 1
 
 
@@ -302,27 +344,31 @@ def test_dxf_roundtrips_and_entity_count_matches_svg_filled_cells() -> None:
 def _rasterize_black_polarity(spec: BoardSpec, *, px_per_mm: float) -> np.ndarray:
     """Draw the generated (engrave_black=True) board geometry to a numpy image.
 
-    White background, black filled rectangles for every generated ``sq``/``bit`` cell (in that
-    polarity the filled cells ARE exactly the black regions of a normal printed board), scaled
-    from the SVG's own mm coordinates -- no SVG rasterization dependency, no rendering path
-    other than the one this test is verifying (data-contract-verification: reality, not belief).
+    White background, the generated regions filled black with the even-odd rule the SVG
+    declares (in that polarity the filled regions ARE exactly the black areas of a normal
+    printed board), scaled from the SVG's own mm coordinates -- no SVG rasterization dependency,
+    no rendering path other than the one this test is verifying. Exact for rectilinear loops:
+    every vertical edge toggles the pixels to its right (pixel centres), then XOR along x.
     """
-    import cv2
-
     svg = generate_charuco_svg(spec, engrave_black=True, label=False)
     m = _SVG_OPEN_RE.search(svg)
     assert m is not None
     total_w, total_h = (float(v) for v in m.group("vb").split()[2:4])
     w_px = int(round(total_w * px_per_mm))
     h_px = int(round(total_h * px_per_mm))
-    img = np.full((h_px, w_px), 255, dtype=np.uint8)
-    for r in _rects(svg):
-        x0 = int(round(r["x"] * px_per_mm))
-        y0 = int(round(r["y"] * px_per_mm))
-        x1 = int(round((r["x"] + r["w"]) * px_per_mm))
-        y1 = int(round((r["y"] + r["h"]) * px_per_mm))
-        cv2.rectangle(img, (x0, y0), (x1, y1), color=0, thickness=-1)
-    return img
+    toggles = np.zeros((h_px, w_px + 1), dtype=np.uint8)
+    for region in _regions(svg):
+        for loop in region["loops"]:
+            for (x1, y1), (x2, y2) in zip(loop, loop[1:] + loop[:1], strict=True):
+                if x1 != x2:
+                    continue  # horizontal edge
+                ya, yb = sorted((y1, y2))
+                r0 = max(0, int(np.ceil(ya * px_per_mm - 0.5)))
+                r1 = min(h_px, int(np.ceil(yb * px_per_mm - 0.5)))
+                c = min(w_px, max(0, int(np.floor(x1 * px_per_mm - 0.5)) + 1))
+                toggles[r0:r1, c] ^= 1
+    filled = np.bitwise_xor.accumulate(toggles, axis=1)[:, :w_px].astype(bool)
+    return np.where(filled, 0, 255).astype(np.uint8)
 
 
 def test_generated_board_rasterized_is_detected_by_charuco_detector() -> None:
@@ -502,3 +548,48 @@ def test_board_generation_runs_one_at_a_time(monkeypatch: pytest.MonkeyPatch) ->
     for t in threads:
         t.join()
     assert peak == 1
+
+
+# ---- caliper scale bar: every board carries a known length so its size can be checked -------
+def _margin(svg: str, spec: BoardSpec) -> float:
+    m = _SVG_OPEN_RE.search(svg)
+    assert m is not None
+    return (float(m.group("vb").split()[2]) - spec.squares_x * spec.square_length_mm) / 2
+
+
+@pytest.mark.parametrize(
+    ("preset_name", "length_mm"),
+    [("medium_5x7", 100.0), ("large_6x9", 100.0), ("small_cylinder", 50.0)],
+)
+def test_scale_bar_is_a_round_length_that_fits_the_pattern_width(
+    preset_name: str, length_mm: float
+) -> None:
+    spec = resolve_preset(preset_name)
+    svg = generate_charuco_svg(spec, label=False)
+    scale = [r for r in _regions(svg) if r["cls"] == "scale"]
+    assert len(scale) == 1, "the bar and its ticks must be ONE engraved shape"
+    x0, y0, x1, y1 = _bbox(scale[0])
+    margin = _margin(svg, spec)
+    assert x1 - x0 == pytest.approx(length_mm, abs=1e-6)  # outer edge to outer edge
+    assert x0 == pytest.approx(margin)
+    assert y1 < margin * 0.75  # in the top quiet zone, clear of the pattern
+    assert f">{length_mm:g} mm</text>" in svg
+
+
+def test_scale_bar_can_be_disabled() -> None:
+    svg = generate_charuco_svg(_SPEC, label=False, scale_bar=False)
+    assert not [r for r in _regions(svg) if r["cls"] == "scale"]
+    assert " mm</text>" not in svg
+
+
+def test_scale_bar_is_engraved_in_both_polarities_and_in_the_dxf() -> None:
+    import io
+
+    import ezdxf
+
+    for engrave_black in (True, False):
+        svg = generate_charuco_svg(_SPEC, engrave_black=engrave_black, label=False)
+        assert len([r for r in _regions(svg) if r["cls"] == "scale"]) == 1
+    dxf = generate_charuco_dxf(_SPEC, label=False)
+    texts = [t.dxf.text for t in ezdxf.read(io.StringIO(dxf.decode())).modelspace().query("TEXT")]
+    assert "100 mm" in texts
