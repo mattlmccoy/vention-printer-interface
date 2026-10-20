@@ -46,6 +46,7 @@ from vention_printer_interface.analysis.dimensional import (
     load_report,
 )
 from vention_printer_interface.analysis.lane_b import analyze_lane_b_from_pngs
+from vention_printer_interface.api.autocal_routes import register_autocal_routes
 from vention_printer_interface.api.uvc_routes import register_uvc_routes
 from vention_printer_interface.build_info import operator_build
 from vention_printer_interface.control.backlash_cal import (
@@ -3460,6 +3461,20 @@ def create_app(
                 await asyncio.sleep(0.1)
         except WebSocketDisconnect:
             return
+
+    def _autocal_saved(calib: Calibration) -> None:
+        vision = vision_service()
+        if vision is not None:
+            vision.set_calibration(calib)
+
+    register_autocal_routes(
+        app,
+        root=root,
+        capture_pose=lambda: float(app.state.print_settings.capture_recoater_mm),
+        calibration_path=vision_calibration_path,
+        on_saved=_autocal_saved,
+        events=ev,
+    )
 
     register_uvc_routes(
         app,
