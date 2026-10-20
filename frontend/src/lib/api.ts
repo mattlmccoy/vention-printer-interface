@@ -423,4 +423,69 @@ export const api = {
     if (!res.ok) throw new ApiError(res.status, `${res.status} center-sweep sample`);
     return res.json() as Promise<CenterSweepSampleResult>;
   },
+  // Automatic calibration (backend api/autocal_routes.py).
+  autocalWindow: () => req<{ min_mm: number; max_mm: number }>("GET", "/api/vision/autocal/window"),
+  autocalStart: (body: AutocalStartBody) => req<AutocalSession>("POST", "/api/vision/autocal/session", body),
+  autocalStatus: () => req<AutocalSession | { active: false }>("GET", "/api/vision/autocal/session"),
+  autocalSample: async (blob: Blob, recoaterMm: number): Promise<AutocalSampleResult> => {
+    const res = await fetch(apiUrl(base, `/api/vision/autocal/sample?recoater_mm=${encodeURIComponent(String(recoaterMm))}`), {
+      method: "POST",
+      headers: { [CLIENT_HEADER]: "1", "Content-Type": blob.type || "image/png" },
+      body: blob,
+    });
+    if (!res.ok) {
+      const detail = await res.json().then((j: { detail?: string }) => j.detail).catch(() => undefined);
+      throw new ApiError(res.status, detail ?? `${res.status} calibration photo upload`);
+    }
+    return res.json() as Promise<AutocalSampleResult>;
+  },
+  autocalSolve: () => req<AutocalReport>("POST", "/api/vision/autocal/solve"),
+  autocalSave: () => req<{ calibration_version: string }>("POST", "/api/vision/autocal/save"),
+  autocalCancel: () => req<{ active: false }>("POST", "/api/vision/autocal/cancel"),
 };
+
+export interface AutocalStartBody {
+  spec: { kind: "charuco"; squares_x: number; squares_y: number; square_length_mm: number; marker_length_mm: number; aruco_dict?: string | null };
+  window_min_mm: number;
+  window_max_mm: number;
+  step_mm?: number;
+  max_offset_mm?: number;
+  placement: "substrate" | "cylinder";
+  board_thickness_mm: number;
+}
+export interface AutocalSession {
+  active: true;
+  poses: number[];
+  pre_approach_mm: number;
+  capture_mm: number;
+  window: { min_mm: number; max_mm: number };
+  placement: "substrate" | "cylinder";
+  board_thickness_mm: number;
+  image_size: [number, number] | null;
+  samples: Array<{ recoater_mm: number; usable: boolean; corners: number }>;
+  coverage_cells: boolean[][];
+}
+export interface AutocalSampleResult {
+  usable: boolean;
+  corners: number;
+  image_size: [number, number];
+  corners_px?: [number, number][];
+  reason: string | null;
+  coverage_cells?: boolean[][];
+}
+export interface AutocalReport {
+  passed: boolean;
+  reasons: string[];
+  reprojection_rms_px: number;
+  shift_rms_mm: number;
+  shift_worst_mm: number;
+  scale_ratio: number;
+  n_views: number;
+  image_size: [number, number];
+  bed_extent_mm: [number, number, number, number];
+  mm_per_px: number;
+  valid_region_mm: [number, number][];
+  placement: "substrate" | "cylinder";
+  board_thickness_mm: number;
+  plane_note: string;
+}
