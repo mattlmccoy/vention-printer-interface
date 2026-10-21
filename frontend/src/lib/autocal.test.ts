@@ -38,7 +38,7 @@ function fakeDeps(usableAt: (mm: number) => boolean, stopAfterMoves = Infinity, 
     calls,
     d: {
       move: async (mm: number) => { moves++; calls.push(`move ${mm}`); },
-      settle: async () => { calls.push("settle"); },
+      settle: async () => { calls.push("settle"); const m = calls.filter((c) => c.startsWith("move")).at(-1); return m ? Number(m.split(" ")[1]) : startMm; },
       capture: async () => { calls.push("capture"); return new Blob(["x"]); },
       readMm: async () => { const m = calls.filter((c) => c.startsWith("move")).at(-1); return m ? Number(m.split(" ")[1]) : startMm; },
       sample: async (_b: Blob, mm: number) => { samples++; calls.push(`sample ${mm}`); return { usable: usableAt(mm) }; },
@@ -76,13 +76,48 @@ test("runSweep keeps going above the capture pose when the board is not yet in v
   assert.equal(calls.filter((c) => c.startsWith("sample")).length, 5);
 });
 
-test("waitSettled waits for motion_complete then settles", async () => {
-  const seq = [false, false, true];
-  const slept: number[] = [];
+// ---- settle (2026-10-21): the first real run photographed MID-MOVE --------------------------------
+// MM2 keeps reporting motion_complete=true from the PREVIOUS move for a few polls after a new move is
+// issued (backend control/settle.py documents this). The old waitSettled returned on that stale
+// "complete": readbacks landed 0.3–3 mm short of each target, the capture-pose photo read 463.6 for
+// 463.3 and the solve refused. Settle = the move registered (or a start grace for a no-op move), then
+// complete AND the last 3 positions within one 0.1 mm count.
+function scripted(samples: Array<[boolean, number]>) {
   let i = 0;
-  await waitSettled(async () => status({ complete: seq[Math.min(i++, 2)] }), 4, { sleep: async (ms) => { slept.push(ms); }, settleMs: 400 });
-  assert.equal(i, 3);
-  assert.equal(slept.at(-1), 400);
+  let t = 0;
+  const getStatus = async () => {
+    const [complete, pos] = samples[Math.min(i++, samples.length - 1)];
+    return { controller: { state: "connected", armed: true, telemetry: { positions: { "4": pos }, referenced: { "4": true }, motion_complete: { "4": complete } } } } as unknown as StatusPayload;
+  };
+  return { getStatus, opts: { sleep: async (ms: number) => { t += ms; }, now: () => t, pollMs: 50, settleMs: 0 }, reads: () => i };
+}
+
+test("waitSettled ignores the stale 'complete' from the previous move", async () => {
+  // stale complete at the OLD position, then moving, then at rest on the target
+  const s = scripted([[true, 478.3], [true, 478.3], [false, 477.0], [false, 474.1], [true, 473.3], [true, 473.3], [true, 473.3]]);
+  assert.equal(await waitSettled(s.getStatus, 4, s.opts), 473.3);
+});
+
+test("waitSettled waits for the position to hold, not just 'complete'", async () => {
+  const s = scripted([[false, 470], [true, 468.9], [true, 468.5], [true, 468.3], [true, 468.3], [true, 468.3]]);
+  assert.equal(await waitSettled(s.getStatus, 4, s.opts), 468.3);
+  assert.ok(s.reads() >= 6);
+});
+
+test("waitSettled accepts a no-op move after the start grace", async () => {
+  const s = scripted([[true, 463.3]]);  // already at target: never goes incomplete
+  assert.equal(await waitSettled(s.getStatus, 4, s.opts), 463.3);
+});
+
+test("waitSettled times out loudly instead of guessing", async () => {
+  const s = scripted([[false, 470]]);
+  await assert.rejects(waitSettled(s.getStatus, 4, { ...s.opts, timeoutMs: 2000 }), /did not settle/);
+});
+
+test("runSweep refuses a photo when the recoater stopped away from the pose", async () => {
+  const { d } = fakeDeps(() => true);
+  const off = { ...d, settle: async () => 476.4 };  // never reached 473.3
+  await assert.rejects(runSweep(plan, off), /473\.3/);
 });
 
 // ---- final-review fixes ---------------------------------------------------------------------

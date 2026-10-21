@@ -39,29 +39,66 @@ export function preflight(i: {
 
 const realSleep = (ms: number) => new Promise<void>((r) => setTimeout(r, ms));
 
-/** Wait until `axis` reports motion complete (or `timeoutMs`), then `settleMs` more so gantry
- *  vibration dies down before the photo. Transient status errors are retried. */
+/** Recoater readout quantum: MM2 positions land on a 0.1 mm grid (backend control/settle.py). */
+export const READOUT_MM = 0.1;
+/** A photo is refused when the axis settled farther than this from the commanded pose. */
+export const POSE_TOL_MM = 0.15;
+
+/** Wait until `axis` has really finished its move and is holding position; returns the settled
+ *  position. A port of the operator's validated control/settle.py: MM2 keeps reporting
+ *  motion_complete=true from the PREVIOUS move for a few polls after a new move is issued, so a
+ *  "complete" reading only counts once the move has registered (motion_complete went false) or a
+ *  start grace has passed (a no-op move never goes incomplete). Then it needs `stable` consecutive
+ *  complete readings within one readout count. Throws on timeout — never guesses. (2026-10-21: the
+ *  old version returned on the stale "complete" and every photo was taken mid-move.) */
 export async function waitSettled(
   getStatus: () => Promise<StatusPayload>,
   axis: number,
-  opts: { timeoutMs?: number; settleMs?: number; sleep?: (ms: number) => Promise<void> } = {},
-): Promise<void> {
+  opts: {
+    timeoutMs?: number; startGraceMs?: number; pollMs?: number; stable?: number; settleMs?: number;
+    sleep?: (ms: number) => Promise<void>; now?: () => number;
+  } = {},
+): Promise<number> {
   const sleep = opts.sleep ?? realSleep;
-  const timeoutMs = opts.timeoutMs ?? 6000;
-  const t0 = Date.now();
-  while (Date.now() - t0 < timeoutMs) {
+  const now = opts.now ?? (() => Date.now());
+  const timeoutMs = opts.timeoutMs ?? 30000;
+  const grace = opts.startGraceMs ?? 400;
+  const poll = opts.pollMs ?? 50;
+  const need = opts.stable ?? 3;
+  const key = String(axis);
+  const t0 = now();
+  let sawIncomplete = false;
+  let window: number[] = [];
+  let last: number | null = null;
+  while (now() - t0 < timeoutMs) {
     try {
-      const s = await getStatus();
-      if (s.controller?.telemetry?.motion_complete?.[String(axis)] !== false) break;
-    } catch { /* transient: try again */ }
-    await sleep(200);
+      const tel = (await getStatus()).controller?.telemetry;
+      const complete = tel?.motion_complete?.[key] === true;
+      const pos = tel?.positions?.[key];
+      if (!complete) sawIncomplete = true;
+      const ready = sawIncomplete || now() - t0 >= grace;
+      if (typeof pos === "number" && Number.isFinite(pos)) {
+        last = pos;
+        if (ready && complete) {
+          window = [...window, pos].slice(-need);
+          if (window.length >= need && Math.max(...window) - Math.min(...window) <= READOUT_MM + 1e-9) {
+            if (opts.settleMs ?? 400) await sleep(opts.settleMs ?? 400);  // let gantry vibration die down
+            return window[window.length - 1];
+          }
+        } else {
+          window = [];  // moving, or the move has not registered yet: no stale "stable"
+        }
+      }
+    } catch { /* transient status error: keep polling */ }
+    await sleep(poll);
   }
-  await sleep(opts.settleMs ?? 400);
+  throw new Error(`Axis ${axis} did not settle within ${Math.round(timeoutMs / 1000)} s (last position ${last ?? "unknown"} mm) — nothing was photographed.`);
 }
 
 export interface SweepDeps {
   move: (mm: number) => Promise<void>;
-  settle: () => Promise<void>;
+  /** Resolves with the SETTLED position once the axis has really stopped (see waitSettled). */
+  settle: () => Promise<number>;
   capture: () => Promise<Blob>;
   readMm: () => Promise<number>;
   sample: (b: Blob, mm: number) => Promise<{ usable: boolean }>;
@@ -93,9 +130,11 @@ export async function runSweep(
     const pose = plan.poses[i];
     if (d.stopped()) return halt();
     await d.move(pose);
-    await d.settle();
+    const mm = await d.settle();
+    if (Math.abs(mm - pose) > POSE_TOL_MM) {
+      throw new Error(`The recoater stopped at ${mm.toFixed(1)} mm, not at ${pose.toFixed(1)} mm — calibration stopped (no photo taken).`);
+    }
     const blob = await d.capture();
-    const mm = await d.readMm();
     const r = await d.sample(blob, mm);
     d.onStep?.(i, { ...r, pose, mm });
     if (d.stopped()) return halt();  // Stop pressed during this photo: nothing is solved
