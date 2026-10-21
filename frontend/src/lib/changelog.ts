@@ -11,6 +11,14 @@ export interface Release {
 
 export const CHANGELOG: Release[] = [
   {
+    version: "0.15.0",
+    date: "2026-10-21",
+    changes: [
+      "Automatic calibration now uses the whole ChArUco board (the marker corners as well as the chessboard corners), so the calibrated area roughly doubles across the recoater.",
+      "Every science still (prints, calibration and validation) is taken at the resolution in Camera settings. Recalibrate if that resolution is not 1920x1080.",
+    ],
+  },
+  {
     version: "0.14.1",
     date: "2026-10-21",
     changes: [

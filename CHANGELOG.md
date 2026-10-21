@@ -3,6 +3,12 @@
 Notable changes to the Vention Printer Interface. Versions follow semantic versioning; each entry
 corresponds to a tagged merge to `main`.
 
+## v0.15.0 — 2026-10-21
+
+### Changed
+- **Automatic calibration uses the whole ChArUco board.** Each sweep photo now contributes every identified point: the 9 chessboard corners **and** the four corners of every ArUco marker (32 more on the 4×4 board), each with its known board position. The first run calibrated only the middle third of the photo, because the chessboard corners span 32 of the pattern's 64 mm. With the marker corners the calibrated area grows to ≥ 55 mm across the recoater. On synthetic ground truth the mapping error is 0.009 mm RMS (chessboard corners alone: 0.011 mm), and it stays ≤ 0.03 mm when the marker corners are three times noisier. Each sweep photo reports its chessboard and marker counts.
+- **Every science still is taken at the Camera-settings resolution**: print stills, calibration photos and validation photos alike. Each still opens the science camera alone and grabs its raw frame (lossless PNG), so the other live views pause for a moment. Before this release, the Mac (with lightweight mode off) took stills from a stream capped at 1080p. **Recalibrate after upgrading** if your science resolution is not 1920×1080. A calibration only applies to photos of its own size, and the Calibrate page warns when they differ.
+
 ## v0.14.1 — 2026-10-21
 
 ### Fixed

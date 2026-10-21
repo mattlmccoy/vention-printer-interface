@@ -183,10 +183,11 @@ def test_marker_points_keep_mapping_accuracy() -> None:
 
 
 def test_noisier_marker_corners_still_map_within_30_microns() -> None:
-    # Pessimistic 3x marker-corner noise (0.15 px): still well inside the 0.1 mm encoder-check limit.
+    # Pessimistic 3x marker-corner noise (0.15 px): well inside the 0.1 mm encoder-check limit.
     views, truth = synth_views(spec=SPEC, with_markers=True, marker_noise_px=0.15)
     res = solve_autocal(views, capture_recoater_mm=truth.capture_mm, image_size=SIZE)
-    e = np.vstack([_map(res, v.image_points)
-                   - (truth.bed_xy(v.object_points) - np.array([v.recoater_mm - truth.capture_mm, 0]))
-                   for v in views])
+    e = np.vstack([
+        _map(res, v.image_points)
+        - (truth.bed_xy(v.object_points) - np.array([v.recoater_mm - truth.capture_mm, 0]))
+        for v in views])
     assert float(np.sqrt((e ** 2).sum(axis=1).mean())) <= 0.03
