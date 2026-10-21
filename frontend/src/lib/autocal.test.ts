@@ -191,3 +191,38 @@ test("the residual breakdown names where the misfit is, skipping empty groups", 
   });
   assert.equal(t, "corners 0.80 px (200) · markers 1.50 px (700) · centre 0.60 px (300) · middle 1.10 px (400)");
 });
+
+// ---- settle (2026-10-21, second real run): cached telemetry counted as "stable" ------------------
+// The console polls /api/status every 50 ms but the operator re-reads the MM2 position only every
+// ~290 ms, and once MM2 answers "complete" (stale, from the previous move) the operator stops
+// asking. Three polls of ONE cached sample looked "stable" 0.5 s into a 5 mm move; the pose check
+// then refused the photo and the run stopped (at 403.3 mm, and on the first pose of earlier runs).
+// Real log: move 15:39:52.130, complete/W read at .312 and .559 only, browser gave up ~.6.
+function cached(samples: Array<[boolean, number]>, pollsPerSample = 6) {
+  let i = 0;
+  let t = 0;
+  const getStatus = async () => {
+    const n = Math.floor(i++ / pollsPerSample);  // the operator keeps sampling: new timestamps forever
+    const [complete, pos] = samples[Math.min(n, samples.length - 1)];
+    return { controller: { state: "connected", armed: true, telemetry: { host_timestamp_ns: 1_000_000 * (n + 1), positions: { "4": pos }, referenced: { "4": true }, motion_complete: { "4": complete } } } } as unknown as StatusPayload;
+  };
+  return { getStatus, opts: { sleep: async (ms: number) => { t += ms; }, now: () => t, pollMs: 50, settleMs: 0 }, elapsed: () => t };
+}
+
+test("waitSettled counts only fresh telemetry samples, never one cached sample polled 3 times", async () => {
+  // stale 'complete' the whole way (the operator stopped asking); one sample per 6 polls
+  const s = cached([[true, 408.3], [true, 407.0], [true, 404.9], [true, 403.3], [true, 403.3], [true, 403.3]]);
+  assert.equal(await waitSettled(s.getStatus, 4, s.opts), 403.3);
+});
+
+test("waitSettled does not accept a still position away from the target until it has held a while", async () => {
+  // the move registers late: three fresh samples still at the old position, then it moves
+  const s = cached([[true, 408.3], [true, 408.3], [true, 408.3], [true, 408.3], [true, 406.0], [true, 403.3], [true, 403.3], [true, 403.3]]);
+  assert.equal(await waitSettled(s.getStatus, 4, { ...s.opts, targetMm: 403.3 }), 403.3);
+});
+
+test("waitSettled still reports an axis that really stopped short (after the hold), for the pose check", async () => {
+  const s = cached([[true, 408.3], [true, 405.0]]);
+  assert.equal(await waitSettled(s.getStatus, 4, { ...s.opts, targetMm: 403.3, farHoldMs: 2000 }), 405.0);
+  assert.ok(s.elapsed() >= 2000);
+});

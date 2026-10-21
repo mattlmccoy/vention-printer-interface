@@ -93,7 +93,7 @@ export function AutoCalibrationPanel({ status, printing }: { status: StatusPaylo
           windowMinMm: session.window.min_mm, windowMaxMm: session.window.max_mm },
         {
           move: async (mm) => { await api.move(RECOATER_AXIS, "abs", mm); },
-          settle: () => waitSettled(() => api.status(), RECOATER_AXIS),
+          settle: (targetMm) => waitSettled(() => api.status(), RECOATER_AXIS, { targetMm }),
           capture: () => captureScienceStillOnce(storage),
           readMm: async () => {
             const v = (await api.status()).controller?.telemetry?.positions?.[String(RECOATER_AXIS)];

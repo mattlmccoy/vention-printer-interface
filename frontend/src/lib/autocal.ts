@@ -50,12 +50,20 @@ export const POSE_TOL_MM = 0.15;
  *  "complete" reading only counts once the move has registered (motion_complete went false) or a
  *  start grace has passed (a no-op move never goes incomplete). Then it needs `stable` consecutive
  *  complete readings within one readout count. Throws on timeout — never guesses. (2026-10-21: the
- *  old version returned on the stale "complete" and every photo was taken mid-move.) */
+ *  old version returned on the stale "complete" and every photo was taken mid-move.)
+ *
+ *  Readings must be FRESH telemetry samples (a new host_timestamp_ns): the console polls far faster
+ *  than the operator re-reads the machine (~290 ms), and once MM2 answers a stale "complete" the
+ *  operator stops asking, so three polls of one cached sample used to look "stable" 0.5 s into a
+ *  move (second real run, 2026-10-21). With `targetMm`, a still position farther than `tolMm` from
+ *  the target is only accepted after holding for `farHoldMs` (a late-starting move would otherwise
+ *  look settled at the old position); the caller's pose check then reports where it stopped. */
 export async function waitSettled(
   getStatus: () => Promise<StatusPayload>,
   axis: number,
   opts: {
     timeoutMs?: number; startGraceMs?: number; pollMs?: number; stable?: number; settleMs?: number;
+    targetMm?: number; tolMm?: number; farHoldMs?: number;
     sleep?: (ms: number) => Promise<void>; now?: () => number;
   } = {},
 ): Promise<number> {
@@ -68,25 +76,39 @@ export async function waitSettled(
   const key = String(axis);
   const t0 = now();
   let sawIncomplete = false;
+  const tol = opts.tolMm ?? POSE_TOL_MM;
+  const farHold = opts.farHoldMs ?? 2000;
   let window: number[] = [];
+  let stableSince: number | null = null;
   let last: number | null = null;
+  let lastTs: number | null = null;
   while (now() - t0 < timeoutMs) {
     try {
       const tel = (await getStatus()).controller?.telemetry;
+      const ts = typeof tel?.host_timestamp_ns === "number" ? tel.host_timestamp_ns : null;
+      const fresh = ts === null || ts !== lastTs;  // no timestamp (older operator): every poll counts
+      lastTs = ts;
       const complete = tel?.motion_complete?.[key] === true;
       const pos = tel?.positions?.[key];
       if (!complete) sawIncomplete = true;
       const ready = sawIncomplete || now() - t0 >= grace;
-      if (typeof pos === "number" && Number.isFinite(pos)) {
+      if (fresh && typeof pos === "number" && Number.isFinite(pos)) {
         last = pos;
         if (ready && complete) {
           window = [...window, pos].slice(-need);
-          if (window.length >= need && Math.max(...window) - Math.min(...window) <= READOUT_MM + 1e-9) {
-            if (opts.settleMs ?? 400) await sleep(opts.settleMs ?? 400);  // let gantry vibration die down
-            return window[window.length - 1];
+          const still = window.length >= need && Math.max(...window) - Math.min(...window) <= READOUT_MM + 1e-9;
+          if (!still) stableSince = null;
+          else {
+            stableSince ??= now();
+            const onTarget = opts.targetMm == null || Math.abs(pos - opts.targetMm) <= tol;
+            if (onTarget || now() - stableSince >= farHold) {
+              if (opts.settleMs ?? 400) await sleep(opts.settleMs ?? 400);  // let gantry vibration die down
+              return window[window.length - 1];
+            }
           }
         } else {
           window = [];  // moving, or the move has not registered yet: no stale "stable"
+          stableSince = null;
         }
       }
     } catch { /* transient status error: keep polling */ }
@@ -97,8 +119,9 @@ export async function waitSettled(
 
 export interface SweepDeps {
   move: (mm: number) => Promise<void>;
-  /** Resolves with the SETTLED position once the axis has really stopped (see waitSettled). */
-  settle: () => Promise<number>;
+  /** Resolves with the SETTLED position once the axis has really stopped near `targetMm` (see
+   *  waitSettled). */
+  settle: (targetMm: number) => Promise<number>;
   capture: () => Promise<Blob>;
   readMm: () => Promise<number>;
   sample: (b: Blob, mm: number) => Promise<{ usable: boolean }>;
@@ -125,12 +148,12 @@ export async function runSweep(
     throw new Error(`The recoater is at ${start.toFixed(1)} mm, outside the safety window (${plan.windowMinMm}–${plan.windowMaxMm} mm). Jog it inside the window first — nothing was moved.`);
   }
   await d.move(plan.preApproachMm);
-  await d.settle();
+  await d.settle(plan.preApproachMm);
   for (let i = 0; i < plan.poses.length; i++) {
     const pose = plan.poses[i];
     if (d.stopped()) return halt();
     await d.move(pose);
-    const mm = await d.settle();
+    const mm = await d.settle(pose);
     if (Math.abs(mm - pose) > POSE_TOL_MM) {
       throw new Error(`The recoater stopped at ${mm.toFixed(1)} mm, not at ${pose.toFixed(1)} mm — calibration stopped (no photo taken).`);
     }

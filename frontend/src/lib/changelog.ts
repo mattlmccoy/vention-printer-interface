@@ -11,6 +11,13 @@ export interface Release {
 
 export const CHANGELOG: Release[] = [
   {
+    version: "0.16.2",
+    date: "2026-10-21",
+    changes: [
+      "Automatic calibration no longer stops at random positions (often the first). It counted one cached position reading three times as \"stopped\" and gave up mid-move.",
+    ],
+  },
+  {
     version: "0.16.1",
     date: "2026-10-21",
     changes: [
