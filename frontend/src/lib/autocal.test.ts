@@ -1,6 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { preflight, runSweep, waitSettled } from "./autocal.ts";
+import { preflight, runSweep, waitSettled, selfCheckSummary } from "./autocal.ts";
 import type { StatusPayload } from "./telemetry.ts";
 
 function status(o: { state?: string; armed?: boolean; referenced?: Record<string, boolean> | undefined; complete?: boolean } = {}): StatusPayload {
@@ -152,4 +152,25 @@ test("preflight blocks when the recoater position is not being read", () => {
 
 test("preflight blocks while a print is running", () => {
   assert.match(preflight({ status: status(), ...ready, printActive: true }).join(" "), /print/i);
+});
+
+test("a passing self-check reads ok and states distance error, scale and points used", () => {
+  const s = selfCheckSummary({ rms_mm: 0.012, worst_mm: 0.031, scale_bias: 1.0004, n_used: 38, n_outside: 3, moved: true, passed: true, reasons: [] });
+  assert.equal(s.tone, "ok");
+  assert.match(s.headline, /passed/);
+  assert.match(s.detail, /0\.012 mm RMS/);
+  assert.match(s.detail, /38 points used, 3 outside/);
+});
+
+test("a self-check on an unmoved board warns even when it passed", () => {
+  const s = selfCheckSummary({ rms_mm: 0.01, worst_mm: 0.02, scale_bias: 1, n_used: 41, n_outside: 0, moved: false, passed: true, reasons: ["the board did not move since the sweep"] });
+  assert.equal(s.tone, "warn");
+  assert.match(s.headline, /did not move/);
+});
+
+test("a self-check with no point pairs never shows a number as if it were measured", () => {
+  const s = selfCheckSummary({ rms_mm: null, worst_mm: null, scale_bias: null, n_used: 0, n_outside: 0, moved: true, passed: false, reasons: ["only 0 board points inside the calibrated area (need 12)"] });
+  assert.equal(s.tone, "err");
+  assert.doesNotMatch(s.detail, /0\.000/);
+  assert.match(s.detail, /no distances measured/);
 });

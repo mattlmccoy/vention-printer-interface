@@ -71,6 +71,28 @@ def _start(c: TestClient, **kw: object):  # type: ignore[no-untyped-def]
     return c.post("/api/vision/autocal/session", json=body)
 
 
+def _warped_photo(angle_deg: float, scale: float, shift_px: tuple[float, float]) -> bytes:
+    # The board moved (rotated + shifted) or, with scale != 1, a board whose size is wrong.
+    img = cv2.imdecode(np.frombuffer(_photo(0.0), np.uint8), cv2.IMREAD_GRAYSCALE)
+    m = cv2.getRotationMatrix2D((FRAME[0] / 2, FRAME[1] / 2), angle_deg, scale)
+    m[:, 2] += shift_px
+    out = cv2.warpAffine(img, m, FRAME, flags=cv2.INTER_CUBIC, borderValue=255)
+    ok, buf = cv2.imencode(".png", cv2.cvtColor(out, cv2.COLOR_GRAY2BGR))
+    assert ok
+    return bytes(buf.tobytes())
+
+
+def _moved_photo() -> bytes:
+    return _warped_photo(20.0, 1.0, (40.0, 15.0))
+
+
+def _solved(c: TestClient, app) -> None:  # type: ignore[no-untyped-def]
+    _set_capture_pose(app, CAPTURE)
+    _sweep(c, _start(c).json()["poses"])
+    res = c.post("/api/vision/autocal/solve").json()
+    assert res["passed"] is True, res["reasons"]
+
+
 def _sweep(c: TestClient, poses: list[float]) -> None:
     for p in poses:
         r = c.post(f"/api/vision/autocal/sample?recoater_mm={p}", content=_photo(p - CAPTURE))
@@ -88,6 +110,7 @@ def test_full_run_passes_and_saves_a_calibration_with_provenance(tmp_path: Path)
         assert res["passed"] is True, res["reasons"]
         assert res["scale_ratio"] == pytest.approx(1.0, abs=0.01)
         assert res["image_size"] == list(FRAME)
+        assert c.post("/api/vision/autocal/selfcheck", content=_moved_photo()).json()["passed"]
         saved = c.post("/api/vision/autocal/save")
         assert saved.status_code == 200, saved.text
         version = saved.json()["calibration_version"]
@@ -163,3 +186,62 @@ def test_sample_counts_corners_and_marker_points(tmp_path: Path) -> None:
         r = c.post(f"/api/vision/autocal/sample?recoater_mm={CAPTURE}", content=_photo(0.0)).json()
         assert r["corners"] == 41 and r["chessboard_corners"] == 9 and r["marker_points"] == 32
         assert len(r["corners_px"]) == 41
+
+
+def test_save_requires_a_passing_self_check(tmp_path: Path) -> None:
+    app = _app(tmp_path)
+    with TestClient(app) as c:
+        _solved(c, app)
+        r = c.post("/api/vision/autocal/save")
+        assert r.status_code == 409 and "self-check" in r.json()["detail"]
+        sc = c.post("/api/vision/autocal/selfcheck", content=_moved_photo()).json()
+        assert sc["passed"] is True, sc["reasons"]
+        assert sc["moved"] is True and sc["n_used"] >= 12
+        assert sc["rms_mm"] <= 0.05
+        assert c.post("/api/vision/autocal/save").status_code == 200
+
+
+def test_failed_self_check_keeps_save_closed(tmp_path: Path) -> None:
+    app = _app(tmp_path)
+    with TestClient(app) as c:
+        _solved(c, app)
+        sc = c.post("/api/vision/autocal/selfcheck",
+                    content=_warped_photo(10.0, 1.03, (0.0, 0.0))).json()
+        assert sc["passed"] is False and sc["scale_bias"] == pytest.approx(1.03, abs=0.005)
+        assert c.post("/api/vision/autocal/save").status_code == 409
+
+
+def test_new_solve_clears_the_self_check(tmp_path: Path) -> None:
+    app = _app(tmp_path)
+    with TestClient(app) as c:
+        _solved(c, app)
+        assert c.post("/api/vision/autocal/selfcheck", content=_moved_photo()).json()["passed"]
+        assert c.post("/api/vision/autocal/solve").json()["passed"] is True
+        assert c.post("/api/vision/autocal/save").status_code == 409
+
+
+def test_self_check_is_stored_in_provenance(tmp_path: Path) -> None:
+    app = _app(tmp_path)
+    with TestClient(app) as c:
+        _solved(c, app)
+        c.post("/api/vision/autocal/selfcheck", content=_moved_photo())
+        assert c.post("/api/vision/autocal/save").status_code == 200
+        prov = json.loads((tmp_path / ".vision_calibration.json").read_text())["provenance"]
+        assert prov["self_check"]["passed"] is True and prov["self_check"]["n_used"] >= 12
+        assert prov["self_check"]["moved"] is True
+
+
+def test_self_check_before_a_solve_is_409(tmp_path: Path) -> None:
+    app = _app(tmp_path)
+    with TestClient(app) as c:
+        _set_capture_pose(app, CAPTURE)
+        _start(c)
+        assert c.post("/api/vision/autocal/selfcheck", content=_moved_photo()).status_code == 409
+
+
+def test_self_check_of_another_photo_size_is_refused(tmp_path: Path) -> None:
+    app = _app(tmp_path)
+    with TestClient(app) as c:
+        _solved(c, app)
+        r = c.post("/api/vision/autocal/selfcheck", content=_photo(0.0, size=(800, 600)))
+        assert r.status_code == 409 and "size" in r.json()["detail"]
