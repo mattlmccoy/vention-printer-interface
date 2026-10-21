@@ -59,14 +59,25 @@ def synth_views(
     encoder_scale: float = 1.0,
     noise_px: float = 0.05,
     seed: int = 7,
+    with_markers: bool = False,
+    # refined marker corners agree with chessboard corners to < 0.06 px on a cv2-rendered board
+    # (tests/test_charuco_points.py, 2026-10-21)
+    marker_noise_px: float = 0.05,
 ) -> tuple[list[AutocalView], GroundTruth]:
     import cv2
 
     board = _board(spec)
     obj = np.asarray(board.getChessboardCorners(), float).reshape(-1, 3)
     ids = np.arange(len(obj)).reshape(-1, 1)
+    noise = np.full(len(obj), noise_px)
+    if with_markers:  # every marker's 4 corners, ids per vision/charuco_points.py
+        m_obj = [np.asarray(o, float).reshape(4, 3) for o in board.getObjPoints()]
+        m_ids = np.asarray(board.getIds()).ravel()
+        obj = np.vstack([obj, *m_obj])
+        ids = np.vstack([ids, np.array([[1000 + 4 * int(m) + k] for m in m_ids for k in range(4)])])
+        noise = np.concatenate([noise, np.full(4 * len(m_ids), marker_noise_px)])
     # Board centred under the camera at the capture pose.
-    centre = obj[:, :2].mean(axis=0)
+    centre = np.asarray(board.getChessboardCorners(), float).reshape(-1, 3)[:, :2].mean(axis=0)
     th = math.radians(board_rotation_deg)
     rot = np.array([[math.cos(th), -math.sin(th)], [math.sin(th), math.cos(th)]])
     flip = np.diag([1.0, -1.0])
@@ -90,7 +101,7 @@ def synth_views(
         cam_c = np.array([s, 0.0, height_mm])
         pc = (r_cw @ (pw - cam_c).T).T
         img, _ = cv2.projectPoints(pc, np.zeros(3), np.zeros(3), k, np.asarray(dist, float))
-        img = img.reshape(-1, 2) + rng.normal(0.0, noise_px, (len(obj), 2))
+        img = img.reshape(-1, 2) + rng.normal(0.0, 1.0, (len(obj), 2)) * noise[:, None]
         inside = (img[:, 0] >= 0) & (img[:, 0] < size[0]) & (img[:, 1] >= 0) & (img[:, 1] < size[1])
         if not inside.any():
             continue

@@ -153,3 +153,13 @@ def test_session_refuses_with_no_capture_pose_saved(tmp_path: Path) -> None:
         _set_capture_pose(app, 0.0)
         r = _start(c)
         assert r.status_code == 400 and "capture pose" in r.json()["detail"]
+
+
+def test_sample_counts_corners_and_marker_points(tmp_path: Path) -> None:
+    app = _app(tmp_path)
+    with TestClient(app) as c:
+        _set_capture_pose(app, CAPTURE)
+        _start(c)
+        r = c.post(f"/api/vision/autocal/sample?recoater_mm={CAPTURE}", content=_photo(0.0)).json()
+        assert r["corners"] == 41 and r["chessboard_corners"] == 9 and r["marker_points"] == 32
+        assert len(r["corners_px"]) == 41

@@ -43,11 +43,11 @@ from vention_printer_interface.vision.board_gen import (
     validate_charuco_spec,
     with_auto_dict,
 )
+from vention_printer_interface.vision.charuco_points import detect_board_points
 from vention_printer_interface.vision.coverage import corner_cells
 from vention_printer_interface.vision.registration import (
     BoardSpec,
     Calibration,
-    detect_board,
     save_calibration,
 )
 
@@ -192,9 +192,11 @@ def register_autocal_routes(
             raise HTTPException(409, (
                 f"photo size {size[0]}x{size[1]} differs from this run's {first[0]}x{first[1]}; "
                 "keep the science camera at one resolution and start again"))
-        det = detect_board(image, s["spec"])
+        # Every identified point: chessboard corners AND marker corners (the whole board).
+        det = detect_board_points(image, s["spec"])
         pts = (np.zeros((0, 2)) if det is None
                else np.asarray(det.image_points, float).reshape(-1, 2))
+        n_chess = 0 if det is None else int((det.kinds == "corner").sum())
         usable = det is not None and len(pts) >= MIN_CORNERS
         s["image_size"] = s["image_size"] or size
         s["samples"].append({
@@ -206,6 +208,7 @@ def register_autocal_routes(
         s["result"] = s["verdict"] = None  # a new photo invalidates any earlier solve
         return {
             "usable": usable, "corners": int(len(pts)), "image_size": list(size),
+            "chessboard_corners": n_chess, "marker_points": int(len(pts)) - n_chess,
             "corners_px": pts.tolist(), "reason": None if usable else (
                 f"board not found or fewer than {MIN_CORNERS} corners"),
             "coverage_cells": summary(s)["coverage_cells"],
