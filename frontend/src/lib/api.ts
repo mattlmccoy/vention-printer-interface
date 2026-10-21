@@ -2,7 +2,7 @@
  *  guard). Method + path per call are locked by api.test.ts so a Save can never silently 405. */
 
 import { apiUrl, loadOperatorBase } from "./operator.ts";
-import type { SelfCheckResult } from "./autocal.ts";
+import type { ResidualGroup, SelfCheckResult } from "./autocal.ts";
 import type { StatusPayload } from "./telemetry.ts";
 
 export const SITE_MODE = import.meta.env?.VITE_SITE_MODE === "1";
@@ -495,6 +495,10 @@ export interface AutocalReport {
   passed: boolean;
   reasons: string[];
   reprojection_rms_px: number;
+  reprojection_rms_mm?: number | null;
+  px_mm?: number | null;
+  reprojection_limit_mm?: number;
+  residuals?: Record<string, ResidualGroup>;
   shift_rms_mm: number;
   shift_worst_mm: number;
   scale_ratio: number;

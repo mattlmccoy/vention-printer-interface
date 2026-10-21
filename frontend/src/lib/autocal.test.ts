@@ -1,6 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { preflight, runSweep, waitSettled, selfCheckSummary } from "./autocal.ts";
+import { lensFitText, preflight, residualText, runSweep, selfCheckSummary, waitSettled } from "./autocal.ts";
 import type { StatusPayload } from "./telemetry.ts";
 
 function status(o: { state?: string; armed?: boolean; referenced?: Record<string, boolean> | undefined; complete?: boolean } = {}): StatusPayload {
@@ -173,4 +173,21 @@ test("a self-check with no point pairs never shows a number as if it were measur
   assert.equal(s.tone, "err");
   assert.doesNotMatch(s.detail, /0\.000/);
   assert.match(s.detail, /no distances measured/);
+});
+
+test("the lens fit is shown in mm on the bed, with the pixels and the mm limit", () => {
+  assert.equal(lensFitText({ reprojection_rms_px: 1.4, reprojection_rms_mm: 0.0361, px_mm: 0.0258, reprojection_limit_mm: 0.05 }),
+    "0.036 mm RMS on the bed (1.40 px at 0.0258 mm/px) — limit 0.05 mm");
+});
+
+test("an older operator without the mm figure falls back to pixels, labelled as such", () => {
+  assert.equal(lensFitText({ reprojection_rms_px: 0.285 }), "0.285 px RMS (older operator: no mm figure)");
+});
+
+test("the residual breakdown names where the misfit is, skipping empty groups", () => {
+  const t = residualText({
+    corner: { n: 200, rms_px: 0.8 }, marker: { n: 700, rms_px: 1.5 },
+    centre: { n: 300, rms_px: 0.6 }, middle: { n: 400, rms_px: 1.1 }, edge: { n: 0, rms_px: null },
+  });
+  assert.equal(t, "corners 0.80 px (200) · markers 1.50 px (700) · centre 0.60 px (300) · middle 1.10 px (400)");
 });

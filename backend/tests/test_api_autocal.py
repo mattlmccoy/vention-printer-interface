@@ -245,3 +245,22 @@ def test_self_check_of_another_photo_size_is_refused(tmp_path: Path) -> None:
         _solved(c, app)
         r = c.post("/api/vision/autocal/selfcheck", content=_photo(0.0, size=(800, 600)))
         assert r.status_code == 409 and "size" in r.json()["detail"]
+
+
+def test_solve_saves_the_sweep_points_for_diagnosis(tmp_path: Path) -> None:
+    app = _app(tmp_path)
+    with TestClient(app) as c:
+        _set_capture_pose(app, CAPTURE)
+        poses = _start(c).json()["poses"]
+        _sweep(c, poses)
+        res = c.post("/api/vision/autocal/solve").json()
+        assert res["reprojection_rms_mm"] == pytest.approx(
+            res["reprojection_rms_px"] * res["px_mm"], rel=1e-6)
+        assert res["reprojection_limit_mm"] == 0.05
+        assert set(res["residuals"]) >= {"corner", "marker", "centre", "middle", "edge"}
+        saved = json.loads((tmp_path / ".autocal_last_sweep.json").read_text())
+        assert saved["image_size"] == list(FRAME) and saved["capture_mm"] == CAPTURE
+        assert len(saved["views"]) == len(poses)
+        v = saved["views"][0]
+        assert len(v["image_points"]) == len(v["object_points"]) == len(v["ids"])
+        assert saved["result"]["passed"] is True

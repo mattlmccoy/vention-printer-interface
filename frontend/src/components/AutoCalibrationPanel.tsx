@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import { api, type AutocalReport, type AutocalSession } from "../lib/api.ts";
-import { preflight, RECOATER_AXIS, runSweep, selfCheckSummary, type SelfCheckResult, waitSettled } from "../lib/autocal.ts";
+import { lensFitText, preflight, RECOATER_AXIS, residualText, runSweep, selfCheckSummary, type SelfCheckResult, waitSettled } from "../lib/autocal.ts";
 import { boardDefError, calibBoardChoices, defaultBoardChoice, loadBoardDef, saveBoardDef, sessionSpecFromDef } from "../lib/board_def.ts";
 import { loadRoleMap } from "../lib/camera_roles.ts";
 import { captureScienceStillOnce } from "../lib/science_still.ts";
@@ -230,7 +230,8 @@ export function AutoCalibrationPanel({ status, printing }: { status: StatusPaylo
             {report.reasons.length > 0 && <ul style={{ margin: "4px 0 0 18px" }}>{report.reasons.map((r) => <li key={r}>{r}</li>)}</ul>}
           </div>
           <div className="kv">
-            <span>lens fit</span><span>{report.reprojection_rms_px.toFixed(3)} px RMS (limit 0.5)</span>
+            <span>lens fit</span><span>{lensFitText(report)}</span>
+            {report.residuals && <><span title="Lens-fit error by point type and by distance from the photo centre (diagnosis only).">where the error is</span><span>{residualText(report.residuals)}</span></>}
             <span>encoder-shift check</span><span>{report.shift_rms_mm.toFixed(3)} mm RMS, worst {report.shift_worst_mm.toFixed(3)} mm (limit 0.1 RMS)</span>
             <span>scale vs recoater</span><span>{report.scale_ratio.toFixed(4)}</span>
             <span>usable photos</span><span>{report.n_views} (need 5)</span>

@@ -15,6 +15,7 @@ export const CHANGELOG: Release[] = [
     date: "2026-10-21",
     changes: [
       "Pick the calibration board on the Calibrate page itself; your choice is remembered. Opening the Calibration board page no longer resets it.",
+      "Full-resolution calibration no longer fails on a pixel limit: the lens fit is judged in mm on the bed (limit 0.05 mm), and the result shows where the error is.",
     ],
   },
   {
