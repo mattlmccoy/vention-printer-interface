@@ -1,6 +1,7 @@
 # Use the whole ChArUco board, validate with it, show calibration live, full resolution
 
-Date: 2026-10-21. Status: draft for Matt's approval. It follows the first passing automatic run,
+Date: 2026-10-21. Status: for Matt's approval. The builder check is done and its two questions
+were answered by Matt. It follows the first passing automatic run,
 `cal-20261021T174751Z` (summary: https://claude.ai/artifact/RhcuTob5y1ejsCuQq7PqDN).
 
 ## 1. Why
@@ -46,6 +47,14 @@ scale 1.0021, 9 usable photos. Four problems remain.
 - **Resolution:** all science photos (prints, calibration, validation) use the Camera-settings
   resolution through the full-resolution capture. A 1080p calibration must be redone.
 - **Coverage:** use the whole existing board (marker corners) rather than demand a new board.
+- **Trust:** only the certified chessboard marks a calibration validated, i.e. clears
+  `calibration_validation_warning`. The ChArUco self-check is reused-board evidence. It is shown as
+  its own result and stored with the calibration's provenance, but it never clears that warning.
+- **Self-check timing:** after the sweep and before Save, as a gate.
+  - The operator moves or rotates the board and takes one or more photos.
+  - They are scored against the PENDING (unsaved) result held in the automatic-calibration session.
+  - Save is offered only when the self-check passes. A failure leaves the previous calibration
+    active.
 
 ## 3. Goals
 
@@ -54,10 +63,12 @@ scale 1.0021, 9 usable photos. Four problems remain.
    - Each point is matched by its id to the board's known geometry.
    - The calibrated area becomes the swept footprint of the whole board.
    - Coverage and the valid region count every point.
-2. **ChArUco self-check.**
-   - After calibrating, the operator moves or rotates the board anywhere in view, then takes one
-     or more photos.
-   - The console maps every identified point through the active calibration.
+2. **ChArUco self-check (a gate before Save).**
+   - After the sweep's solve passes, the operator moves or rotates the board anywhere in view, then
+     takes one or more photos.
+   - The photos are scored against the session's pending result (the solve output, not yet saved).
+     Save stays disabled until a self-check passes.
+   - The console maps every identified point through that pending calibration.
    - It compares distances between point pairs with their true board distances: RMS, worst case
      and scale bias.
    - Only points inside the calibrated area count. The report says how many were used and how many
@@ -124,5 +135,6 @@ scale 1.0021, 9 usable photos. Four problems remain.
 
 - The live preview transport (a polling upload endpoint is fine) and the frame rate.
 - The layout of the three live views in the Instrument style.
-- Self-check thresholds. Start: pairwise-distance RMS ≤ 0.1 mm, worst ≤ 0.2 mm, at least 12 points
-  inside the area; mark them as tune-after-first-run.
+- Self-check thresholds. These are pass criteria for the Save gate. Start: pairwise-distance
+  RMS ≤ 0.1 mm, worst ≤ 0.2 mm, at least 12 points inside the area. Mark them
+  tune-after-first-run.
