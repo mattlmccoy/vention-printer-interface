@@ -3,6 +3,19 @@
 Notable changes to the Vention Printer Interface. Versions follow semantic versioning; each entry
 corresponds to a tagged merge to `main`.
 
+## v0.17.0 — 2026-10-21
+
+### Added
+- **Calibration run report on the Calibrate page.** Every solve shows:
+  - each check with its value, its limit and pass/fail (lens fit in mm on the bed, encoder-shift, usable photos, scale, calibrated area);
+  - where the lens error sits (chessboard vs marker corners, photo centre vs edge);
+  - a map of every board point seen in the photo, with the 9 coverage regions;
+  - the calibrated area drawn on the bed;
+  - a table of each photo (recoater position, points, chessboard corners, markers).
+  The report is saved by the operator, so it survives a reload or restart ("Last run report").
+- **Compare with the calibration in use.** The report puts the new run side by side with the saved calibration (photo size, lens fit, encoder shift, scale, area, photos) with a plain verdict: better, worse, mixed, no calibration saved yet, or "the saved calibration does not apply to photos of this size".
+- **Solve after a stop.** When a run stops early (a missed position, Stop pressed), its photos are kept. Once at least 5 have the board found, the page offers "solve the N photos taken" instead of starting again. The 23-photo run of 2026-10-21 would have passed this way.
+
 ## v0.16.2 — 2026-10-21
 
 ### Fixed

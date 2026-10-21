@@ -264,3 +264,47 @@ def test_solve_saves_the_sweep_points_for_diagnosis(tmp_path: Path) -> None:
         v = saved["views"][0]
         assert len(v["image_points"]) == len(v["object_points"]) == len(v["ids"])
         assert saved["result"]["passed"] is True
+
+
+# ---- analysis in the tool (plan Tasks 11-12): the panel shows what was diagnosed by hand --------
+def test_solve_reports_limits_and_per_view_counts(tmp_path: Path) -> None:
+    app = _app(tmp_path)
+    with TestClient(app) as c:
+        _set_capture_pose(app, CAPTURE)
+        poses = _start(c).json()["poses"]
+        _sweep(c, poses)
+        res = c.post("/api/vision/autocal/solve").json()
+        assert res["limits"] == {"min_views": 5, "reprojection_mm": 0.05, "shift_rms_mm": 0.1}
+        assert len(res["views"]) == len(poses)
+        for v in res["views"]:
+            assert v["points"] == v["chessboard"] + v["markers"]
+        cap = min(res["views"], key=lambda v: abs(v["recoater_mm"] - CAPTURE))
+        assert (cap["points"], cap["chessboard"], cap["markers"]) == (41, 9, 32)
+
+
+def test_last_report_round_trips_and_is_404_before_any_solve(tmp_path: Path) -> None:
+    app = _app(tmp_path)
+    with TestClient(app) as c:
+        assert c.get("/api/vision/autocal/last").status_code == 404
+        _solved(c, app)
+        r = c.get("/api/vision/autocal/last")
+        assert r.status_code == 200, r.text
+        last = r.json()
+        assert last["result"]["passed"] is True and last["image_size"] == list(FRAME)
+        assert last["views"][0]["points"] == len(last["views"][0]["image_points"])
+        assert "saved_at" in last
+
+
+def test_solve_includes_the_calibration_in_use(tmp_path: Path) -> None:
+    app = _app(tmp_path)
+    with TestClient(app) as c:
+        _solved(c, app)
+        assert c.post("/api/vision/autocal/solve").json()["current"] is None  # none saved yet
+        c.post("/api/vision/autocal/selfcheck", content=_moved_photo())
+        version = c.post("/api/vision/autocal/save").json()["calibration_version"]
+        _solved(c, app)  # a second run, compared against the first
+        cur = c.post("/api/vision/autocal/solve").json()["current"]
+        assert cur["version"] == version and cur["image_size"] == list(FRAME)
+        assert cur["method"] == "auto-sweep"
+        assert cur["shift_rms_mm"] < 0.1 and cur["reprojection_rms_mm"] is not None
+        assert len(cur["area_mm"]) == 2

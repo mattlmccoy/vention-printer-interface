@@ -3,6 +3,7 @@
 
 import { apiUrl, loadOperatorBase } from "./operator.ts";
 import type { ResidualGroup, SelfCheckResult } from "./autocal.ts";
+import type { LastSweep } from "../components/CalibrationRunReport.tsx";
 import type { StatusPayload } from "./telemetry.ts";
 
 export const SITE_MODE = import.meta.env?.VITE_SITE_MODE === "1";
@@ -458,6 +459,11 @@ export const api = {
     return res.json() as Promise<SelfCheckResult>;
   },
   autocalSolve: () => req<AutocalReport>("POST", "/api/vision/autocal/solve"),
+  /** The last solved sweep saved by the operator, or null when none (404) — the report on reload. */
+  autocalLast: async (): Promise<LastSweep | null> => {
+    try { return await req<LastSweep>("GET", "/api/vision/autocal/last"); }
+    catch (e) { if (e instanceof ApiError && e.status === 404) return null; throw e; }
+  },
   autocalSave: () => req<{ calibration_version: string }>("POST", "/api/vision/autocal/save"),
   autocalCancel: () => req<{ active: false }>("POST", "/api/vision/autocal/cancel"),
 };
