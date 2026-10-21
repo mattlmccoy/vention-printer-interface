@@ -472,7 +472,7 @@ export const api = {
     return res.json() as Promise<AutocalPreview>;
   },
   /** The capture-pose photo with the bed grid + calibrated area drawn on it (raw / corrected). */
-  autocalOverlay: (view: "raw" | "corrected") => reqBlob("GET", `/api/vision/autocal/overlay.png?view=${view}`),
+  autocalOverlay: (view: "raw" | "corrected" | "residuals") => reqBlob("GET", `/api/vision/autocal/overlay.png?view=${view}`),
   /** The last solved sweep saved by the operator, or null when none (404) — the report on reload. */
   autocalLast: async (): Promise<LastSweep | null> => {
     try { return await req<LastSweep>("GET", "/api/vision/autocal/last"); }

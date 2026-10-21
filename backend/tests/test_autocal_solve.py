@@ -227,3 +227,16 @@ def test_noisier_marker_corners_still_map_within_30_microns() -> None:
         - (truth.bed_xy(v.object_points) - np.array([v.recoater_mm - truth.capture_mm, 0]))
         for v in views])
     assert float(np.sqrt((e ** 2).sum(axis=1).mean())) <= 0.03
+
+
+def test_point_residuals_match_the_fit() -> None:
+    # Per-point lens-fit residual arrows (projected - detected, px), one array per usable view, for
+    # the run report's direction-and-magnitude map. Their RMS IS the reported lens fit.
+    views, truth = synth_views(spec=SPEC, with_markers=True)
+    res = solve_autocal(views, capture_recoater_mm=truth.capture_mm, image_size=SIZE)
+    assert len(res.point_residuals) == len(views)
+    for r, v in zip(res.point_residuals, views, strict=True):
+        assert r.shape == (len(v.image_points), 2)
+    allr = np.vstack(res.point_residuals)
+    assert float(np.sqrt((np.linalg.norm(allr, axis=1) ** 2).mean())) == pytest.approx(
+        res.reprojection_rms_px, rel=1e-3)

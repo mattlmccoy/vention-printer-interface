@@ -77,6 +77,8 @@ class AutocalResult:
     # Lens-fit residuals by point type (corner/marker) and image region (centre/middle/edge by
     # distance from the centre: < 1/3, < 2/3, >= 2/3 of the half-diagonal): {"n", "rms_px"}.
     residuals: dict[str, dict[str, float]] = field(default_factory=dict)
+    # Per usable view (input order): Nx2 lens-fit residual arrows, projected - detected (px).
+    point_residuals: list[np.ndarray] = field(default_factory=list)
 
     @property
     def reprojection_rms_mm(self) -> float:
@@ -85,7 +87,7 @@ class AutocalResult:
 
 def _fit_distortion(
     views: list[AutocalView], image_size: tuple[int, int]
-) -> tuple[np.ndarray, np.ndarray, float, dict[str, dict[str, float]]]:
+) -> tuple[np.ndarray, np.ndarray, float, dict[str, dict[str, float]], list[np.ndarray]]:
     import cv2
 
     w, h = image_size
@@ -109,11 +111,13 @@ def _fit_distortion(
     # Where does the misfit live? Per point type and per image region (diagnosis, not a gate).
     centre = np.array([w / 2.0, h / 2.0])
     half_diag = float(np.hypot(w / 2.0, h / 2.0))
-    errs, kinds, radii = [], [], []
+    errs, kinds, radii, vectors = [], [], [], []
     for v, o, i, rv, tv in zip(views, obj, img, rvecs, tvecs, strict=True):
         proj, _ = cv2.projectPoints(o, rv, tv, k, dist)
         pts = i.reshape(-1, 2).astype(float)
-        errs.append(np.linalg.norm(proj.reshape(-1, 2) - pts, axis=1))
+        vec = proj.reshape(-1, 2).astype(float) - pts
+        vectors.append(vec)
+        errs.append(np.linalg.norm(vec, axis=1))
         kinds.append(np.asarray(v.ids).ravel() >= MARKER_ID_BASE)
         radii.append(np.linalg.norm(pts - centre, axis=1) / half_diag)
     e, mk, rr = np.concatenate(errs), np.concatenate(kinds), np.concatenate(radii)
@@ -126,7 +130,7 @@ def _fit_distortion(
         "corner": group(~mk), "marker": group(mk), "centre": group(rr < 1 / 3),
         "middle": group((rr >= 1 / 3) & (rr < 2 / 3)), "edge": group(rr >= 2 / 3),
     }
-    return np.asarray(k, float), np.asarray(dist, float).ravel(), float(rms), residuals
+    return np.asarray(k, float), np.asarray(dist, float).ravel(), float(rms), residuals, vectors
 
 
 def _origin_board_xy(views: list[AutocalView]) -> np.ndarray:
@@ -182,7 +186,7 @@ def solve_autocal(
             f"no usable photo at the capture pose ({capture_recoater_mm:g} mm): the board must be "
             "visible there, because that photo defines the bed reference"
         )
-    k, dist, rms, residuals = _fit_distortion(usable, image_size)
+    k, dist, rms, residuals, vectors = _fit_distortion(usable, image_size)
 
     def undist(v: AutocalView) -> np.ndarray:
         return undistort_points(np.asarray(v.image_points, float).reshape(-1, 2), k, dist)
@@ -226,7 +230,7 @@ def solve_autocal(
         shift_worst_mm=float(dist_mm.max()), scale_ratio=scale_ratio, n_views=len(usable),
         image_size=(int(image_size[0]), int(image_size[1])), valid_region_mm=region,
         capture_view_corners=int(len(np.asarray(cap.image_points).reshape(-1, 2))),
-        px_mm=px_mm, residuals=residuals,
+        px_mm=px_mm, residuals=residuals, point_residuals=vectors,
     )
 
 

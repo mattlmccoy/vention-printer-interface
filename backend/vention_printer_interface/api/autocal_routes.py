@@ -51,7 +51,12 @@ from vention_printer_interface.vision.board_gen import (
 from vention_printer_interface.vision.charuco_points import MARKER_ID_BASE, detect_board_points
 from vention_printer_interface.vision.charuco_selfcheck import score_self_check
 from vention_printer_interface.vision.coverage import corner_cells
-from vention_printer_interface.vision.overlay import board_grid_mm, draw_overlay, fit_board_to_bed
+from vention_printer_interface.vision.overlay import (
+    board_grid_mm,
+    draw_overlay,
+    draw_residual_arrows,
+    fit_board_to_bed,
+)
 from vention_printer_interface.vision.registration import (
     BoardSpec,
     Calibration,
@@ -329,8 +334,10 @@ def register_autocal_routes(
                 "views": [{"recoater_mm": x["recoater_mm"],
                            "image_points": np.asarray(x["image_points"]).tolist(),
                            "object_points": np.asarray(x["object_points"]).tolist(),
-                           "ids": np.asarray(x["ids"]).ravel().tolist()}
-                          for x in s["samples"] if x["usable"]],
+                           "ids": np.asarray(x["ids"]).ravel().tolist(),
+                           "residuals_px": np.round(np.asarray(r), 4).tolist()}
+                          for x, r in zip([x for x in s["samples"] if x["usable"]],
+                                          res.point_residuals, strict=True)],
                 "result": out,
             }), encoding="utf-8")
         except OSError:
@@ -374,7 +381,7 @@ def register_autocal_routes(
         }
 
     @app.get("/api/vision/autocal/overlay.png")
-    def autocal_overlay(view: Literal["raw", "corrected"] = "raw") -> Response:
+    def autocal_overlay(view: Literal["raw", "corrected", "residuals"] = "raw") -> Response:
         """The capture-pose photo with the bed grid + calibrated area drawn on it (raw), or
         undistorted and warped onto the bed (corrected). 409 before a solve."""
         s = session()
@@ -385,6 +392,17 @@ def register_autocal_routes(
             raise HTTPException(409, "no photo at the capture pose in this run")
         import cv2
 
+        if view == "residuals":
+            usable = [x for x in s["samples"] if x["usable"]]
+            near = min(range(len(usable)),
+                       key=lambda i: abs(usable[i]["recoater_mm"] - s["plan"].capture_mm))
+            img = draw_residual_arrows(s["capture_image"], usable[near]["image_points"],
+                                       res.point_residuals[near])
+            ok, buf = cv2.imencode(".png", img)
+            if not ok:
+                raise HTTPException(500, "could not encode the overlay")
+            return Response(content=bytes(buf.tobytes()), media_type="image/png",
+                            headers={"Cache-Control": "no-store"})
         lines = None
         if s["capture_points"] is not None and len(s["capture_points"][0]) >= 4:
             spec = s["spec"]
@@ -410,7 +428,8 @@ def register_autocal_routes(
         except (OSError, ValueError) as exc:
             raise HTTPException(500, f"could not read the last sweep: {exc}") from exc
         views = [{**_view_counts(v["recoater_mm"], v.get("ids")),
-                  "image_points": v.get("image_points", [])} for v in saved.get("views", [])]
+                  "image_points": v.get("image_points", []),
+                  "residuals_px": v.get("residuals_px")} for v in saved.get("views", [])]
         return {"saved_at": saved.get("saved_at"), "image_size": saved.get("image_size"),
                 "capture_mm": saved.get("capture_mm"), "board": saved.get("board"),
                 "result": saved.get("result"), "views": views}

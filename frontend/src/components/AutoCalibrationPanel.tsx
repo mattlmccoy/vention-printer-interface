@@ -52,7 +52,7 @@ export function AutoCalibrationPanel({ status, printing }: { status: StatusPaylo
   const [selfCheck, setSelfCheck] = useState<(SelfCheckResult & { url: string; size: [number, number] }) | null>(null);
   const [checking, setChecking] = useState(false);
   const [lastRun, setLastRun] = useState<LastSweep | null>(null);  // the operator's last solved sweep (report)
-  const [overlays, setOverlays] = useState<{ raw?: string; corrected?: string; err?: string } | null>(null);
+  const [overlays, setOverlays] = useState<{ raw?: string; corrected?: string; residuals?: string; err?: string } | null>(null);
   const [err, setErr] = useState<string | null>(null);
   const [returnArmed, setReturnArmed] = useState(false);
   const stopRef = useRef(false);
@@ -75,8 +75,8 @@ export function AutoCalibrationPanel({ status, printing }: { status: StatusPaylo
       setLastRun(await api.autocalLast().catch(() => null));
       setPhase("result");
       // The capture-pose photo with the solved bed grid + calibrated area drawn on it.
-      Promise.all([api.autocalOverlay("raw"), api.autocalOverlay("corrected")])
-        .then(([raw, corrected]) => setOverlays({ raw: URL.createObjectURL(raw), corrected: URL.createObjectURL(corrected) }))
+      Promise.all([api.autocalOverlay("raw"), api.autocalOverlay("corrected"), api.autocalOverlay("residuals")])
+        .then(([raw, corrected, residuals]) => setOverlays({ raw: URL.createObjectURL(raw), corrected: URL.createObjectURL(corrected), residuals: URL.createObjectURL(residuals) }))
         .catch((e) => setOverlays({ err: e instanceof Error ? e.message : String(e) }));
     } catch (e) { setErr(e instanceof Error ? e.message : String(e)); setPhase("idle"); }
   };
@@ -287,6 +287,10 @@ export function AutoCalibrationPanel({ status, printing }: { status: StatusPaylo
                 <figure style={{ margin: 0 }}>
                   {overlays.raw && <img src={overlays.raw} alt="capture-pose photo with the predicted board grid" style={{ width: "100%", display: "block" }} />}
                   <figcaption className="hint" style={{ margin: "4px 0 0" }}>As photographed (capture pose): amber = the board's square edges where the new calibration predicts them; they should lie exactly on the real edges. Green = calibrated area.</figcaption>
+                </figure>
+                <figure style={{ margin: 0 }}>
+                  {overlays.residuals && <img src={overlays.residuals} alt="capture-pose photo with lens-fit residual arrows" style={{ width: "100%", display: "block" }} />}
+                  <figcaption className="hint" style={{ margin: "4px 0 0" }}>Lens-fit residual of every point at the capture pose: direction and size, enlarged (factor printed on the photo). Arrows lined up in one direction show a systematic misfit; scattered ones are noise.</figcaption>
                 </figure>
                 <figure style={{ margin: 0 }}>
                   {overlays.corrected && <img src={overlays.corrected} alt="the same photo corrected onto the bed" style={{ width: "100%", display: "block" }} />}

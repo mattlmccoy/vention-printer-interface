@@ -359,3 +359,24 @@ def test_overlay_returns_png_of_expected_size(tmp_path: Path) -> None:
         x0, y0, x1, y1 = res["bed_extent_mm"]
         mpp = res["mm_per_px"]
         assert (img.shape[1], img.shape[0]) == (round((x1 - x0) / mpp), round((y1 - y0) / mpp))
+
+
+# ---- residual arrows (plan Task 13) --------------------------------------------------------
+def test_last_report_includes_residual_arrows(tmp_path: Path) -> None:
+    app = _app(tmp_path)
+    with TestClient(app) as c:
+        _solved(c, app)
+        last = c.get("/api/vision/autocal/last").json()
+        for v in last["views"]:
+            assert len(v["residuals_px"]) == len(v["image_points"])
+            assert all(len(r) == 2 for r in v["residuals_px"])
+
+
+def test_residual_overlay_png(tmp_path: Path) -> None:
+    app = _app(tmp_path)
+    with TestClient(app) as c:
+        _solved(c, app)
+        r = c.get("/api/vision/autocal/overlay.png?view=residuals")
+        assert r.status_code == 200 and r.headers["content-type"] == "image/png"
+        img = cv2.imdecode(np.frombuffer(r.content, np.uint8), cv2.IMREAD_COLOR)
+        assert (img.shape[1], img.shape[0]) == FRAME
