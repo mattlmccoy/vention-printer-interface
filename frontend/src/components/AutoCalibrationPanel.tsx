@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import { api, type AutocalReport, type AutocalSession } from "../lib/api.ts";
-import { preflight, RECOATER_AXIS, runSweep, selfCheckSummary, type SelfCheckResult, waitSettled } from "../lib/autocal.ts";
-import { boardDefError, describeBoardDef, loadBoardDef, sessionSpecFromDef } from "../lib/board_def.ts";
+import { lensFitText, preflight, RECOATER_AXIS, residualText, runSweep, selfCheckSummary, type SelfCheckResult, waitSettled } from "../lib/autocal.ts";
+import { boardDefError, calibBoardChoices, defaultBoardChoice, loadBoardDef, saveBoardDef, sessionSpecFromDef } from "../lib/board_def.ts";
 import { loadRoleMap } from "../lib/camera_roles.ts";
 import { captureScienceStillOnce } from "../lib/science_still.ts";
 import { cleanNum } from "../lib/format.ts";
@@ -20,8 +20,19 @@ interface Shot { pose: number; mm: number; usable: boolean; corners: number; url
  *  still through the print capture path and uploads it with the position read back from telemetry;
  *  the operator detects, solves and judges. Nothing moves before the on-page confirm; Stop halts. */
 export function AutoCalibrationPanel({ status, printing }: { status: StatusPayload | null; printing: boolean }) {
-  const board = loadBoardDef(storage);
-  const boardErr = board ? boardDefError(board) : "no board generated in this browser";
+  // The board is picked right here (presets + a custom board saved from the Calibration board
+  // page); the choice is remembered in this browser. A wrong square size cannot pass silently: the
+  // encoder-shift scale check fails the run.
+  const [savedBoard] = useState(() => loadBoardDef(storage));
+  const boardChoices = calibBoardChoices(savedBoard);
+  const [boardKey, setBoardKey] = useState(() => defaultBoardChoice(boardChoices, savedBoard));
+  const board = boardChoices.find((c) => c.key === boardKey)?.def ?? null;
+  const boardErr = board ? boardDefError(board) : "pick the board you placed";
+  const pickBoard = (key: string) => {
+    setBoardKey(key);
+    const def = boardChoices.find((c) => c.key === key)?.def;
+    if (def) saveBoardDef(storage, def);
+  };
   const [capturePose, setCapturePose] = useState(0);
   const [winMin, setWinMin] = useState("0");
   const [winMax, setWinMax] = useState("523");
@@ -145,10 +156,11 @@ export function AutoCalibrationPanel({ status, printing }: { status: StatusPaylo
         Place the ChArUco board once, press Start, confirm the planned recoater positions, and watch. The science camera rides
         the recoater, so the machine moves the camera across the board; no clicking per photo.
       </div>
-      <div className={boardErr ? "warnline" : "okline"}>
-        Board: {board ? describeBoardDef(board) : "—"}{boardErr ? ` — ${boardErr} (Settings → Calibration board)` : ""}
-      </div>
       <div className="fields">
+        <span title="The ChArUco board you placed. Detection needs its exact squares, sizes and marker dictionary. A custom board made on the Calibration board page appears here too.">calibration board</span>
+        <select value={boardKey} onChange={(e) => pickBoard(e.target.value)} disabled={busy}>
+          {boardChoices.map((c) => <option key={c.key} value={c.key}>{c.label}</option>)}
+        </select>
         <span title="Where the board sits: on the static substrate (square) or down in the build cylinder (round).">board placement</span>
         <select value={placement} onChange={(e) => setPlacement(e.target.value as "substrate" | "cylinder")} disabled={busy}>
           <option value="substrate">on the substrate</option>
@@ -218,7 +230,8 @@ export function AutoCalibrationPanel({ status, printing }: { status: StatusPaylo
             {report.reasons.length > 0 && <ul style={{ margin: "4px 0 0 18px" }}>{report.reasons.map((r) => <li key={r}>{r}</li>)}</ul>}
           </div>
           <div className="kv">
-            <span>lens fit</span><span>{report.reprojection_rms_px.toFixed(3)} px RMS (limit 0.5)</span>
+            <span>lens fit</span><span>{lensFitText(report)}</span>
+            {report.residuals && <><span title="Lens-fit error by point type and by distance from the photo centre (diagnosis only).">where the error is</span><span>{residualText(report.residuals)}</span></>}
             <span>encoder-shift check</span><span>{report.shift_rms_mm.toFixed(3)} mm RMS, worst {report.shift_worst_mm.toFixed(3)} mm (limit 0.1 RMS)</span>
             <span>scale vs recoater</span><span>{report.scale_ratio.toFixed(4)}</span>
             <span>usable photos</span><span>{report.n_views} (need 5)</span>

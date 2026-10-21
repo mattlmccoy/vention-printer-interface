@@ -24,11 +24,12 @@ view is the same plane at the same height.
 from __future__ import annotations
 
 import math
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Any
 
 import numpy as np
 
+from vention_printer_interface.vision.charuco_points import MARKER_ID_BASE
 from vention_printer_interface.vision.registration import (
     MAX_BED_IMAGE_PX,
     Calibration,
@@ -41,7 +42,10 @@ from vention_printer_interface.vision.registration import (
 MIN_CORNERS = 4  # a view needs at least this many ChArUco corners to be used
 # Pass rule (spec §7, "my call"; tune after the first real run).
 MIN_VIEWS = 5
-MAX_REPROJ_PX = 0.5
+# Lens-fit limit in mm ON THE BED (rms px x mm/px at the image centre), matching the +-0.05 mm
+# target. It was 0.5 px, which tightens as the photo grows: 0.034 mm at 1920x1080 but 0.013 mm at
+# 5120x3840, so the first full-resolution run (1.40 px = 0.036 mm, every mm check passing) failed.
+MAX_REPROJ_MM = 0.05
 MAX_SHIFT_RMS_MM = 0.1
 CAPTURE_POSE_TOL_MM = 0.15  # the capture-pose view must be read back within this of the pose
 
@@ -69,11 +73,19 @@ class AutocalResult:
     image_size: tuple[int, int]
     valid_region_mm: list[tuple[float, float]]
     capture_view_corners: int
+    px_mm: float = float("nan")  # true mm per photo pixel at the image centre (unrounded)
+    # Lens-fit residuals by point type (corner/marker) and image region (centre/middle/edge by
+    # distance from the centre: < 1/3, < 2/3, >= 2/3 of the half-diagonal): {"n", "rms_px"}.
+    residuals: dict[str, dict[str, float]] = field(default_factory=dict)
+
+    @property
+    def reprojection_rms_mm(self) -> float:
+        return self.reprojection_rms_px * self.px_mm
 
 
 def _fit_distortion(
     views: list[AutocalView], image_size: tuple[int, int]
-) -> tuple[np.ndarray, np.ndarray, float]:
+) -> tuple[np.ndarray, np.ndarray, float, dict[str, dict[str, float]]]:
     import cv2
 
     w, h = image_size
@@ -89,12 +101,32 @@ def _fit_distortion(
         | cv2.CALIB_FIX_K3
     )
     criteria = (cv2.TERM_CRITERIA_COUNT + cv2.TERM_CRITERIA_EPS, 200, 1e-10)
-    rms, k, dist, _r, _t = cv2.calibrateCamera(
-        [np.asarray(v.object_points, np.float32).reshape(-1, 3) for v in views],
-        [np.asarray(v.image_points, np.float32).reshape(-1, 1, 2) for v in views],
-        (int(w), int(h)), k0, np.zeros(5), flags=flags, criteria=criteria,
+    obj = [np.asarray(v.object_points, np.float32).reshape(-1, 3) for v in views]
+    img = [np.asarray(v.image_points, np.float32).reshape(-1, 1, 2) for v in views]
+    rms, k, dist, rvecs, tvecs = cv2.calibrateCamera(
+        obj, img, (int(w), int(h)), k0, np.zeros(5), flags=flags, criteria=criteria,
     )
-    return np.asarray(k, float), np.asarray(dist, float).ravel(), float(rms)
+    # Where does the misfit live? Per point type and per image region (diagnosis, not a gate).
+    centre = np.array([w / 2.0, h / 2.0])
+    half_diag = float(np.hypot(w / 2.0, h / 2.0))
+    errs, kinds, radii = [], [], []
+    for v, o, i, rv, tv in zip(views, obj, img, rvecs, tvecs, strict=True):
+        proj, _ = cv2.projectPoints(o, rv, tv, k, dist)
+        pts = i.reshape(-1, 2).astype(float)
+        errs.append(np.linalg.norm(proj.reshape(-1, 2) - pts, axis=1))
+        kinds.append(np.asarray(v.ids).ravel() >= MARKER_ID_BASE)
+        radii.append(np.linalg.norm(pts - centre, axis=1) / half_diag)
+    e, mk, rr = np.concatenate(errs), np.concatenate(kinds), np.concatenate(radii)
+
+    def group(mask: np.ndarray) -> dict[str, float]:
+        n = int(mask.sum())
+        return {"n": n, "rms_px": float(np.sqrt((e[mask] ** 2).mean())) if n else float("nan")}
+
+    residuals = {
+        "corner": group(~mk), "marker": group(mk), "centre": group(rr < 1 / 3),
+        "middle": group((rr >= 1 / 3) & (rr < 2 / 3)), "edge": group(rr >= 2 / 3),
+    }
+    return np.asarray(k, float), np.asarray(dist, float).ravel(), float(rms), residuals
 
 
 def _origin_board_xy(views: list[AutocalView]) -> np.ndarray:
@@ -108,7 +140,7 @@ def _origin_board_xy(views: list[AutocalView]) -> np.ndarray:
 def _bed_raster(
     to_bed: np.ndarray, k: np.ndarray, dist: np.ndarray, views: list[AutocalView],
     image_size: tuple[int, int], max_bed_px: int,
-) -> tuple[float, tuple[float, float, float, float], list[tuple[float, float]]]:
+) -> tuple[float, tuple[float, float, float, float], list[tuple[float, float]], float]:
     import cv2
 
     seen = np.vstack([np.asarray(v.image_points, np.float32).reshape(-1, 2) for v in views])
@@ -128,7 +160,7 @@ def _bed_raster(
         ):
             break
         mm_per_px = round(mm_per_px * 1.25, 4)
-    return mm_per_px, extent, [(float(x), float(y)) for x, y in region]
+    return mm_per_px, extent, [(float(x), float(y)) for x, y in region], mm
 
 
 def solve_autocal(
@@ -150,7 +182,7 @@ def solve_autocal(
             f"no usable photo at the capture pose ({capture_recoater_mm:g} mm): the board must be "
             "visible there, because that photo defines the bed reference"
         )
-    k, dist, rms = _fit_distortion(usable, image_size)
+    k, dist, rms, residuals = _fit_distortion(usable, image_size)
 
     def undist(v: AutocalView) -> np.ndarray:
         return undistort_points(np.asarray(v.image_points, float).reshape(-1, 2), k, dist)
@@ -186,13 +218,15 @@ def solve_autocal(
     to_bed_board[:2, :2] = rot
     to_bed_board[:2, 2] = -rot @ origin
     h_bed = to_bed_board @ h_board
-    mm_per_px, extent, region = _bed_raster(h_bed, k, dist, usable, image_size, max_bed_px)
+    mm_per_px, extent, region, px_mm = _bed_raster(h_bed, k, dist, usable, image_size,
+                                                   max_bed_px)
     return AutocalResult(
         camera_matrix=k, dist_coeffs=dist, H=h_bed, mm_per_px=mm_per_px, bed_extent_mm=extent,
         reprojection_rms_px=rms, shift_rms_mm=float(np.sqrt((dist_mm ** 2).mean())),
         shift_worst_mm=float(dist_mm.max()), scale_ratio=scale_ratio, n_views=len(usable),
         image_size=(int(image_size[0]), int(image_size[1])), valid_region_mm=region,
         capture_view_corners=int(len(np.asarray(cap.image_points).reshape(-1, 2))),
+        px_mm=px_mm, residuals=residuals,
     )
 
 
@@ -201,10 +235,11 @@ def judge(result: AutocalResult) -> tuple[bool, list[str]]:
     reasons: list[str] = []
     if result.n_views < MIN_VIEWS:
         reasons.append(f"only {result.n_views} usable photos; need at least {MIN_VIEWS}")
-    if result.reprojection_rms_px > MAX_REPROJ_PX:
+    if not result.reprojection_rms_mm <= MAX_REPROJ_MM:  # NaN (unknown scale) fails too
         reasons.append(
-            f"lens fit error {result.reprojection_rms_px:.2g} px is above the "
-            f"{MAX_REPROJ_PX:g} px limit"
+            f"lens fit error {result.reprojection_rms_mm:.2g} mm on the bed "
+            f"({result.reprojection_rms_px:.2g} px at {result.px_mm:.4f} mm/px) is above the "
+            f"{MAX_REPROJ_MM:g} mm limit"
         )
     if result.shift_rms_mm > MAX_SHIFT_RMS_MM:
         reasons.append(

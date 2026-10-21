@@ -3,6 +3,12 @@
 Notable changes to the Vention Printer Interface. Versions follow semantic versioning; each entry
 corresponds to a tagged merge to `main`.
 
+## v0.16.1 — 2026-10-21
+
+### Fixed
+- **Automatic calibration failed at full resolution on a pixel limit that shrinks as photos grow.** The lens-fit limit was 0.5 px. That is 0.034 mm on the bed at 1920×1080 but only 0.013 mm at 5120×3840. The first full-resolution sweep (5120×3840, 24 photos, all 9 regions) failed it at 1.40 px, about 0.036 mm, while every millimetre check passed: encoder-shift 0.056 mm RMS, scale 1.0009, and a calibrated area of about 100 × 62 mm. The lens fit is now judged in millimetres on the bed (RMS px × mm/px at the image centre), with a limit of 0.05 mm matching the ±0.05 mm target. The result shows the mm figure and the pixels it came from, plus where the error sits: chessboard vs marker corners, and photo centre vs middle vs edge. Each solve saves its sweep points to `experiments/.autocal_last_sweep.json`, so a failed run can be diagnosed and re-solved without moving the machine again.
+- **You can choose the calibration board on the Calibrate page itself.** The board used to come only from the Calibration board page, so a browser that had never opened that page (like the lab PC's) had no board. Opening that page also silently reset the board to its default, so the only working route was: Calibration board → re-select your board → Calibrate. Now the Calibrate page has a board picker. It lists the shipped presets plus any custom board you generated, starts on the last board used (the small 4×4 when there is none), and remembers your choice in this browser. The Calibration board page saves a board only when you change something there. A wrong square size still cannot pass unnoticed: the encoder scale check fails the run.
+
 ## v0.16.0 — 2026-10-21
 
 ### Added

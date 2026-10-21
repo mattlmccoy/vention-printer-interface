@@ -2,7 +2,7 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import { DEFAULT_BOARD } from "./board.ts";
 import {
-  boardDefError, boardDefFromConfig, describeBoardDef, loadBoardDef, saveBoardDef, sessionSpecFromDef, type BoardDef,
+  boardDefError, boardDefFromConfig, calibBoardChoices, defaultBoardChoice, describeBoardDef, loadBoardDef, saveBoardDef, sessionSpecFromDef, type BoardDef,
 } from "./board_def.ts";
 
 class Mem implements Storage {
@@ -68,4 +68,28 @@ test("sessionSpecFromDef carries the dictionary to the calibrate session", () =>
   assert.deepEqual(sessionSpecFromDef(CUSTOM), {
     kind: "charuco", squares_x: 9, squares_y: 12, square_length_mm: 8, marker_length_mm: 5, aruco_dict: "DICT_4X4_100",
   });
+});
+
+test("the Calibrate page offers every shipped preset as a ready board", () => {
+  const c = calibBoardChoices(null);
+  assert.deepEqual(c.map((x) => x.key), ["small_cylinder", "medium_5x7", "large_6x9"]);
+  assert.deepEqual(c[0].def, { dict: "DICT_4X4_50", squaresX: 4, squaresY: 4, squareMm: 16, markerMm: 12 });
+  assert.match(c[0].label, /4×4.*16 mm/);
+});
+
+test("with nothing saved in this browser the small board is chosen (the one engraved)", () => {
+  assert.equal(defaultBoardChoice(calibBoardChoices(null), null), "small_cylinder");
+});
+
+test("a saved board that matches a preset selects that preset", () => {
+  const saved = { dict: "DICT_4X4_50", squaresX: 5, squaresY: 7, squareMm: 25, markerMm: 18 };
+  assert.equal(defaultBoardChoice(calibBoardChoices(saved), saved), "medium_5x7");
+});
+
+test("a saved custom board is offered and selected, never replaced by a preset", () => {
+  const saved = { dict: "DICT_4X4_50", squaresX: 5, squaresY: 5, squareMm: 20, markerMm: 15 };
+  const c = calibBoardChoices(saved);
+  assert.equal(c.at(-1)?.key, "custom");
+  assert.deepEqual(c.at(-1)?.def, saved);
+  assert.equal(defaultBoardChoice(c, saved), "custom");
 });

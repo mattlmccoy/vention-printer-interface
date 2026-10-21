@@ -162,3 +162,21 @@ export function selfCheckSummary(s: SelfCheckResult): { tone: "ok" | "warn" | "e
   if (!s.moved) return { tone: "warn", headline: "Self-check passed, but the board did not move since the sweep — move or rotate it and retake for a real check.", detail };
   return { tone: "ok", headline: "Self-check passed — you can save.", detail };
 }
+
+/** Lens-fit residual group from the operator's solve: count + RMS in photo pixels (null = none). */
+export interface ResidualGroup { n: number; rms_px: number | null }
+
+/** The lens fit as judged (mm on the bed, since 0.16.1), with the pixels it came from. */
+export function lensFitText(r: { reprojection_rms_px: number; reprojection_rms_mm?: number | null; px_mm?: number | null; reprojection_limit_mm?: number }): string {
+  if (r.reprojection_rms_mm == null || r.px_mm == null) return `${r.reprojection_rms_px.toFixed(3)} px RMS (older operator: no mm figure)`;
+  return `${r.reprojection_rms_mm.toFixed(3)} mm RMS on the bed (${r.reprojection_rms_px.toFixed(2)} px at ${r.px_mm.toFixed(4)} mm/px) — limit ${r.reprojection_limit_mm ?? 0.05} mm`;
+}
+
+/** Where the lens misfit lives: by point type, then by image region (centre → edge). */
+export function residualText(res: Record<string, ResidualGroup>): string {
+  const names: Array<[string, string]> = [["corner", "corners"], ["marker", "markers"], ["centre", "centre"], ["middle", "middle"], ["edge", "edge"]];
+  return names
+    .filter(([k]) => (res[k]?.n ?? 0) > 0 && res[k]?.rms_px != null)
+    .map(([k, label]) => `${label} ${res[k].rms_px!.toFixed(2)} px (${res[k].n})`)
+    .join(" · ");
+}

@@ -135,12 +135,48 @@ def test_judge_names_each_failed_limit() -> None:
 
     views, truth = synth_views(spec=SPEC)
     res = solve_autocal(views, capture_recoater_mm=truth.capture_mm, image_size=SIZE)
-    bad = dataclasses.replace(res, n_views=3, reprojection_rms_px=0.9, shift_rms_mm=0.3)
+    bad = dataclasses.replace(res, n_views=3, reprojection_rms_px=0.9, px_mm=0.1,
+                              shift_rms_mm=0.3)
     passed, reasons = judge(bad)
     assert passed is False and len(reasons) == 3
     text = " ".join(reasons)
-    for value, limit in (("3", "5"), ("0.9", "0.5"), ("0.3", "0.1")):
+    for value, limit in (("3", "5"), ("0.09 mm", "0.05 mm"), ("0.3", "0.1")):
         assert value in text and limit in text
+
+
+def test_lens_fit_is_judged_in_mm_on_the_bed_not_pixels() -> None:
+    # 2026-10-21 real run: 5120x3840 photos, 1.40 px lens fit at ~0.0258 mm/px = 0.036 mm, all mm
+    # checks passing, yet it failed the old 0.5 px limit (0.013 mm at that resolution).
+    import dataclasses
+
+    from vention_printer_interface.vision.autocal_solve import MAX_REPROJ_MM, judge
+
+    views, truth = synth_views(spec=SPEC)
+    res = solve_autocal(views, capture_recoater_mm=truth.capture_mm, image_size=SIZE)
+    assert MAX_REPROJ_MM == 0.05
+    ok = dataclasses.replace(res, reprojection_rms_px=1.40, px_mm=0.0258)
+    assert judge(ok) == (True, [])
+    assert ok.reprojection_rms_mm == pytest.approx(0.0361, abs=1e-4)
+    bad = dataclasses.replace(res, reprojection_rms_px=2.5, px_mm=0.0258)
+    passed, reasons = judge(bad)
+    assert not passed and "0.065 mm" in reasons[0] and "2.5 px" in reasons[0]
+
+
+def test_solve_reports_the_true_mm_per_pixel() -> None:
+    # synthetic camera: f = 1400 px at 120 mm -> 0.0857 mm/px at the centre
+    views, truth = synth_views(spec=SPEC)
+    res = solve_autocal(views, capture_recoater_mm=truth.capture_mm, image_size=SIZE)
+    assert res.px_mm == pytest.approx(120.0 / 1400.0, rel=0.02)
+
+
+def test_residuals_are_broken_down_by_point_type_and_image_region() -> None:
+    views, truth = synth_views(spec=SPEC, with_markers=True)
+    res = solve_autocal(views, capture_recoater_mm=truth.capture_mm, image_size=SIZE)
+    r = res.residuals
+    total = sum(len(v.image_points) for v in views)
+    assert r["corner"]["n"] + r["marker"]["n"] == total
+    assert r["centre"]["n"] + r["middle"]["n"] + r["edge"]["n"] == total
+    assert r["marker"]["n"] > 0 and r["marker"]["rms_px"] < 0.2
 
 
 def test_to_calibration_carries_the_mapping_and_provenance() -> None:

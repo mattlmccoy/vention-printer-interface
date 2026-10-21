@@ -33,6 +33,7 @@ from pydantic import BaseModel
 
 from vention_printer_interface.vision.autocal_plan import plan_sweep
 from vention_printer_interface.vision.autocal_solve import (
+    MAX_REPROJ_MM,
     MIN_CORNERS,
     AutocalView,
     judge,
@@ -96,9 +97,18 @@ def load_window(root: Path) -> tuple[float, float]:
 
 
 def _finite(d: dict[str, Any]) -> dict[str, Any]:
-    """JSON has no NaN: a score with no point pairs reports null."""
-    return {k: (None if isinstance(v, float) and not math.isfinite(v) else v)
-            for k, v in d.items()}
+    """JSON has no NaN: an unmeasured value (no point pairs, an empty group) reports null."""
+    def clean(v: Any) -> Any:
+        if isinstance(v, float) and not math.isfinite(v):
+            return None
+        if isinstance(v, dict):
+            return {k: clean(x) for k, x in v.items()}
+        return v
+    return {k: clean(v) for k, v in d.items()}
+
+
+def _sweep_path(root: Path) -> Path:
+    return Path(root) / ".autocal_last_sweep.json"
 
 
 async def _session_photo(request: Request, s: dict[str, Any]) -> tuple[np.ndarray, tuple[int, int]]:
@@ -245,7 +255,7 @@ def register_autocal_routes(
             raise HTTPException(400, str(exc)) from exc
         passed, reasons = judge(res)
         s["result"], s["verdict"], s["self_check"] = res, (passed, reasons), None
-        return {
+        out = _finite({
             "passed": passed, "reasons": reasons,
             "reprojection_rms_px": res.reprojection_rms_px, "shift_rms_mm": res.shift_rms_mm,
             "shift_worst_mm": res.shift_worst_mm, "scale_ratio": res.scale_ratio,
@@ -254,7 +264,25 @@ def register_autocal_routes(
             "valid_region_mm": [list(p) for p in res.valid_region_mm],
             "placement": s["placement"], "board_thickness_mm": s["board_thickness_mm"],
             "plane_note": PLANE_NOTE,
-        }
+            "reprojection_rms_mm": res.reprojection_rms_mm, "px_mm": res.px_mm,
+            "reprojection_limit_mm": MAX_REPROJ_MM, "residuals": res.residuals,
+        })
+        # Keep the sweep's points on disk so a failed run can be diagnosed (and re-solved) without
+        # repeating the motion; one file, overwritten by the next solve.
+        try:
+            _sweep_path(root).write_text(json.dumps({
+                "saved_at": datetime.now(UTC).isoformat(), "image_size": list(s["image_size"]),
+                "capture_mm": s["plan"].capture_mm, "board": dataclasses.asdict(s["spec"]),
+                "views": [{"recoater_mm": x["recoater_mm"],
+                           "image_points": np.asarray(x["image_points"]).tolist(),
+                           "object_points": np.asarray(x["object_points"]).tolist(),
+                           "ids": np.asarray(x["ids"]).ravel().tolist()}
+                          for x in s["samples"] if x["usable"]],
+                "result": out,
+            }), encoding="utf-8")
+        except OSError:
+            pass  # diagnosis only: never fail a solve because the file could not be written
+        return out
 
     @app.post("/api/vision/autocal/selfcheck")
     async def autocal_selfcheck(request: Request) -> dict[str, Any]:
@@ -304,6 +332,7 @@ def register_autocal_routes(
             "board": dataclasses.asdict(s["spec"]), "scale_ratio": res.scale_ratio,
             "shift_rms_mm": res.shift_rms_mm, "shift_worst_mm": res.shift_worst_mm,
             "reprojection_rms_px": res.reprojection_rms_px, "n_views": res.n_views,
+            "reprojection_rms_mm": res.reprojection_rms_mm, "px_mm": res.px_mm,
             "valid_region_mm": [list(p) for p in res.valid_region_mm],
             "self_check": _finite(s["self_check"].to_dict()),
         }
