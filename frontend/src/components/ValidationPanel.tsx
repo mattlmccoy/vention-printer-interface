@@ -1,15 +1,15 @@
 import { useState } from "react";
 import { api, type VisionValidateScaleResult } from "../lib/api.ts";
 import { captureScienceStillOnce } from "../lib/science_still.ts";
+import { validationCoverageText } from "../lib/validation_text.ts";
 import { ToleranceBand } from "./ToleranceBand.tsx";
 import { PlotExportButtons } from "./PlotExportButtons.tsx";
 import { CalibrationSizeNote } from "./CalibrationSizeNote.tsx";
 import type { Call } from "./views/types.ts";
 
-// The bought board's nominal geometry (17x17 INNER corners, 4.5mm nominal pitch). The nominal pitch
-// drives detection; the operator's caliper-measured TRUE pitch is entered below and used to score.
-const NOMINAL_COLS = 17;
-const NOMINAL_ROWS = 17;
+// The bought board's nominal pitch (4.5 mm; 17x17 inner corners, 81 mm — larger than the science
+// camera's ~74 mm view). Detection finds the VISIBLE part, so no corner count is needed; the
+// operator's caliper-measured TRUE pitch is entered below and used to score.
 const NOMINAL_SQUARE_MM = 4.5;
 const storage = typeof localStorage === "undefined" ? null : localStorage;
 
@@ -30,10 +30,7 @@ export function ValidationPanel({ call, printing }: { call: Call; printing: bool
     if (!Number.isFinite(target) || target <= 0) { setErr("target must be a positive number"); return; }
     call("scale validate", async () => {
       const blob = await captureScienceStillOnce(storage);  // same camera as prints + calibration
-      const r = await api.visionValidateScaleUpload(blob, {
-        cols: NOMINAL_COLS, rows: NOMINAL_ROWS, squareSizeMm: NOMINAL_SQUARE_MM,
-        certifiedMm: pitch, targetMm: target,
-      });
+      const r = await api.visionValidateScaleUpload(blob, { certifiedMm: pitch, targetMm: target });
       setResult(r);
     });
   };
@@ -41,14 +38,15 @@ export function ValidationPanel({ call, printing }: { call: Call; printing: bool
   return (
     <>
       <div className="hint" style={{ marginTop: 0 }}>
-        Certified checkerboard: {NOMINAL_COLS}×{NOMINAL_ROWS} inner corners, {NOMINAL_SQUARE_MM} mm
-        nominal pitch. Caliper-qualify the board's true pitch and enter it below, then capture it with
-        the science camera (same source as your prints) to measure real world-mm accuracy.
+        Certified chessboard ({NOMINAL_SQUARE_MM} mm nominal pitch). Caliper-measure the true square pitch and enter it
+        below, then place the chessboard where the calibration board was and capture it with the science camera (same
+        source as your prints). It may run off the edges of the photo: the visible part is used, and only corners inside the
+        calibrated area are scored.
       </div>
       {printing && <div className="lock">printing in progress — validation is disabled until the print finishes</div>}
       <CalibrationSizeNote />
       <div className="fields" style={{ marginTop: 16 }}>
-        <span>known pitch (mm, caliper-measured)</span>
+        <span title="The certified board's true square size, measured with calipers (e.g. 10 squares ÷ 10).">square pitch (mm, caliper-measured)</span>
         <input type="number" step="0.001" value={knownPitchMm} onChange={(e) => setKnownPitchMm(e.target.value)} disabled={printing} />
         <span>target (± mm)</span>
         <input type="number" step="0.01" value={targetMm} onChange={(e) => setTargetMm(e.target.value)} disabled={printing} />
@@ -65,8 +63,9 @@ export function ValidationPanel({ call, printing }: { call: Call; printing: bool
             limit={result.target_mm}
             unit="mm"
             mode="max"
-            hint={`rms ${result.rms_mm.toFixed(3)} mm · scale bias ${result.scale_bias.toFixed(4)} · ${result.n_points} corners${result.image_size ? ` · ${result.image_size[0]}×${result.image_size[1]} photo` : ""}`}
+            hint={`rms ${result.rms_mm.toFixed(3)} mm · scale bias ${result.scale_bias.toFixed(4)}${result.image_size ? ` · ${result.image_size[0]}×${result.image_size[1]} photo` : ""}`}
           />
+          <div className={result.area_known === true ? "hint" : "warnline"} style={{ marginTop: 4 }}>{validationCoverageText(result)}</div>
           {result.per_point && result.per_point.length > 0 && (
             <PlotExportButtons
               fetchBlob={(fmt) => api.plotValidation(

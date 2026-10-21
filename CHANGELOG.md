@@ -3,6 +3,15 @@
 Notable changes to the Vention Printer Interface. Versions follow semantic versioning; each entry
 corresponds to a tagged merge to `main`.
 
+## v0.16.0 — 2026-10-21
+
+### Added
+- **ChArUco self-check before Save.** After a passing sweep, move or rotate the board anywhere in view and take a self-check photo. Every identified board point is mapped through the new (not yet saved) calibration, and the distances between points are compared with their true distances on the board. The result shows RMS, worst case, scale bias, and how many points were inside and outside the calibrated area. Save opens only when the self-check passes: RMS ≤ 0.1 mm, worst ≤ 0.2 mm, ≥ 12 points inside the area. A new photo or a new solve closes Save again. The result is stored with the calibration. If the board did not move since the sweep, the page says so. This is reused-board evidence and does not clear the "not validated" warning; only the certified chessboard does.
+
+### Fixed
+- **Validation failed whenever the certified chessboard ran off the photo.** That board (17×17 corners, 81 mm) is larger than the science camera's ~74 mm view, so the fixed-count detector never found it and every Validate photo was refused. Validation now uses the visible part of the board (any 5×5 corners or more). Known positions come from the corner grid × the caliper-measured pitch, and only corners inside the calibration's area are scored. The result says how many corners were scored and how many were outside. A chessboard entirely outside the area is refused with that reason, never passed on zero corners. An older calibration without a recorded area scores every corner and says the area is unknown.
+- **Validate showed only "400 scale validation" when it failed.** The operator's reason (wrong photo size, chessboard not found, outside the calibrated area) is now shown.
+
 ## v0.15.0 — 2026-10-21
 
 ### Changed

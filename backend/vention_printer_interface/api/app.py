@@ -12,6 +12,7 @@ import dataclasses
 import io
 import json
 import logging
+import math
 import os
 import platform
 import shutil
@@ -190,6 +191,7 @@ from vention_printer_interface.vision.registration import (
     calibration_validation_warning,
     compute_homography,
     detect_board,
+    detect_chessboard_partial,
     load_calibration,
     load_validation,
     reprojection_error,
@@ -3087,20 +3089,50 @@ def create_app(
         """Score a checkerboard image against its certified pitch through the CURRENT calibration:
         corners -> undistort -> bed-mm homography -> rigid (no-scale) align onto the known grid ->
         residuals (mm). A separate scale_bias catches a pure scale error the no-scale fit ignores.
-        ``passed`` is advisory vs ``target_mm`` (the ±0.05 mm band)."""
+        ``passed`` is advisory vs ``target_mm`` (the ±0.05 mm band).
+
+        The board may be only PARTLY visible (detect_chessboard_partial): known positions are the
+        detected grid indices x the certified pitch. Only corners inside the calibration's
+        ``provenance.valid_region_mm`` are scored; an older calibration without it scores every
+        corner and says the area is unknown."""
         mismatch = calibration_size_mismatch(image, calib)
         if mismatch is not None:  # scoring it would validate a calibration prints never use
             raise HTTPException(400, f"validation {mismatch}")
-        detection = detect_board(image, spec)
-        if detection is None:
+        found = detect_chessboard_partial(image, min_cols=min(5, spec.cols or 5),
+                                          min_rows=min(5, spec.rows or 5))
+        if found is None:
             raise HTTPException(400, "checkerboard not detected in frame")
-        img_pts = np.asarray(detection.image_points, dtype=float)
+        img_pts, grid = found
         if calib.camera_matrix is not None:
             dist = calib.dist_coeffs if calib.dist_coeffs is not None else np.zeros(5)
             img_pts = undistort_points(img_pts, calib.camera_matrix, dist)
         measured_mm = apply_homography(calib.H, img_pts)
-        known_mm = np.asarray(detection.object_points, dtype=float)[:, :2]
-        known_mm = known_mm * (certified_mm / spec.square_size_mm)
+        known_mm = grid * certified_mm
+        # The detector may number the grid mirrored relative to the bed; a rigid (no-reflection)
+        # fit onto a mirrored grid would be garbage, so match the handedness first.
+        lin, *_ = np.linalg.lstsq(np.column_stack([known_mm, np.ones(len(known_mm))]),
+                                  measured_mm, rcond=None)
+        if np.linalg.det(lin[:2, :2]) < 0:
+            known_mm = known_mm * np.array([-1.0, 1.0])
+        region = calib.provenance.get("valid_region_mm") if calib.provenance else None
+        area_known = bool(region)
+        n_outside = 0
+        if area_known:
+            poly = np.asarray(region, np.float32).reshape(-1, 1, 2)
+            import cv2
+
+            keep = np.array([cv2.pointPolygonTest(poly, (float(x), float(y)), False) >= 0
+                             for x, y in measured_mm], bool)
+            n_outside = int((~keep).sum())
+            if int(keep.sum()) == 0:
+                raise HTTPException(400, (
+                    f"no chessboard corners inside the calibrated area ({n_outside} found "
+                    "outside it) — move the chessboard to where the calibration board was"))
+            if int(keep.sum()) < 4:
+                raise HTTPException(400, (
+                    f"only {int(keep.sum())} chessboard corners inside the calibrated area "
+                    "(need 4) — move the chessboard to where the calibration board was"))
+            measured_mm, known_mm = measured_mm[keep], known_mm[keep]
         r_mat, t_vec = rigid_transform_2d(measured_mm, known_mm)
         aligned_mm = measured_mm @ r_mat.T + t_vec
         scored = validate_dimensions(known_mm, aligned_mm)
@@ -3110,6 +3142,10 @@ def create_app(
             "per_point": scored["points"],
             "scale_bias": _grid_scale_bias(known_mm, measured_mm, certified_mm),
             "n_points": int(len(known_mm)),
+            "n_outside": n_outside,
+            "area_known": area_known,
+            "area_note": ("scored inside the calibrated area" if area_known
+                          else "calibrated area unknown (older calibration): every corner scored"),
             "target_mm": target_mm,
             "passed": bool(scored["max_mm"] <= target_mm),
             "image_size": [int(image.shape[1]), int(image.shape[0])],
@@ -3118,10 +3154,11 @@ def create_app(
     @app.post("/api/vision/validate/scale-upload")
     async def vision_validate_scale_upload(
         request: Request,
-        cols: int = Query(...),
-        rows: int = Query(...),
-        square_size_mm: float = Query(...),
         certified_mm: float = Query(...),
+        # Optional since 0.16.0: the visible part of the board is found without a corner count.
+        cols: int = Query(default=0),
+        rows: int = Query(default=0),
+        square_size_mm: float = Query(default=0.0),
         target_mm: float = Query(default=0.05),
     ) -> dict[str, Any]:
         """Browser-image scale validation: the operator captures the chessboard via getUserMedia and
@@ -3133,8 +3170,10 @@ def create_app(
         )
         if calib is None:
             raise HTTPException(400, "no calibration loaded; calibrate before validating")
-        if square_size_mm <= 0 or certified_mm <= 0:
-            raise HTTPException(400, "square_size_mm and certified_mm must be > 0")
+        if certified_mm <= 0 or not math.isfinite(certified_mm):
+            raise HTTPException(400, "certified_mm (the measured square pitch) must be > 0")
+        if cols < 0 or rows < 0:
+            raise HTTPException(400, "cols and rows must be >= 0 (0 = find the visible part)")
         body = await request.body()
         if not body:
             raise HTTPException(400, "empty image body")
@@ -3143,7 +3182,8 @@ def create_app(
         arr = cv2.imdecode(np.frombuffer(body, dtype=np.uint8), cv2.IMREAD_COLOR)
         if arr is None:
             raise HTTPException(400, "could not decode uploaded image")
-        spec = BoardSpec(kind="checkerboard", cols=cols, rows=rows, square_size_mm=square_size_mm)
+        spec = BoardSpec(kind="checkerboard", cols=cols, rows=rows,
+                         square_size_mm=square_size_mm if square_size_mm > 0 else certified_mm)
         result = _score_checkerboard_mm(arr, spec, certified_mm, calib, target_mm)
         # Persist trust keyed to this calibration version, so the analysis can tell validated apart.
         save_validation(

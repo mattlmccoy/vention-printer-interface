@@ -142,3 +142,23 @@ export async function runSweep(
   }
   return d.stopped() ? halt() : "done";
 }
+
+/** The operator's self-check score (backend vision/charuco_selfcheck.py). Distances are null when
+ *  no pair of points could be compared. */
+export interface SelfCheckResult {
+  rms_mm: number | null; worst_mm: number | null; scale_bias: number | null;
+  n_used: number; n_outside: number; moved: boolean; passed: boolean; reasons: string[];
+  corners_px?: [number, number][];
+}
+
+/** One line of verdict + one line of numbers. An unmoved board warns even when it passed (it only
+ *  re-scores the sweep), and no measured distance is ever shown as a number. */
+export function selfCheckSummary(s: SelfCheckResult): { tone: "ok" | "warn" | "err"; headline: string; detail: string } {
+  const counts = `${s.n_used} points used, ${s.n_outside} outside the calibrated area`;
+  const detail = s.rms_mm == null || s.worst_mm == null
+    ? `no distances measured — ${counts}`
+    : `distance error ${s.rms_mm.toFixed(3)} mm RMS, worst ${s.worst_mm.toFixed(3)} mm (limits 0.1 / 0.2); scale ${s.scale_bias == null ? "—" : s.scale_bias.toFixed(4)}; ${counts}`;
+  if (!s.passed) return { tone: "err", headline: "Self-check did not pass — Save stays closed.", detail };
+  if (!s.moved) return { tone: "warn", headline: "Self-check passed, but the board did not move since the sweep — move or rotate it and retake for a real check.", detail };
+  return { tone: "ok", headline: "Self-check passed — you can save.", detail };
+}

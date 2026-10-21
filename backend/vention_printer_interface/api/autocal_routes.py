@@ -12,7 +12,8 @@ Routes:
   POST /api/vision/autocal/sample    -> add one still (raw image body, ?recoater_mm=)
   GET  /api/vision/autocal/session   -> plan + samples + corner coverage
   POST /api/vision/autocal/solve     -> solve + verdict (kept pending in the session)
-  POST /api/vision/autocal/save      -> persist a PASSING result as the active calibration
+  POST /api/vision/autocal/selfcheck -> score the pending solve on a photo of the MOVED board
+  POST /api/vision/autocal/save      -> persist a PASSING, SELF-CHECKED result
   POST /api/vision/autocal/cancel
 """
 
@@ -44,11 +45,14 @@ from vention_printer_interface.vision.board_gen import (
     with_auto_dict,
 )
 from vention_printer_interface.vision.charuco_points import detect_board_points
+from vention_printer_interface.vision.charuco_selfcheck import score_self_check
 from vention_printer_interface.vision.coverage import corner_cells
 from vention_printer_interface.vision.registration import (
     BoardSpec,
     Calibration,
+    apply_homography,
     save_calibration,
+    undistort_points,
 )
 
 DEFAULT_WINDOW = (0.0, 523.0)  # Matt, 2026-10-20: 523 mm is the farthest safe extent (blade)
@@ -89,6 +93,33 @@ def load_window(root: Path) -> tuple[float, float]:
     except (OSError, ValueError, KeyError, TypeError):
         return DEFAULT_WINDOW
     return (lo, hi) if math.isfinite(lo) and math.isfinite(hi) else DEFAULT_WINDOW
+
+
+def _finite(d: dict[str, Any]) -> dict[str, Any]:
+    """JSON has no NaN: a score with no point pairs reports null."""
+    return {k: (None if isinstance(v, float) and not math.isfinite(v) else v)
+            for k, v in d.items()}
+
+
+async def _session_photo(request: Request, s: dict[str, Any]) -> tuple[np.ndarray, tuple[int, int]]:
+    """Decode the uploaded still; refuse a photo of another size than this run's (409)."""
+    body = await request.body()
+    if not body:
+        raise HTTPException(400, "empty image body")
+    import cv2
+
+    image = cv2.imdecode(np.frombuffer(body, dtype=np.uint8), cv2.IMREAD_COLOR)
+    if image is None:
+        raise HTTPException(400, "could not decode uploaded image")
+    size = (int(image.shape[1]), int(image.shape[0]))
+    if s["image_size"] is not None and tuple(s["image_size"]) != size:
+        # A resolution change FAILS the run: a calibration only holds at one photo size, and a
+        # quiet "board not found" would let a sweep finish on the old size and pass.
+        first = s["image_size"]
+        raise HTTPException(409, (
+            f"photo size {size[0]}x{size[1]} differs from this run's {first[0]}x{first[1]}; "
+            "keep the science camera at one resolution and start again"))
+    return image, size
 
 
 def register_autocal_routes(
@@ -161,7 +192,7 @@ def register_autocal_routes(
         state["session"] = {
             "spec": spec, "plan": plan, "window": window, "placement": body.placement,
             "board_thickness_mm": float(body.board_thickness_mm), "samples": [],
-            "image_size": None, "result": None, "verdict": None,
+            "image_size": None, "result": None, "verdict": None, "self_check": None,
         }
         events("autocal_start", {"poses": plan.poses, "window": list(window)})
         return summary(state["session"])
@@ -176,22 +207,7 @@ def register_autocal_routes(
         s = session()
         if not math.isfinite(recoater_mm):
             raise HTTPException(400, "recoater position must be a finite number (is it homed?)")
-        body = await request.body()
-        if not body:
-            raise HTTPException(400, "empty image body")
-        import cv2
-
-        image = cv2.imdecode(np.frombuffer(body, dtype=np.uint8), cv2.IMREAD_COLOR)
-        if image is None:
-            raise HTTPException(400, "could not decode uploaded image")
-        size = (int(image.shape[1]), int(image.shape[0]))
-        if s["image_size"] is not None and tuple(s["image_size"]) != size:
-            # A resolution change FAILS the run: a calibration only holds at one photo size, and a
-            # quiet "board not found" would let a sweep finish on the old size and pass.
-            first = s["image_size"]
-            raise HTTPException(409, (
-                f"photo size {size[0]}x{size[1]} differs from this run's {first[0]}x{first[1]}; "
-                "keep the science camera at one resolution and start again"))
+        image, size = await _session_photo(request, s)
         # Every identified point: chessboard corners AND marker corners (the whole board).
         det = detect_board_points(image, s["spec"])
         pts = (np.zeros((0, 2)) if det is None
@@ -205,7 +221,8 @@ def register_autocal_routes(
             "object_points": None if det is None else np.asarray(det.object_points, float),
             "ids": None if det is None or det.ids is None else np.asarray(det.ids),
         })
-        s["result"] = s["verdict"] = None  # a new photo invalidates any earlier solve
+        # A new photo invalidates any earlier solve and its self-check.
+        s["result"] = s["verdict"] = s["self_check"] = None
         return {
             "usable": usable, "corners": int(len(pts)), "image_size": list(size),
             "chessboard_corners": n_chess, "marker_points": int(len(pts)) - n_chess,
@@ -227,7 +244,7 @@ def register_autocal_routes(
         except ValueError as exc:
             raise HTTPException(400, str(exc)) from exc
         passed, reasons = judge(res)
-        s["result"], s["verdict"] = res, (passed, reasons)
+        s["result"], s["verdict"], s["self_check"] = res, (passed, reasons), None
         return {
             "passed": passed, "reasons": reasons,
             "reprojection_rms_px": res.reprojection_rms_px, "shift_rms_mm": res.shift_rms_mm,
@@ -239,11 +256,44 @@ def register_autocal_routes(
             "plane_note": PLANE_NOTE,
         }
 
+    @app.post("/api/vision/autocal/selfcheck")
+    async def autocal_selfcheck(request: Request) -> dict[str, Any]:
+        """Score the PENDING solve on a photo of the board after it was moved or rotated.
+
+        Any recoater position works: pairwise distances are unchanged by a camera translation
+        parallel to the plane, and the calibrated area is an area of the photo (the hull of where
+        sweep points were seen), so no move back to the capture pose is needed.
+        """
+        s = session()
+        res = s["result"]
+        if res is None or not s["verdict"] or not s["verdict"][0]:
+            raise HTTPException(409, "solve a passing run before the self-check")
+        image, _size = await _session_photo(request, s)
+        det = detect_board_points(image, s["spec"])
+        views = [] if det is None else [det]
+
+        def to_bed(px: np.ndarray) -> np.ndarray:
+            return apply_homography(res.H, undistort_points(px, res.camera_matrix,
+                                                            res.dist_coeffs))
+
+        sweep = [x["image_points"] for x in s["samples"] if x["usable"]]
+        sc = score_self_check(views, to_bed, res.valid_region_mm, sweep)
+        s["self_check"] = sc
+        events("autocal_selfcheck", {"passed": sc.passed, "rms_mm": sc.rms_mm,
+                                     "n_used": sc.n_used})
+        out = sc.to_dict()
+        out["corners_px"] = [] if det is None else np.asarray(det.image_points).tolist()
+        return _finite(out)
+
     @app.post("/api/vision/autocal/save")
     def autocal_save() -> dict[str, Any]:
         s = session()
         if s["result"] is None or not s["verdict"] or not s["verdict"][0]:
             raise HTTPException(409, "only a passing run can be saved; solve one first")
+        if s["self_check"] is None or not s["self_check"].passed:
+            raise HTTPException(409, (
+                "run the self-check first: move or rotate the board, take a self-check photo, "
+                "and save once it passes"))
         res = s["result"]
         version = datetime.now(UTC).strftime("cal-%Y%m%dT%H%M%SZ")
         provenance = {
@@ -255,6 +305,7 @@ def register_autocal_routes(
             "shift_rms_mm": res.shift_rms_mm, "shift_worst_mm": res.shift_worst_mm,
             "reprojection_rms_px": res.reprojection_rms_px, "n_views": res.n_views,
             "valid_region_mm": [list(p) for p in res.valid_region_mm],
+            "self_check": _finite(s["self_check"].to_dict()),
         }
         calib = to_calibration(res, version=version, provenance=provenance)
         save_calibration(calibration_path, calib)

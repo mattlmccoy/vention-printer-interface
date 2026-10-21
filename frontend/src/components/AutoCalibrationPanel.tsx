@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import { api, type AutocalReport, type AutocalSession } from "../lib/api.ts";
-import { preflight, RECOATER_AXIS, runSweep, waitSettled } from "../lib/autocal.ts";
+import { preflight, RECOATER_AXIS, runSweep, selfCheckSummary, type SelfCheckResult, waitSettled } from "../lib/autocal.ts";
 import { boardDefError, describeBoardDef, loadBoardDef, sessionSpecFromDef } from "../lib/board_def.ts";
 import { loadRoleMap } from "../lib/camera_roles.ts";
 import { captureScienceStillOnce } from "../lib/science_still.ts";
@@ -33,6 +33,8 @@ export function AutoCalibrationPanel({ status, printing }: { status: StatusPaylo
   const [cells, setCells] = useState<boolean[][] | null>(null);
   const [report, setReport] = useState<AutocalReport | null>(null);
   const [saved, setSaved] = useState<string | null>(null);
+  const [selfCheck, setSelfCheck] = useState<(SelfCheckResult & { url: string; size: [number, number] }) | null>(null);
+  const [checking, setChecking] = useState(false);
   const [err, setErr] = useState<string | null>(null);
   const [returnArmed, setReturnArmed] = useState(false);
   const stopRef = useRef(false);
@@ -57,7 +59,7 @@ export function AutoCalibrationPanel({ status, printing }: { status: StatusPaylo
   const busy = phase === "running" || phase === "solving";
 
   const plan = async () => {
-    setErr(null); setReport(null); setSaved(null); setShots([]); setCells(null);
+    setErr(null); setReport(null); setSaved(null); setShots([]); setCells(null); setSelfCheck(null);
     try {
       const s = await api.autocalStart({
         spec: sessionSpecFromDef(board!), window_min_mm: Number(winMin), window_max_mm: Number(winMax),
@@ -112,6 +114,19 @@ export function AutoCalibrationPanel({ status, printing }: { status: StatusPaylo
     }
   };
 
+  // ChArUco self-check (spec 2026-10-21 §2): the board moved, one photo, scored against the PENDING
+  // solve; Save opens only when it passed. No motion: any recoater position works.
+  const takeSelfCheck = async () => {
+    setChecking(true); setErr(null);
+    try {
+      const blob = await captureScienceStillOnce(storage);
+      const bmp = await createImageBitmap(blob);
+      const size: [number, number] = [bmp.width, bmp.height];
+      bmp.close();
+      const r = await api.autocalSelfCheck(blob);
+      setSelfCheck({ ...r, url: URL.createObjectURL(blob), size });
+    } catch (e) { setErr(e instanceof Error ? e.message : String(e)); } finally { setChecking(false); }
+  };
   const stop = () => { stopRef.current = true; void api.stop().catch(() => undefined); };
   const save = async () => {
     try { setSaved((await api.autocalSave()).calibration_version); } catch (e) { setErr(e instanceof Error ? e.message : String(e)); }
@@ -211,10 +226,40 @@ export function AutoCalibrationPanel({ status, printing }: { status: StatusPaylo
             <span>calibrated area</span><span>{report.bed_extent_mm.join(", ")} mm (where corners were seen)</span>
             <span>plane</span><span>{report.plane_note}; {report.placement}, board {report.board_thickness_mm} mm thick</span>
           </div>
+          {report.passed && !saved && (
+            <div className="grid-gap" style={{ marginTop: 8 }}>
+              <div className="hint" style={{ margin: 0 }}>
+                Self-check before saving: move or rotate the board anywhere in view (keep it flat on the same surface), then take a
+                self-check photo. Every board point is mapped through this new calibration and the distances between points are
+                compared with the board's true distances. Only points inside the calibrated area count.
+              </div>
+              <div className="actions one tight">
+                <button className="cta" disabled={checking} onClick={() => void takeSelfCheck()}>{checking ? "checking…" : selfCheck ? "retake self-check photo" : "take self-check photo"}</button>
+              </div>
+              {selfCheck && (() => {
+                const v = selfCheckSummary(selfCheck);
+                return (
+                  <div className="cols-2">
+                    <div style={{ position: "relative", maxWidth: 480 }}>
+                      <img src={selfCheck.url} alt="self-check photo" style={{ width: "100%", display: "block" }} />
+                      <svg viewBox={`0 0 ${selfCheck.size[0]} ${selfCheck.size[1]}`} style={{ position: "absolute", inset: 0, width: "100%", height: "100%" }}>
+                        {(selfCheck.corners_px ?? []).map(([x, y], i) => <circle key={i} cx={x} cy={y} r={Math.max(4, selfCheck.size[0] / 160)} fill="var(--accent)" />)}
+                      </svg>
+                    </div>
+                    <div className={v.tone === "ok" ? "okline" : v.tone === "warn" ? "warnline" : "errline"}>
+                      {v.headline}
+                      <div style={{ marginTop: 4 }}>{v.detail}</div>
+                      {selfCheck.reasons.length > 0 && <ul style={{ margin: "4px 0 0 18px" }}>{selfCheck.reasons.map((r) => <li key={r}>{r}</li>)}</ul>}
+                    </div>
+                  </div>
+                );
+              })()}
+            </div>
+          )}
           <div className="actions one tight">
-            {report.passed && !saved && <button className="cta primary" onClick={() => void save()}>save calibration</button>}
+            {report.passed && !saved && <button className="cta primary" disabled={!selfCheck?.passed} title={selfCheck?.passed ? undefined : "Run a passing self-check first."} onClick={() => void save()}>save calibration</button>}
             {saved && <span className="okline" style={{ margin: 0 }}>Saved as {saved}. Next: Settings → Validate.</span>}
-            <button className="cta" onClick={() => { setPhase("idle"); setSession(null); }}>start over</button>
+            <button className="cta" onClick={() => { setPhase("idle"); setSession(null); setSelfCheck(null); }}>start over</button>
           </div>
           <CalibrationSizeNote refreshKey={saved ? 1 : 0} />
         </div>
