@@ -11,6 +11,15 @@ export interface Release {
 
 export const CHANGELOG: Release[] = [
   {
+    version: "0.16.0",
+    date: "2026-10-21",
+    changes: [
+      "Calibration self-check before Save: move the board, take one photo, and the new calibration is checked against the board's true point distances. Save opens only when it passes.",
+      "Validate works with the certified chessboard running off the photo. Only corners inside the calibrated area are scored, and the result says how many were used.",
+      "When Validate fails, it now shows the reason instead of just \"400\".",
+    ],
+  },
+  {
     version: "0.15.0",
     date: "2026-10-21",
     changes: [
