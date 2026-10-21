@@ -3,6 +3,11 @@
 Notable changes to the Vention Printer Interface. Versions follow semantic versioning; each entry
 corresponds to a tagged merge to `main`.
 
+## v0.16.2 — 2026-10-21
+
+### Fixed
+- **Automatic calibration stopped at random positions, often the very first ("never starts on the first run").** The console polls the operator every 50 ms, but the operator re-reads the recoater position from the MachineMotion only about every 290 ms. Once the MachineMotion answers "move complete", which it does for a moment from the *previous* move, the operator stops asking. The console counted one cached reading seen on three polls as "three stable readings". About 0.5 s into a move it decided the recoater had stopped, the position check refused the photo, and the run ended. In the real run the move to 403.3 mm was issued at 15:39:52.130 and "complete" was read at .312 and .559 only; the console gave up at about .6, while the recoater did reach 403.3 mm. Now only fresh telemetry samples count (a new operator timestamp). A still position more than 0.15 mm from the target is accepted only after holding for 2 s, so a move that starts late is not mistaken for a finished one, and an axis that really stops short is still reported. The camera-centring sweep uses the same wait.
+
 ## v0.16.1 — 2026-10-21
 
 ### Fixed
