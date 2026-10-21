@@ -9,12 +9,15 @@ import type { StatusPayload } from "../lib/telemetry.ts";
 import { CalibrationSizeNote } from "./CalibrationSizeNote.tsx";
 import { CalibrationRunReport, type LastSweep } from "./CalibrationRunReport.tsx";
 import { canSolvePartial } from "../lib/autocal_report.ts";
+import { convexHull, markerQuads } from "../lib/overlay_geom.ts";
+import { CalibrationOverlay } from "./CalibrationOverlay.tsx";
+import { CalibrationLivePreview } from "./CalibrationLivePreview.tsx";
 
 const storage = typeof localStorage === "undefined" ? null : localStorage;
 const SECONDS_PER_POSE = 3;
 
 type Phase = "idle" | "confirm" | "running" | "solving" | "result";
-interface Shot { pose: number; mm: number; usable: boolean; corners: number; url: string; size: [number, number]; pts: [number, number][] }
+interface Shot { pose: number; mm: number; usable: boolean; corners: number; url: string; size: [number, number]; pts: [number, number][]; nChess: number }
 
 /** One-button science-camera calibration (spec docs/superpowers/specs/2026-10-20-auto-calibration-
  *  design.md): place the board, press Start, confirm the planned recoater positions, watch. The
@@ -49,6 +52,7 @@ export function AutoCalibrationPanel({ status, printing }: { status: StatusPaylo
   const [selfCheck, setSelfCheck] = useState<(SelfCheckResult & { url: string; size: [number, number] }) | null>(null);
   const [checking, setChecking] = useState(false);
   const [lastRun, setLastRun] = useState<LastSweep | null>(null);  // the operator's last solved sweep (report)
+  const [overlays, setOverlays] = useState<{ raw?: string; corrected?: string; err?: string } | null>(null);
   const [err, setErr] = useState<string | null>(null);
   const [returnArmed, setReturnArmed] = useState(false);
   const stopRef = useRef(false);
@@ -70,6 +74,10 @@ export function AutoCalibrationPanel({ status, printing }: { status: StatusPaylo
       setReport(await api.autocalSolve());
       setLastRun(await api.autocalLast().catch(() => null));
       setPhase("result");
+      // The capture-pose photo with the solved bed grid + calibrated area drawn on it.
+      Promise.all([api.autocalOverlay("raw"), api.autocalOverlay("corrected")])
+        .then(([raw, corrected]) => setOverlays({ raw: URL.createObjectURL(raw), corrected: URL.createObjectURL(corrected) }))
+        .catch((e) => setOverlays({ err: e instanceof Error ? e.message : String(e) }));
     } catch (e) { setErr(e instanceof Error ? e.message : String(e)); setPhase("idle"); }
   };
 
@@ -84,7 +92,7 @@ export function AutoCalibrationPanel({ status, printing }: { status: StatusPaylo
   const busy = phase === "running" || phase === "solving";
 
   const plan = async () => {
-    setErr(null); setReport(null); setSaved(null); setShots([]); setCells(null); setSelfCheck(null);
+    setErr(null); setReport(null); setSaved(null); setShots([]); setCells(null); setSelfCheck(null); setOverlays(null);
     try {
       const s = await api.autocalStart({
         spec: sessionSpecFromDef(board!), window_min_mm: Number(winMin), window_max_mm: Number(winMax),
@@ -119,7 +127,7 @@ export function AutoCalibrationPanel({ status, printing }: { status: StatusPaylo
             if (r.coverage_cells) setCells(r.coverage_cells);
             setShots((prev) => [...prev, {
               pose: mm, mm, usable: r.usable, corners: r.corners, url: URL.createObjectURL(blob),
-              size: r.image_size, pts: r.corners_px ?? [],
+              size: r.image_size, pts: r.corners_px ?? [], nChess: r.chessboard_corners ?? (r.corners_px ?? []).length,
             }]);
             return r;
           },
@@ -218,6 +226,14 @@ export function AutoCalibrationPanel({ status, printing }: { status: StatusPaylo
           <CalibrationRunReport last={lastRun} />
         </details>
       )}
+      {board && phase !== "running" && phase !== "solving" && (
+        <details open={phase === "result"}>
+          <summary>Live view with the identified points{phase === "result" ? " (place the board for the self-check)" : ""}</summary>
+          <CalibrationLivePreview board={board} covered={
+            shots.length ? { size: shots[0].size, points: shots.filter((x) => x.usable).flatMap((x) => x.pts) }
+              : lastRun ? { size: lastRun.image_size, points: lastRun.views.flatMap((v) => v.image_points) } : null} />
+        </details>
+      )}
       {phase === "confirm" && session && (
         <div className="warnline">
           The recoater (now at {(() => { const v = status?.controller?.telemetry?.positions?.[String(RECOATER_AXIS)]; return typeof v === "number" ? `${cleanNum(v, 1)} mm` : "an unknown position"; })()}) will move to {cleanNum(session.pre_approach_mm, 1)} mm, then step down through {session.poses.length} positions
@@ -239,9 +255,8 @@ export function AutoCalibrationPanel({ status, printing }: { status: StatusPaylo
         <div className="cols-2">
           <div style={{ position: "relative", maxWidth: 480 }}>
             <img src={last.url} alt="latest calibration photo" style={{ width: "100%", display: "block" }} />
-            <svg viewBox={`0 0 ${last.size[0]} ${last.size[1]}`} style={{ position: "absolute", inset: 0, width: "100%", height: "100%" }}>
-              {last.pts.map(([x, y], i) => <circle key={i} cx={x} cy={y} r={Math.max(4, last.size[0] / 160)} fill="var(--accent)" />)}
-            </svg>
+            <CalibrationOverlay size={last.size} chess={last.pts.slice(0, last.nChess)} markers={last.pts.slice(last.nChess)}
+              quads={markerQuads(last.pts, last.nChess)} hull={convexHull(shots.filter((x) => x.usable).flatMap((x) => x.pts))} />
           </div>
           <div>
             <div className="kv">
@@ -265,6 +280,20 @@ export function AutoCalibrationPanel({ status, printing }: { status: StatusPaylo
             <span>lens fit</span><span>{lensFitText(report)}</span>
             <span>plane</span><span>{report.plane_note}; {report.placement}, board {report.board_thickness_mm} mm thick</span>
           </div>
+          {overlays && (overlays.err
+            ? <div className="warnline">Overlay unavailable: {overlays.err}</div>
+            : (
+              <div className="cols-2" style={{ marginTop: 8 }}>
+                <figure style={{ margin: 0 }}>
+                  {overlays.raw && <img src={overlays.raw} alt="capture-pose photo with the predicted board grid" style={{ width: "100%", display: "block" }} />}
+                  <figcaption className="hint" style={{ margin: "4px 0 0" }}>As photographed (capture pose): amber = the board's square edges where the new calibration predicts them; they should lie exactly on the real edges. Green = calibrated area.</figcaption>
+                </figure>
+                <figure style={{ margin: 0 }}>
+                  {overlays.corrected && <img src={overlays.corrected} alt="the same photo corrected onto the bed" style={{ width: "100%", display: "block" }} />}
+                  <figcaption className="hint" style={{ margin: "4px 0 0" }}>Corrected onto the bed (lens distortion removed): the board's edges should now be straight and on the amber grid. Green = calibrated area.</figcaption>
+                </figure>
+              </div>
+            ))}
           {lastRun ? <CalibrationRunReport last={lastRun} /> : <div className="hint">Loading the run report…</div>}
           {report.passed && !saved && (
             <div className="grid-gap" style={{ marginTop: 8 }}>

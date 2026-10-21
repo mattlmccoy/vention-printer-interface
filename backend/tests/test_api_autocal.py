@@ -308,3 +308,54 @@ def test_solve_includes_the_calibration_in_use(tmp_path: Path) -> None:
         assert cur["method"] == "auto-sweep"
         assert cur["shift_rms_mm"] < 0.1 and cur["reprojection_rms_mm"] is not None
         assert len(cur["area_mm"]) == 2
+
+
+# ---- overlays on the active image (plan Tasks 7 + 9) ------------------------------------------
+_BOARD_Q = {"squares_x": 4, "squares_y": 4, "square_mm": 16.0, "marker_mm": 12.0,
+            "dict": "DICT_4X4_50"}
+
+
+def test_preview_returns_identified_points_without_a_session(tmp_path: Path) -> None:
+    with TestClient(_app(tmp_path)) as c:
+        r = c.post("/api/vision/autocal/preview", params=_BOARD_Q, content=_photo(0.0))
+        assert r.status_code == 200, r.text
+        out = r.json()
+        assert out["found"] is True and out["image_size"] == list(FRAME)
+        kinds = [p["kind"] for p in out["points"]]
+        assert kinds.count("corner") == 9 and kinds.count("marker") == 32
+        assert len(out["markers"]) == 8 and all(len(m) == 4 for m in out["markers"])
+
+
+def test_preview_with_no_board_says_not_found(tmp_path: Path) -> None:
+    blank = np.full((300, 400, 3), 255, np.uint8)
+    ok, buf = cv2.imencode(".png", blank)
+    with TestClient(_app(tmp_path)) as c:
+        out = c.post("/api/vision/autocal/preview", params=_BOARD_Q,
+                     content=bytes(buf.tobytes())).json()
+        assert out["found"] is False and out["points"] == [] and out["markers"] == []
+
+
+def test_overlay_before_solve_is_409(tmp_path: Path) -> None:  # Review Focus 5
+    app = _app(tmp_path)
+    with TestClient(app) as c:
+        _set_capture_pose(app, CAPTURE)
+        _start(c)
+        for view in ("raw", "corrected"):
+            assert c.get(f"/api/vision/autocal/overlay.png?view={view}").status_code == 409
+
+
+def test_overlay_returns_png_of_expected_size(tmp_path: Path) -> None:
+    app = _app(tmp_path)
+    with TestClient(app) as c:
+        _solved(c, app)
+        res = c.post("/api/vision/autocal/solve").json()
+        raw = c.get("/api/vision/autocal/overlay.png?view=raw")
+        assert raw.status_code == 200 and raw.headers["content-type"] == "image/png"
+        img = cv2.imdecode(np.frombuffer(raw.content, np.uint8), cv2.IMREAD_COLOR)
+        assert (img.shape[1], img.shape[0]) == FRAME
+        cor = c.get("/api/vision/autocal/overlay.png?view=corrected")
+        assert cor.status_code == 200
+        img = cv2.imdecode(np.frombuffer(cor.content, np.uint8), cv2.IMREAD_COLOR)
+        x0, y0, x1, y1 = res["bed_extent_mm"]
+        mpp = res["mm_per_px"]
+        assert (img.shape[1], img.shape[0]) == (round((x1 - x0) / mpp), round((y1 - y0) / mpp))

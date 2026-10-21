@@ -11,6 +11,14 @@ export interface Release {
 
 export const CHANGELOG: Release[] = [
   {
+    version: "0.18.0",
+    date: "2026-10-21",
+    changes: [
+      "Calibrate shows a live camera view with the identified board points drawn on it, and each sweep photo with its points and the area covered so far.",
+      "After the solve: the capture-pose photo with the board's edges where the new calibration predicts them, and the same photo corrected onto the bed.",
+    ],
+  },
+  {
     version: "0.17.0",
     date: "2026-10-21",
     changes: [

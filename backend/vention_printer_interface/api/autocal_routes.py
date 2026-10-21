@@ -28,11 +28,12 @@ from pathlib import Path
 from typing import Any, Literal
 
 import numpy as np
-from fastapi import FastAPI, HTTPException, Query, Request
+from fastapi import FastAPI, HTTPException, Query, Request, Response
 from pydantic import BaseModel
 
 from vention_printer_interface.vision.autocal_plan import plan_sweep
 from vention_printer_interface.vision.autocal_solve import (
+    CAPTURE_POSE_TOL_MM,
     MAX_REPROJ_MM,
     MAX_SHIFT_RMS_MM,
     MIN_CORNERS,
@@ -50,6 +51,7 @@ from vention_printer_interface.vision.board_gen import (
 from vention_printer_interface.vision.charuco_points import MARKER_ID_BASE, detect_board_points
 from vention_printer_interface.vision.charuco_selfcheck import score_self_check
 from vention_printer_interface.vision.coverage import corner_cells
+from vention_printer_interface.vision.overlay import board_grid_mm, draw_overlay, fit_board_to_bed
 from vention_printer_interface.vision.registration import (
     BoardSpec,
     Calibration,
@@ -243,6 +245,7 @@ def register_autocal_routes(
             "spec": spec, "plan": plan, "window": window, "placement": body.placement,
             "board_thickness_mm": float(body.board_thickness_mm), "samples": [],
             "image_size": None, "result": None, "verdict": None, "self_check": None,
+            "capture_image": None, "capture_dmm": None, "capture_points": None,
         }
         events("autocal_start", {"poses": plan.poses, "window": list(window)})
         return summary(state["session"])
@@ -265,6 +268,11 @@ def register_autocal_routes(
         n_chess = 0 if det is None else int((det.kinds == "corner").sum())
         usable = det is not None and len(pts) >= MIN_CORNERS
         s["image_size"] = s["image_size"] or size
+        # Keep the photo nearest the capture pose (memory only) for the overlays on that photo.
+        dmm = abs(float(recoater_mm) - s["plan"].capture_mm)
+        if dmm <= CAPTURE_POSE_TOL_MM and (s["capture_dmm"] is None or dmm < s["capture_dmm"]):
+            s["capture_image"], s["capture_dmm"] = image, dmm
+            s["capture_points"] = None if det is None else (pts, np.asarray(det.object_points))
         s["samples"].append({
             "recoater_mm": float(recoater_mm), "usable": usable, "corners": int(len(pts)),
             "image_points": pts,
@@ -328,6 +336,69 @@ def register_autocal_routes(
         except OSError:
             pass  # diagnosis only: never fail a solve because the file could not be written
         return out
+
+    @app.post("/api/vision/autocal/preview")
+    async def autocal_preview(
+        request: Request, squares_x: int = Query(...), squares_y: int = Query(...),
+        square_mm: float = Query(...), marker_mm: float = Query(...),
+        dict_name: str = Query("DICT_4X4_50", alias="dict"),
+    ) -> dict[str, Any]:
+        """Look-only live preview: every identified point + marker outline on one (small) frame.
+        Stateless (no session, no motion); the board comes from the query."""
+        spec = BoardSpec(kind="charuco", squares_x=squares_x, squares_y=squares_y,
+                         square_length_mm=square_mm, marker_length_mm=marker_mm,
+                         aruco_dict=dict_name)
+        try:
+            validate_charuco_spec(spec)
+        except BoardSpecError as exc:
+            raise HTTPException(400, f"invalid board: {exc}") from exc
+        body = await request.body()
+        if not body:
+            raise HTTPException(400, "empty image body")
+        import cv2
+
+        image = cv2.imdecode(np.frombuffer(body, dtype=np.uint8), cv2.IMREAD_COLOR)
+        if image is None:
+            raise HTTPException(400, "could not decode uploaded image")
+        det = detect_board_points(image, spec)
+        size = [int(image.shape[1]), int(image.shape[0])]
+        if det is None:
+            return {"found": False, "image_size": size, "points": [], "markers": []}
+        pts = np.asarray(det.image_points, float).reshape(-1, 2)
+        ids = np.asarray(det.ids).ravel()
+        return {
+            "found": True, "image_size": size,
+            "points": [{"x": float(x), "y": float(y), "id": int(i), "kind": str(k)}
+                       for (x, y), i, k in zip(pts, ids, det.kinds, strict=True)],
+            "markers": [np.asarray(m, float).reshape(4, 2).tolist() for m in det.markers_px],
+        }
+
+    @app.get("/api/vision/autocal/overlay.png")
+    def autocal_overlay(view: Literal["raw", "corrected"] = "raw") -> Response:
+        """The capture-pose photo with the bed grid + calibrated area drawn on it (raw), or
+        undistorted and warped onto the bed (corrected). 409 before a solve."""
+        s = session()
+        res = s["result"]
+        if res is None:
+            raise HTTPException(409, "solve first: the overlay shows the solved calibration")
+        if s["capture_image"] is None:
+            raise HTTPException(409, "no photo at the capture pose in this run")
+        import cv2
+
+        lines = None
+        if s["capture_points"] is not None and len(s["capture_points"][0]) >= 4:
+            spec = s["spec"]
+            to_bed = fit_board_to_bed(s["capture_points"][0], s["capture_points"][1], res)
+            lines = board_grid_mm(spec.squares_x, spec.squares_y, spec.square_length_mm, to_bed)
+        try:
+            img = draw_overlay(s["capture_image"], res, view, lines)
+        except ValueError as exc:
+            raise HTTPException(400, str(exc)) from exc
+        ok, buf = cv2.imencode(".png", img)
+        if not ok:
+            raise HTTPException(500, "could not encode the overlay")
+        return Response(content=bytes(buf.tobytes()), media_type="image/png",
+                        headers={"Cache-Control": "no-store"})
 
     @app.get("/api/vision/autocal/last")
     def autocal_last() -> dict[str, Any]:
