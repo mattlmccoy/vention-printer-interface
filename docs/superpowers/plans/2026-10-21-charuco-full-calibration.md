@@ -212,3 +212,31 @@
 
 - [ ] Steps: failing → implement → pass. Run the gates.
 - [ ] Bump to 0.17.0, commit, open PR C.
+
+## PR D — calibration analysis in the tool (0.17.0; added 2026-10-21, Matt: "all these analyses need to be shown in the tool itself")
+
+Matt chose all four in a poll: solve after a stop, run report, compare with saved, live views. PR D ships the first three as 0.17.0. PR C (live views, Tasks 7–9 above) becomes 0.18.0.
+
+### Task 10: Solve after a stop
+- `AutoCalibrationPanel.tsx`: when `runSweep` throws or returns "stopped", keep the shots. Show the reason, plus how many photos were kept and how many are usable. Offer **solve the N photos taken** when ≥ `MIN_VIEWS` (5) are usable.
+- The backend already solves any session's usable samples (verified 2026-10-21 on the 23-photo run: it passed).
+- Pure helper `canSolvePartial(shots, minViews)` in `lib/autocal.ts`, with a node test.
+
+### Task 11: Run report
+- The solve response adds `limits: {min_views, reprojection_mm, shift_rms_mm}` and `views: [{recoater_mm, points, chessboard, markers}]`.
+- `GET /api/vision/autocal/last` returns the saved `.autocal_last_sweep.json` summary (result + per-view counts + image points for the coverage map), or 404 when none exists. A reload shows the last report.
+- Panel `CalibrationRunReport`:
+  - pass/fail per check against its limit;
+  - per-photo table;
+  - photo-space map of all points with coverage cells;
+  - bed diagram of `valid_region_mm`;
+  - where the lens error sits (`residualText`).
+- Tests:
+  - `test_solve_reports_limits_and_per_view_counts`;
+  - `test_last_report_round_trips_and_is_404_before_any_solve`;
+  - node tests for `checkRows(report)`.
+
+### Task 12: Compare with the calibration in use
+- The solve response adds `current`: the active calibration's version, image_size, reprojection mm (or px for an older one), shift RMS, scale ratio, area extent and method. It is null when there is none.
+- Pure `compareCalibrations(next, current)` → rows + verdict ("better" / "worse" / "different photo size — the saved one does not apply to these photos" / "no saved calibration"), with node tests.
+- Tests: `test_solve_includes_the_calibration_in_use`.
