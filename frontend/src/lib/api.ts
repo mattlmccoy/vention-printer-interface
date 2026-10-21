@@ -2,6 +2,7 @@
  *  guard). Method + path per call are locked by api.test.ts so a Save can never silently 405. */
 
 import { apiUrl, loadOperatorBase } from "./operator.ts";
+import type { SelfCheckResult } from "./autocal.ts";
 import type { StatusPayload } from "./telemetry.ts";
 
 export const SITE_MODE = import.meta.env?.VITE_SITE_MODE === "1";
@@ -438,6 +439,18 @@ export const api = {
       throw new ApiError(res.status, detail ?? `${res.status} calibration photo upload`);
     }
     return res.json() as Promise<AutocalSampleResult>;
+  },
+  autocalSelfCheck: async (blob: Blob): Promise<SelfCheckResult> => {
+    const res = await fetch(apiUrl(base, "/api/vision/autocal/selfcheck"), {
+      method: "POST",
+      headers: { [CLIENT_HEADER]: "1", "Content-Type": blob.type || "image/png" },
+      body: blob,
+    });
+    if (!res.ok) {
+      const detail = await res.json().then((j: { detail?: string }) => j.detail).catch(() => undefined);
+      throw new ApiError(res.status, detail ?? `${res.status} self-check photo upload`);
+    }
+    return res.json() as Promise<SelfCheckResult>;
   },
   autocalSolve: () => req<AutocalReport>("POST", "/api/vision/autocal/solve"),
   autocalSave: () => req<{ calibration_version: string }>("POST", "/api/vision/autocal/save"),
