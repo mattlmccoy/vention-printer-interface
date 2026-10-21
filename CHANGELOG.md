@@ -3,6 +3,11 @@
 Notable changes to the Vention Printer Interface. Versions follow semantic versioning; each entry
 corresponds to a tagged merge to `main`.
 
+## v0.14.1 — 2026-10-21
+
+### Fixed
+- **Automatic calibration photographed while the recoater was still moving.** The machine keeps reporting "move complete" from the previous move for a few polls after a new move starts, and the console's settle check accepted that: the first real run read positions 0.3–3 mm short of each target (463.6 mm for the 463.3 mm capture pose), so the solve found no capture-pose photo. The console now uses the operator's proven settle rule (the move must register, then three readings within one 0.1 mm count) and refuses a photo when the recoater stopped more than 0.15 mm from the target. The camera-centring sweep had the same bug and is fixed too.
+
 ## v0.14.0 — 2026-10-20
 
 ### Added

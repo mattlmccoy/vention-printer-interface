@@ -11,6 +11,13 @@ export interface Release {
 
 export const CHANGELOG: Release[] = [
   {
+    version: "0.14.1",
+    date: "2026-10-21",
+    changes: [
+      "Automatic calibration (and the camera-centring sweep) now waits until the recoater has really stopped before each photo; it used to photograph mid-move, so runs failed at the capture pose.",
+    ],
+  },
+  {
     version: "0.14.0",
     date: "2026-10-20",
     changes: [
