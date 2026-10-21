@@ -12,7 +12,7 @@ import { loadRoleMap } from "../lib/camera_roles.ts";
 import { loadCameraSettings } from "../lib/overview_settings.ts";
 import { blankReason, captureFailureMessage } from "../lib/capture_diagnostics.ts";
 import { cameraBus, captureFullResStill } from "../lib/camera_bus.ts";
-import { fullResConstraints, lightweightEnabled } from "../lib/camera_mode.ts";
+import { fullResConstraints } from "../lib/camera_mode.ts";
 
 const storage = typeof localStorage === "undefined" ? null : localStorage;
 
@@ -58,7 +58,7 @@ export async function grabScienceStill(
   else if (track.readyState !== "live") attempts.push(`camera: track ${track.readyState}`);
   if (track && IC) {
     const capture = new IC(track);
-    // skipPhoto: the full-res lightweight path wants the RAW frame (PNG, lossless), never the
+    // skipPhoto: the full-res still path wants the RAW frame (PNG, lossless), never the
     // camera's own JPEG photo.
     if (capture.takePhoto && !opts.skipPhoto) {
       try {
@@ -89,7 +89,7 @@ export async function grabScienceStill(
   return { blob: await toPng(video, video.videoWidth, video.videoHeight, "video"), attempts };
 }
 
-/** Lightweight camera mode's science still: pause the other live views (camera bus), open the science
+/** THE science still (prints, calibration, validation): pause the other live views (camera bus), open the science
  *  camera ALONE at `resolution`, grab the RAW frame (lossless PNG, never the camera's JPEG photo),
  *  close, resume. The print client AND the Calibrate/Validate panels use this one function, so a
  *  calibration is fitted on stills of the same size and source as the print stills it is applied to
@@ -116,17 +116,16 @@ export async function fullResScienceStill(
   return r;
 }
 
-/** Headless client-side SCIENCE capture (the wrong-camera fix). During a recorded print it holds the
- * ASSIGNED science camera open (opened by its browser deviceId — reliable on macOS, unlike the
- * server's cv2 device index that mis-resolves two identical ELPs), heartbeats the operator so the
- * server skips its own grab, and — on each "capture now" signal (status.capture_request.seq) — grabs
- * a frame and uploads it. Decoupled from any live view: renders only a hidden <video>. */
+/** Headless client-side SCIENCE capture (the wrong-camera fix). During a recorded print it probes the
+ * ASSIGNED science camera (opened by its browser deviceId — reliable on macOS, unlike the server's
+ * cv2 device index that mis-resolves two identical ELPs), heartbeats the operator so the server
+ * skips its own grab, and — on each "capture now" signal (status.capture_request.seq) — opens it
+ * alone at full resolution, grabs a frame and uploads it. Decoupled from any live view: renders only a hidden <video>. */
 export function ScienceCaptureClient({ status, onError }: {
   status: StatusPayload | null;
   onError: (message: string) => void;
 }) {
   const videoRef = useRef<HTMLVideoElement | null>(null);
-  const streamRef = useRef<MediaStream | null>(null);
   const lastSeq = useRef(0);
   const captureOwnerRef = useRef(false);
   const [streamReady, setStreamReady] = useState(false);
@@ -135,20 +134,18 @@ export function ScienceCaptureClient({ status, onError }: {
   const deviceId = loadRoleMap(storage).science;
   const recording = !!status?.recording.active;
   const active = recording && !!deviceId;
-  // Lightweight camera mode (shared USB bus): don't hold the science camera open during the print —
-  // open it ALONE at full resolution for each still (camera_bus.ts), so the overview keeps the bus.
-  const light = lightweightEnabled();
+  // The science camera is never held open during the print: each still opens it ALONE at the
+  // Camera-settings resolution (fullResScienceStill, camera_bus.ts) — the same path Calibrate and
+  // Validate use, so a calibration always matches the print stills' size and source.
 
   const stop = () => {
-    streamRef.current?.getTracks().forEach((t) => t.stop());
-    streamRef.current = null;
     if (videoRef.current) videoRef.current.srcObject = null;
     setStreamReady(false);
     captureOwnerRef.current = false;
     setCaptureOwner(false);
   };
 
-  // Hold the science camera open (hidden) only while a recorded print is running.
+  // Probe the science camera (hidden) when a recorded print starts: real frames ⇒ own the captures.
   useEffect(() => {
     if (!active || !deviceId) { stop(); return; }
     const md = typeof navigator !== "undefined" ? navigator.mediaDevices : undefined;
@@ -173,14 +170,10 @@ export function ScienceCaptureClient({ status, onError }: {
             stream.getTracks().forEach((t) => t.stop());
             return;
           }
-          if (light) {
-            // Probe only: the camera produces real frames, so this client can own captures. It is
-            // released at once and reopened at full resolution for each still.
-            stream.getTracks().forEach((t) => t.stop());
-            video.srcObject = null;
-          } else {
-            streamRef.current = stream;
-          }
+          // Probe only: the camera produces real frames, so this client can own captures. It is
+          // released at once and reopened at full resolution for each still.
+          stream.getTracks().forEach((t) => t.stop());
+          video.srcObject = null;
           setStreamReady(true);
           return;
         } catch (cause) {
@@ -194,7 +187,7 @@ export function ScienceCaptureClient({ status, onError }: {
     })();
     return () => { controller.abort(); stop(); };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [active, deviceId, light]);
+  }, [active, deviceId]);
 
   // Claim capture ownership only after a real decoded frame exists. A MediaStream object with no
   // pixels must never suppress the server fallback (the former black-panel / lost-layer bug).
@@ -237,23 +230,17 @@ export function ScienceCaptureClient({ status, onError }: {
     let cancelled = false;
     (async () => {
       const resolution = loadCameraSettings(storage, "science").resolution;
-      const desired = resolution.split("x").map(Number);
-      const requested = {
-        width: Number.isFinite(desired[0]) ? desired[0] : 1920,
-        height: Number.isFinite(desired[1]) ? desired[1] : 1080,
-      };
       const video = videoRef.current;
-      const { blob, attempts } = light && deviceId && video
+      const { blob, attempts } = deviceId && video
         ? await (async () => {
           const r = await fullResScienceStill(deviceId, resolution, video);
-          console.info(`science still layer ${cadLayer ?? layer} ${stage}: full-res open ${Math.round(r.openMs)} ms, total ${Math.round(r.totalMs)} ms (lightweight camera mode)`);
+          console.info(`science still layer ${cadLayer ?? layer} ${stage}: full-res open ${Math.round(r.openMs)} ms, total ${Math.round(r.totalMs)} ms`);
           return r;
         })()
-        : await grabScienceStill(streamRef.current, videoRef.current, requested);
+        : { blob: null, attempts: ["camera: no assigned science camera or video element"] };
       if (cancelled) return;
       const msg = (e: unknown) => (e instanceof Error ? e.message : String(e));
       if (!blob) {
-        if (!light) stop(); // a held stream that failed is dropped; on-demand keeps capture duty
         try {
           await api.scienceClientFallback(cr.seq);
           // The operator took this one; keep the browser's reason visible for diagnosis.
@@ -266,7 +253,6 @@ export function ScienceCaptureClient({ status, onError }: {
       try {
         await api.scienceCaptureUpload(blob, { layer, stage, cadLayer });
       } catch (error) {
-        if (!light) stop();
         try {
           await api.scienceClientFallback(cr.seq);
         } catch (fallbackError) {

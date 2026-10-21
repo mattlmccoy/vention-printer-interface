@@ -154,3 +154,40 @@ def test_to_calibration_carries_the_mapping_and_provenance() -> None:
     assert np.array_equal(cal.H, res.H) and cal.mm_per_px == res.mm_per_px
     assert cal.bed_extent_mm == res.bed_extent_mm
     assert cal.provenance == prov
+
+
+# ---- marker corners (2026-10-21): use the whole board, not just its 9 interior corners -------
+def _region_span(res, axis: int) -> float:  # type: ignore[no-untyped-def]
+    pts = np.asarray(res.valid_region_mm, float)
+    return float(pts[:, axis].max() - pts[:, axis].min())
+
+
+def test_marker_points_widen_the_calibrated_area() -> None:
+    plain, t1 = synth_views(spec=SPEC)
+    full, t2 = synth_views(spec=SPEC, with_markers=True)
+    r1 = solve_autocal(plain, capture_recoater_mm=t1.capture_mm, image_size=SIZE)
+    r2 = solve_autocal(full, capture_recoater_mm=t2.capture_mm, image_size=SIZE)
+    assert _region_span(r1, 1) == pytest.approx(32.0, abs=1.0)  # chessboard corners: 16–48 mm
+    assert _region_span(r2, 1) >= 55.0  # marker corners reach 2–62 mm across the recoater
+
+
+def test_marker_points_keep_mapping_accuracy() -> None:
+    views, truth = synth_views(spec=SPEC, with_markers=True)
+    res = solve_autocal(views, capture_recoater_mm=truth.capture_mm, image_size=SIZE)
+    errs = []
+    for v in views:
+        expected = truth.bed_xy(v.object_points) - np.array([v.recoater_mm - truth.capture_mm, 0])
+        errs.append(_map(res, v.image_points) - expected)
+    e = np.vstack(errs)
+    assert float(np.sqrt((e ** 2).sum(axis=1).mean())) <= 0.02
+
+
+def test_noisier_marker_corners_still_map_within_30_microns() -> None:
+    # Pessimistic 3x marker-corner noise (0.15 px): well inside the 0.1 mm encoder-check limit.
+    views, truth = synth_views(spec=SPEC, with_markers=True, marker_noise_px=0.15)
+    res = solve_autocal(views, capture_recoater_mm=truth.capture_mm, image_size=SIZE)
+    e = np.vstack([
+        _map(res, v.image_points)
+        - (truth.bed_xy(v.object_points) - np.array([v.recoater_mm - truth.capture_mm, 0]))
+        for v in views])
+    assert float(np.sqrt((e ** 2).sum(axis=1).mean())) <= 0.03
