@@ -11,6 +11,13 @@ export interface Release {
 
 export const CHANGELOG: Release[] = [
   {
+    version: "0.16.1",
+    date: "2026-10-21",
+    changes: [
+      "Pick the calibration board on the Calibrate page itself; your choice is remembered. Opening the Calibration board page no longer resets it.",
+    ],
+  },
+  {
     version: "0.16.0",
     date: "2026-10-21",
     changes: [

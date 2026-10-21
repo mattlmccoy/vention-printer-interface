@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import {
   BOARD_PRESETS, DEFAULT_BOARD, boardConfigError, boardGeometry, boardQuery, fetchBoardPreview, markersNeeded, pickArucoDict,
   withCutShape, withPreset, type BoardConfig,
@@ -35,9 +35,11 @@ function useDebounced<T>(value: T, ms: number): T {
  *  (lib/board_def.ts) so calibration uses the same geometry + ArUco dictionary. */
 export function CalibrationBoardPanel({ base }: { base: string }) {
   const [cfg, setCfg] = useState<BoardConfig>(DEFAULT_BOARD);
+  const touched = useRef(false);  // set by the operator's first edit (see the save effect)
   const [showPreview, setShowPreview] = useState(false);
   const [preview, setPreview] = useState<PreviewState>({ status: "idle" });
-  const set = (patch: Partial<BoardConfig>) => setCfg((c) => ({ ...c, ...patch }));
+  const edit = (fn: (c: BoardConfig) => BoardConfig) => { touched.current = true; setCfg(fn); };
+  const set = (patch: Partial<BoardConfig>) => edit((c) => ({ ...c, ...patch }));
 
   const err = boardConfigError(cfg);
   const downloadHref = `${base}/api/vision/board?${boardQuery(cfg)}`;
@@ -48,8 +50,11 @@ export function CalibrationBoardPanel({ base }: { base: string }) {
   const serverDict = preview.status === "ok" && preview.url === previewHref ? preview.dict : null;
   const dict = serverDict ?? (err ? null : pickArucoDict(geom.squaresX, geom.squaresY));
 
-  // Hand the selected board to the Calibrate page whenever it changes (valid boards only).
+  // Hand the selected board to the Calibrate page when the operator CHANGES it (valid boards only).
+  // Not on opening the page: it starts at the default board, and saving that used to silently
+  // replace the board chosen for Calibrate.
   useEffect(() => {
+    if (!touched.current) return;
     const def = boardDefFromConfig(cfg, serverDict);
     if (def) saveBoardDef(storage, def);
   }, [cfg, serverDict]);
@@ -81,7 +86,7 @@ export function CalibrationBoardPanel({ base }: { base: string }) {
       </div>
       <div className="fields" style={{ marginTop: 16 }}>
         <span title="A stock size, or Custom to enter your own grid + square/marker dimensions.">preset</span>
-        <select value={cfg.preset} onChange={(e) => setCfg((c) => withPreset(c, e.target.value as BoardConfig["preset"]))}>
+        <select value={cfg.preset} onChange={(e) => edit((c) => withPreset(c, e.target.value as BoardConfig["preset"]))}>
           {BOARD_PRESETS.map((p) => <option key={p.value} value={p.value}>{p.label}</option>)}
           <option value="custom">custom — enter your own size</option>
         </select>
@@ -113,7 +118,7 @@ export function CalibrationBoardPanel({ base }: { base: string }) {
         </label>
         <span data-tip="Square: sit the board on the aluminium substrate (closer to the print plane). Round: drop it into the build cylinder (the pattern, scale bar and label are fitted inside the circle with 1 mm to spare).">cut shape</span>
         <span className="row" style={{ gap: 6 }}>
-          <select value={cfg.cutDiameterMm > 0 ? "round" : "square"} onChange={(e) => setCfg((c) => withCutShape(c, e.target.value as "square" | "round"))}>
+          <select value={cfg.cutDiameterMm > 0 ? "round" : "square"} onChange={(e) => edit((c) => withCutShape(c, e.target.value as "square" | "round"))}>
             <option value="square">square — sits on the substrate</option>
             <option value="round">round — drops into the cylinder</option>
           </select>

@@ -3,6 +3,11 @@
 Notable changes to the Vention Printer Interface. Versions follow semantic versioning; each entry
 corresponds to a tagged merge to `main`.
 
+## v0.16.1 — 2026-10-21
+
+### Fixed
+- **You can choose the calibration board on the Calibrate page itself.** The board used to come only from the Calibration board page, so a browser that had never opened that page (like the lab PC's) had no board. Opening that page also silently reset the board to its default, so the only working route was: Calibration board → re-select your board → Calibrate. Now the Calibrate page has a board picker. It lists the shipped presets plus any custom board you generated, starts on the last board used (the small 4×4 when there is none), and remembers your choice in this browser. The Calibration board page saves a board only when you change something there. A wrong square size still cannot pass unnoticed: the encoder scale check fails the run.
+
 ## v0.16.0 — 2026-10-21
 
 ### Added

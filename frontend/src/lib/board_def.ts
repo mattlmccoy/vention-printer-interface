@@ -6,7 +6,7 @@
  * whatever the operator last selected/generated here and the Calibrate page defaults to it.
  * Persisted in localStorage (storage injected; every access guarded). */
 
-import { ARUCO_4X4_FAMILY, boardConfigError, boardGeometry, geometryError, markersNeeded, pickArucoDict, type BoardConfig } from "./board.ts";
+import { ARUCO_4X4_FAMILY, BOARD_PRESETS, PRESET_GEOMETRY, boardConfigError, boardGeometry, geometryError, markersNeeded, pickArucoDict, type BoardConfig } from "./board.ts";
 import type { VisionBoardSpecBody } from "./api.ts";
 
 export interface BoardDef {
@@ -79,4 +79,30 @@ export function loadBoardDef(storage: Storage | null): BoardDef | null {
 
 export function saveBoardDef(storage: Storage | null, d: BoardDef): void {
   try { storage?.setItem(KEY, JSON.stringify(d)); } catch { /* storage disabled */ }
+}
+
+/** A board the Calibrate page can pick directly: each shipped preset, plus the board saved in this
+ *  browser when it is a custom one. (Before 0.16.1 the only way to set the board was to open the
+ *  Calibration board page and re-select it there.) */
+export interface BoardChoice { key: string; label: string; def: BoardDef }
+
+export function calibBoardChoices(saved: BoardDef | null): BoardChoice[] {
+  const out: BoardChoice[] = [];
+  for (const p of BOARD_PRESETS) {
+    const g = PRESET_GEOMETRY[p.value];
+    const dict = pickArucoDict(g.squaresX, g.squaresY);
+    if (!dict) continue;
+    const def: BoardDef = { dict, ...g };
+    out.push({ key: p.value, label: `${p.label.split(" — ")[0]} — ${describeBoardDef(def)}`, def });
+  }
+  if (saved && !out.some((c) => sameBoardDef(c.def, saved))) {
+    out.push({ key: "custom", label: `custom — ${describeBoardDef(saved)}`, def: saved });
+  }
+  return out;
+}
+
+/** The choice matching the board saved in this browser, else the small board (the one engraved). */
+export function defaultBoardChoice(choices: BoardChoice[], saved: BoardDef | null): string {
+  const hit = saved ? choices.find((c) => sameBoardDef(c.def, saved)) : undefined;
+  return hit?.key ?? "small_cylinder";
 }
