@@ -328,9 +328,10 @@ def test_macro_runs_on_the_step_machine_and_reports_name() -> None:
         s = rc.snapshot()
         assert s["state"] == "running" and s["macro"] == "load_cart" and s["plan"] is None
         assert wait(lambda: rc.snapshot()["state"] == "done", timeout=60)
-        tel = c.snapshot()["telemetry"]
-        assert tel["positions"]["1"] == 10.0 and tel["positions"]["2"] == 12.0
-        assert tel["positions"]["3"] == 0.0 and tel["positions"]["4"] == 0.0
+        # "done" can land on a sample whose position GET preceded the arrival (the /complete
+        # GETs come later in the same poll), so wait for a fresh poll before reading positions.
+        want = {"1": 10.0, "2": 12.0, "3": 0.0, "4": 0.0}
+        assert wait(lambda: c.snapshot()["telemetry"]["positions"] == want, timeout=5)
         with pytest.raises(RuntimeError):
             rc.start_macro("load_cart", ())  # empty is refused
     finally:

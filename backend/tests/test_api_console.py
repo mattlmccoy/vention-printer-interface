@@ -41,6 +41,21 @@ def wait_print(c: TestClient, state: str, timeout: float = 60.0) -> dict[str, An
     raise AssertionError(f"never {state}")
 
 
+def wait_positions(c: TestClient, want: dict[str, float], timeout: float = 5.0) -> None:
+    """Poll the cached telemetry until every axis in ``want`` reads its target exactly.
+
+    A run can report done on a sample whose position GET preceded the axis's arrival (the
+    /complete GETs come later in the same poll), so read positions only after a fresh poll."""
+    end = time.monotonic() + timeout
+    pos: dict[str, float] = {}
+    while time.monotonic() < end:
+        pos = c.get("/api/status").json()["controller"]["telemetry"]["positions"]
+        if all(pos[a] == v for a, v in want.items()):
+            return
+        time.sleep(0.05)
+    raise AssertionError(f"positions never reached {want}; last {pos}")
+
+
 def test_events_in_status_and_endpoint(client: TestClient) -> None:
     connect_arm(client)
     client.post("/api/motion/home", json={"axes": []})
@@ -64,8 +79,7 @@ def test_macro_load_cart(client: TestClient) -> None:
     r = client.post("/api/macro/load_cart")
     assert r.status_code == 200 and r.json()["macro"] == "load_cart"
     wait_print(client, "done")
-    tel = client.get("/api/status").json()["controller"]["telemetry"]
-    assert tel["positions"]["1"] == 10.0 and tel["positions"]["4"] == 0.0
+    wait_positions(client, {"1": 10.0, "4": 0.0})
 
 
 def test_fault_is_logged_as_event(client: TestClient) -> None:
