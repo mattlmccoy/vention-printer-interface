@@ -1,12 +1,14 @@
 import { useEffect, useRef, useState } from "react";
 import { api, type AutocalReport, type AutocalSession } from "../lib/api.ts";
-import { lensFitText, preflight, RECOATER_AXIS, residualText, runSweep, selfCheckSummary, type SelfCheckResult, waitSettled } from "../lib/autocal.ts";
+import { lensFitText, preflight, RECOATER_AXIS, runSweep, selfCheckSummary, type SelfCheckResult, waitSettled } from "../lib/autocal.ts";
 import { boardDefError, calibBoardChoices, defaultBoardChoice, loadBoardDef, saveBoardDef, sessionSpecFromDef } from "../lib/board_def.ts";
 import { loadRoleMap } from "../lib/camera_roles.ts";
 import { captureScienceStillOnce } from "../lib/science_still.ts";
 import { cleanNum } from "../lib/format.ts";
 import type { StatusPayload } from "../lib/telemetry.ts";
 import { CalibrationSizeNote } from "./CalibrationSizeNote.tsx";
+import { CalibrationRunReport, type LastSweep } from "./CalibrationRunReport.tsx";
+import { canSolvePartial } from "../lib/autocal_report.ts";
 
 const storage = typeof localStorage === "undefined" ? null : localStorage;
 const SECONDS_PER_POSE = 3;
@@ -46,6 +48,7 @@ export function AutoCalibrationPanel({ status, printing }: { status: StatusPaylo
   const [saved, setSaved] = useState<string | null>(null);
   const [selfCheck, setSelfCheck] = useState<(SelfCheckResult & { url: string; size: [number, number] }) | null>(null);
   const [checking, setChecking] = useState(false);
+  const [lastRun, setLastRun] = useState<LastSweep | null>(null);  // the operator's last solved sweep (report)
   const [err, setErr] = useState<string | null>(null);
   const [returnArmed, setReturnArmed] = useState(false);
   const stopRef = useRef(false);
@@ -57,7 +60,18 @@ export function AutoCalibrationPanel({ status, printing }: { status: StatusPaylo
       setCapturePose(typeof v === "number" ? v : 0);
     }).catch(() => undefined);
     api.autocalWindow().then((w) => { setWinMin(String(w.min_mm)); setWinMax(String(w.max_mm)); }).catch(() => undefined);
+    api.autocalLast().then(setLastRun).catch(() => undefined);
   }, []);
+
+  // Solve (the full sweep, or what a stopped run already photographed) and load its saved report.
+  const solve = async () => {
+    setPhase("solving"); setErr(null); setSelfCheck(null);
+    try {
+      setReport(await api.autocalSolve());
+      setLastRun(await api.autocalLast().catch(() => null));
+      setPhase("result");
+    } catch (e) { setErr(e instanceof Error ? e.message : String(e)); setPhase("idle"); }
+  };
 
   const check = (s: StatusPayload | null) => preflight({
     status: s, capturePoseMm: capturePose, scienceAssigned: !!loadRoleMap(storage).science, boardOk: !boardErr,
@@ -113,12 +127,11 @@ export function AutoCalibrationPanel({ status, printing }: { status: StatusPaylo
           stopMotion: async () => { await api.stop().catch(() => undefined); },
         },
       );
-      if (outcome === "stopped") { setPhase("idle"); setErr("Stopped. Nothing was saved; the recoater stayed where it was."); return; }
-      setPhase("solving");
-      setReport(await api.autocalSolve());
-      setPhase("result");
+      if (outcome === "stopped") { setPhase("idle"); setErr("Stopped. Nothing was saved; the recoater stayed where it was. The photos taken so far are kept."); return; }
+      await solve();
     } catch (e) {
-      setErr(e instanceof Error ? e.message : String(e));
+      // Keep the photos already taken: the run can still be solved from them (below).
+      setErr(`${e instanceof Error ? e.message : String(e)} The photos taken so far are kept.`);
       setPhase("idle");
     } finally {
       runningRef.current = false;
@@ -181,10 +194,29 @@ export function AutoCalibrationPanel({ status, printing }: { status: StatusPaylo
         </div>
       )}
       {err && <div className="errline">{err}</div>}
+      {phase === "idle" && session && shots.length > 0 && (
+        <div className={canSolvePartial(shots, 5) ? "hint" : "warnline"} style={{ margin: 0 }}>
+          This run stopped after {shots.length} photos ({shots.filter((s) => s.usable).length} with the board found).
+          {canSolvePartial(shots, 5)
+            ? " You can solve from them instead of starting again."
+            : " That is too few to solve (need 5 with the board found); start again."}
+          {canSolvePartial(shots, 5) && (
+            <div className="actions one tight" style={{ marginTop: 6 }}>
+              <button className="cta primary" onClick={() => void solve()}>solve the {shots.filter((s) => s.usable).length} photos taken</button>
+            </div>
+          )}
+        </div>
+      )}
       {phase === "idle" && (
         <div className="actions one tight">
           <button className="cta primary" disabled={problems.length > 0} onClick={() => void plan()}>start calibration</button>
         </div>
+      )}
+      {phase === "idle" && !shots.length && lastRun && (
+        <details>
+          <summary>Last run report</summary>
+          <CalibrationRunReport last={lastRun} />
+        </details>
       )}
       {phase === "confirm" && session && (
         <div className="warnline">
@@ -231,14 +263,9 @@ export function AutoCalibrationPanel({ status, printing }: { status: StatusPaylo
           </div>
           <div className="kv">
             <span>lens fit</span><span>{lensFitText(report)}</span>
-            {report.residuals && <><span title="Lens-fit error by point type and by distance from the photo centre (diagnosis only).">where the error is</span><span>{residualText(report.residuals)}</span></>}
-            <span>encoder-shift check</span><span>{report.shift_rms_mm.toFixed(3)} mm RMS, worst {report.shift_worst_mm.toFixed(3)} mm (limit 0.1 RMS)</span>
-            <span>scale vs recoater</span><span>{report.scale_ratio.toFixed(4)}</span>
-            <span>usable photos</span><span>{report.n_views} (need 5)</span>
-            <span>photo size</span><span>{report.image_size[0]}×{report.image_size[1]}</span>
-            <span>calibrated area</span><span>{report.bed_extent_mm.join(", ")} mm (where corners were seen)</span>
             <span>plane</span><span>{report.plane_note}; {report.placement}, board {report.board_thickness_mm} mm thick</span>
           </div>
+          {lastRun ? <CalibrationRunReport last={lastRun} /> : <div className="hint">Loading the run report…</div>}
           {report.passed && !saved && (
             <div className="grid-gap" style={{ marginTop: 8 }}>
               <div className="hint" style={{ margin: 0 }}>

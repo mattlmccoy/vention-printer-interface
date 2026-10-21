@@ -34,7 +34,9 @@ from pydantic import BaseModel
 from vention_printer_interface.vision.autocal_plan import plan_sweep
 from vention_printer_interface.vision.autocal_solve import (
     MAX_REPROJ_MM,
+    MAX_SHIFT_RMS_MM,
     MIN_CORNERS,
+    MIN_VIEWS,
     AutocalView,
     judge,
     solve_autocal,
@@ -45,13 +47,14 @@ from vention_printer_interface.vision.board_gen import (
     validate_charuco_spec,
     with_auto_dict,
 )
-from vention_printer_interface.vision.charuco_points import detect_board_points
+from vention_printer_interface.vision.charuco_points import MARKER_ID_BASE, detect_board_points
 from vention_printer_interface.vision.charuco_selfcheck import score_self_check
 from vention_printer_interface.vision.coverage import corner_cells
 from vention_printer_interface.vision.registration import (
     BoardSpec,
     Calibration,
     apply_homography,
+    load_calibration,
     save_calibration,
     undistort_points,
 )
@@ -109,6 +112,43 @@ def _finite(d: dict[str, Any]) -> dict[str, Any]:
 
 def _sweep_path(root: Path) -> Path:
     return Path(root) / ".autocal_last_sweep.json"
+
+
+def _view_counts(recoater_mm: float, ids: Any) -> dict[str, Any]:
+    i = np.asarray(ids if ids is not None else [], dtype=np.int64).ravel()
+    markers = int((i >= MARKER_ID_BASE).sum())
+    return {"recoater_mm": float(recoater_mm), "points": int(len(i)),
+            "chessboard": int(len(i)) - markers, "markers": markers}
+
+
+def _area_mm(region: Any) -> list[float] | None:
+    pts = np.asarray(region if region else [], float).reshape(-1, 2)
+    if len(pts) < 3:
+        return None
+    span = pts.max(axis=0) - pts.min(axis=0)
+    return [float(span[0]), float(span[1])]
+
+
+def _calibration_in_use(path: Path) -> dict[str, Any] | None:
+    """The active calibration, summarised for the side-by-side with a new run (None if none)."""
+    calib = load_calibration(path)
+    if calib is None:
+        return None
+    prov = calib.provenance or {}
+    region = prov.get("valid_region_mm")
+    ext = calib.bed_extent_mm
+    return {
+        "version": calib.version,
+        "method": prov.get("method", "manual"),
+        "image_size": list(calib.image_size) if calib.image_size else None,
+        "reprojection_rms_mm": prov.get("reprojection_rms_mm"),
+        "reprojection_rms_px": prov.get("reprojection_rms_px"),
+        "shift_rms_mm": prov.get("shift_rms_mm", calib.reprojection_error),
+        "scale_ratio": prov.get("scale_ratio"),
+        "n_views": prov.get("n_views"),
+        "area_mm": _area_mm(region) or [float(ext[2] - ext[0]), float(ext[3] - ext[1])],
+        "self_check": prov.get("self_check"),
+    }
 
 
 async def _session_photo(request: Request, s: dict[str, Any]) -> tuple[np.ndarray, tuple[int, int]]:
@@ -266,6 +306,11 @@ def register_autocal_routes(
             "plane_note": PLANE_NOTE,
             "reprojection_rms_mm": res.reprojection_rms_mm, "px_mm": res.px_mm,
             "reprojection_limit_mm": MAX_REPROJ_MM, "residuals": res.residuals,
+            "limits": {"min_views": MIN_VIEWS, "reprojection_mm": MAX_REPROJ_MM,
+                       "shift_rms_mm": MAX_SHIFT_RMS_MM},
+            "views": [_view_counts(x["recoater_mm"], x["ids"])
+                      for x in s["samples"] if x["usable"]],
+            "current": _calibration_in_use(calibration_path),
         })
         # Keep the sweep's points on disk so a failed run can be diagnosed (and re-solved) without
         # repeating the motion; one file, overwritten by the next solve.
@@ -283,6 +328,21 @@ def register_autocal_routes(
         except OSError:
             pass  # diagnosis only: never fail a solve because the file could not be written
         return out
+
+    @app.get("/api/vision/autocal/last")
+    def autocal_last() -> dict[str, Any]:
+        """The last solved sweep (saved on disk), so the report survives a reload/restart."""
+        try:
+            saved = json.loads(_sweep_path(root).read_text(encoding="utf-8"))
+        except FileNotFoundError as exc:
+            raise HTTPException(404, "no automatic calibration has been solved yet") from exc
+        except (OSError, ValueError) as exc:
+            raise HTTPException(500, f"could not read the last sweep: {exc}") from exc
+        views = [{**_view_counts(v["recoater_mm"], v.get("ids")),
+                  "image_points": v.get("image_points", [])} for v in saved.get("views", [])]
+        return {"saved_at": saved.get("saved_at"), "image_size": saved.get("image_size"),
+                "capture_mm": saved.get("capture_mm"), "board": saved.get("board"),
+                "result": saved.get("result"), "views": views}
 
     @app.post("/api/vision/autocal/selfcheck")
     async def autocal_selfcheck(request: Request) -> dict[str, Any]:

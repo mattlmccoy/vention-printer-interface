@@ -11,6 +11,15 @@ export interface Release {
 
 export const CHANGELOG: Release[] = [
   {
+    version: "0.17.0",
+    date: "2026-10-21",
+    changes: [
+      "Calibrate shows a full run report: every check against its limit, where the lens error sits, the photo coverage map, the calibrated area on the bed, and each photo. It survives a reload.",
+      "The report compares the new run with the calibration in use and says plainly whether it is better, worse, or for a different photo size.",
+      "A run that stops early keeps its photos and can be solved from them (5 or more with the board found).",
+    ],
+  },
+  {
     version: "0.16.2",
     date: "2026-10-21",
     changes: [
