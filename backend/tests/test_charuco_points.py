@@ -1,8 +1,8 @@
-"""Every identified ChArUco point: chessboard corners AND ArUco marker corners (vision/charuco_points.py).
+"""Every identified ChArUco point, chessboard AND marker corners (vision/charuco_points.py).
 
-Spec docs/superpowers/specs/2026-10-21-charuco-full-calibration-design.md §1/§3.1: the first real run
-used only the 9 interior chessboard corners (16–48 mm of the 64 mm pattern); each marker's 4 corners
-have known board positions too (32 more, spanning 2–62 mm). Fixtures are cv2-rendered boards.
+Spec docs/superpowers/specs/2026-10-21-charuco-full-calibration-design.md §1/§3.1: the first real
+run used only the 9 interior chessboard corners (16–48 mm of the 64 mm pattern); each marker's 4
+corners have known board positions too (32 more, spanning 2–62 mm). Fixtures are cv2-rendered.
 """
 
 from __future__ import annotations

@@ -62,8 +62,8 @@ def detect_board_points(image: np.ndarray, spec: BoardSpec) -> BoardPoints | Non
                      for m, o in zip(np.asarray(board.getIds()).ravel(), board.getObjPoints(),
                                      strict=True)}
         criteria = (cv2.TERM_CRITERIA_EPS + cv2.TERM_CRITERIA_COUNT, 30, 0.01)
-        for quad, m in zip(marker_corners, np.asarray(marker_ids).ravel(), strict=True):
-            m = int(m)
+        for quad, raw_id in zip(marker_corners, np.asarray(marker_ids).ravel(), strict=True):
+            m = int(raw_id)
             if m not in board_obj:
                 continue  # a marker from the dictionary that is not on this board
             pts = np.asarray(quad, np.float32).reshape(-1, 1, 2)
