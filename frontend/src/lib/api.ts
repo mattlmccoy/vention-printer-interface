@@ -459,6 +459,20 @@ export const api = {
     return res.json() as Promise<SelfCheckResult>;
   },
   autocalSolve: () => req<AutocalReport>("POST", "/api/vision/autocal/solve"),
+  /** Look-only: every identified point + marker outline on one small frame (no session, no motion). */
+  autocalPreview: async (blob: Blob, b: { squaresX: number; squaresY: number; squareMm: number; markerMm: number; dict: string }): Promise<AutocalPreview> => {
+    const q = new URLSearchParams({ squares_x: String(b.squaresX), squares_y: String(b.squaresY), square_mm: String(b.squareMm), marker_mm: String(b.markerMm), dict: b.dict });
+    const res = await fetch(apiUrl(base, `/api/vision/autocal/preview?${q.toString()}`), {
+      method: "POST", headers: { [CLIENT_HEADER]: "1", "Content-Type": blob.type || "image/jpeg" }, body: blob,
+    });
+    if (!res.ok) {
+      const detail = await res.json().then((j: { detail?: string }) => j.detail).catch(() => undefined);
+      throw new ApiError(res.status, detail ?? `${res.status} live preview`);
+    }
+    return res.json() as Promise<AutocalPreview>;
+  },
+  /** The capture-pose photo with the bed grid + calibrated area drawn on it (raw / corrected). */
+  autocalOverlay: (view: "raw" | "corrected") => reqBlob("GET", `/api/vision/autocal/overlay.png?view=${view}`),
   /** The last solved sweep saved by the operator, or null when none (404) — the report on reload. */
   autocalLast: async (): Promise<LastSweep | null> => {
     try { return await req<LastSweep>("GET", "/api/vision/autocal/last"); }
@@ -489,7 +503,15 @@ export interface AutocalSession {
   samples: Array<{ recoater_mm: number; usable: boolean; corners: number }>;
   coverage_cells: boolean[][];
 }
+export interface AutocalPreview {
+  found: boolean;
+  image_size: [number, number];
+  points: Array<{ x: number; y: number; id: number; kind: "corner" | "marker" }>;
+  markers: [number, number][][];
+}
 export interface AutocalSampleResult {
+  chessboard_corners?: number;
+  marker_points?: number;
   usable: boolean;
   corners: number;
   image_size: [number, number];

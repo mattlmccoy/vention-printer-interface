@@ -3,6 +3,21 @@
 Notable changes to the Vention Printer Interface. Versions follow semantic versioning; each entry
 corresponds to a tagged merge to `main`.
 
+## v0.18.0 — 2026-10-21
+
+### Added
+- **Overlays on the active calibration image.**
+  - **Live view** (Calibrate page, before the sweep and while placing the board for the self-check). The science camera with every identified point drawn on it is refreshed every 0.5 s:
+    - green dots = chessboard corners, with their ids;
+    - amber dots and outlines = ArUco marker corners;
+    - green dashed outline = the area already covered by the sweep photos.
+  - The preview is look-only (`POST /api/vision/autocal/preview`, no motion) and pauses while a full-resolution photo is taken.
+  - **During the sweep:** each photo shows the same overlay plus the area covered so far.
+  - **After the solve:** the capture-pose photo is shown twice:
+    - *as photographed*, with the board's square edges drawn where the new calibration predicts them (they should lie exactly on the real edges);
+    - *corrected onto the bed* (lens distortion removed), where those edges are straight.
+  - Both show the calibrated-area outline (`GET /api/vision/autocal/overlay.png?view=raw|corrected`). The corrected view takes about 0.25 s at 5120×3840.
+
 ## v0.17.0 — 2026-10-21
 
 ### Added
