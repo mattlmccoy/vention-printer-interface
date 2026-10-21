@@ -294,6 +294,38 @@ def detect_board(image: np.ndarray, spec: BoardSpec) -> BoardDetection | None:
     )
 
 
+def detect_chessboard_partial(
+    image: np.ndarray, min_cols: int = 5, min_rows: int = 5,
+) -> tuple[np.ndarray, np.ndarray] | None:
+    """Find the VISIBLE part of a chessboard: ``(image_points Nx2, grid Nx2 (col, row))``.
+
+    The certified validation board (17x17 inner corners, 81 mm) is larger than the science
+    camera's field of view, so a fixed-count ``findChessboardCorners`` never finds it.
+    ``findChessboardCornersSBWithMeta`` with ``CALIB_CB_LARGER`` accepts any visible board of at
+    least ``min_cols`` x ``min_rows`` inner corners and returns its corners row-major over the
+    meta grid (rows x cols). Grid indices are relative to the first visible corner; only
+    differences matter for scoring. ``None`` when nothing is found (never raises on a blank frame).
+    """
+    import cv2
+
+    gray = _to_gray(image)
+    flags = cv2.CALIB_CB_LARGER | cv2.CALIB_CB_EXHAUSTIVE | cv2.CALIB_CB_ACCURACY
+    try:
+        found, corners, meta = cv2.findChessboardCornersSBWithMeta(
+            gray, (int(min_cols), int(min_rows)), flags)
+    except cv2.error:
+        return None
+    if not found or corners is None or meta is None:
+        return None
+    rows, cols = int(meta.shape[0]), int(meta.shape[1])
+    pts = np.asarray(corners, float).reshape(-1, 2)
+    if len(pts) != rows * cols:
+        return None
+    idx = np.arange(len(pts))
+    grid = np.column_stack([idx % cols, idx // cols]).astype(float)
+    return pts, grid
+
+
 def calibrate_intrinsics_boards(
     views: list[BoardDetection],
     spec: BoardSpec,

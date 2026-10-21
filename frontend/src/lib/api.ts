@@ -181,7 +181,7 @@ export interface VisionBoardSpecBody {
 // GET/POST /api/vision/calibrate/session — see backend app.py's `_calib_session_state`.
 export interface CalibCoverage { cells_filled: number; tilt_bins_filled: number; enough: boolean; gaps: string[]; total_views: number }
 export interface VisionCalibSession { n_views: number; image_size?: [number, number] | null; spec: Record<string, unknown> | null; ready: boolean; coverage?: CalibCoverage }
-export interface VisionValidateScaleResult { rms_mm: number; max_mm: number; scale_bias: number; n_points: number; target_mm: number; passed: boolean; per_point?: Array<{ error_mm: number }>; image_size?: [number, number] }
+export interface VisionValidateScaleResult { rms_mm: number; max_mm: number; scale_bias: number; n_points: number; target_mm: number; passed: boolean; per_point?: Array<{ error_mm: number }>; image_size?: [number, number]; n_outside?: number; area_known?: boolean; area_note?: string }
 // Camera-center sweep (browser-driven): the client steps the recoater + captures a science frame
 // per pose; the server scores each frame's bore offset and picks the centering recoater pose.
 export interface CenterSweepSample { recoater_mm: number; offset_px: number | null }
@@ -395,15 +395,20 @@ export const api = {
   visionCalibrateFinalize: (body: VisionCalibFinalizeBody) => req<VisionCalibFinalizeResult>("POST", "/api/vision/calibrate/finalize", body),
   visionValidate: (spec: VisionBoardSpecBody, square_size_mm: number) => req<VisionValidateResult>("POST", "/api/vision/validate", { spec, square_size_mm }),
   // Browser-image scale validation: POST a chessboard still; scored in world-mm vs the certified pitch.
-  visionValidateScaleUpload: async (blob: Blob, p: { cols: number; rows: number; squareSizeMm: number; certifiedMm: number; targetMm?: number }): Promise<VisionValidateScaleResult> => {
-    const q = new URLSearchParams({ cols: String(p.cols), rows: String(p.rows), square_size_mm: String(p.squareSizeMm), certified_mm: String(p.certifiedMm) });
+  // The operator finds the VISIBLE part of the chessboard (no corner count needed, 0.16.0+).
+  visionValidateScaleUpload: async (blob: Blob, p: { certifiedMm: number; targetMm?: number }): Promise<VisionValidateScaleResult> => {
+    const q = new URLSearchParams({ certified_mm: String(p.certifiedMm) });
     if (p.targetMm != null) q.set("target_mm", String(p.targetMm));
     const res = await fetch(apiUrl(base, `/api/vision/validate/scale-upload?${q.toString()}`), {
       method: "POST",
       headers: { [CLIENT_HEADER]: "1", "Content-Type": blob.type || "image/png" },
       body: blob,
     });
-    if (!res.ok) throw new ApiError(res.status, `${res.status} scale validation`);
+    if (!res.ok) {
+      // Keep the operator's reason (wrong size, not found, outside the calibrated area, …).
+      const detail = await res.json().then((j: { detail?: string }) => j.detail).catch(() => undefined);
+      throw new ApiError(res.status, detail ?? `${res.status} scale validation`);
+    }
     return res.json() as Promise<VisionValidateScaleResult>;
   },
   // `url` is a backend-provided path (a record's sidecar_url from visionCaptures), already
