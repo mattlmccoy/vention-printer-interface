@@ -154,3 +154,37 @@ def draw_overlay(
     if len(region) >= 3:
         _poly(out, to_px(region), _AREA, True, thick * 2)
     return _scaled(out)
+
+
+def arrow_gain(residuals: np.ndarray, image_w: int) -> float:
+    """Arrow enlargement so the 95th-percentile residual draws ~2% of the photo width."""
+    mags = np.linalg.norm(np.asarray(residuals, float).reshape(-1, 2), axis=1)
+    p95 = float(np.percentile(mags, 95)) if len(mags) else 0.0
+    return 0.02 * image_w / p95 if p95 > 0 else 1.0
+
+
+def draw_residual_arrows(
+    image: np.ndarray, points: np.ndarray, residuals: np.ndarray
+) -> np.ndarray:
+    """The capture-pose photo with each point's lens-fit residual as an arrow (direction and
+    size, enlarged; colour = size: blue small -> red large). The gain is printed on the image."""
+    import cv2
+
+    out = (image if image.ndim == 3 else cv2.cvtColor(image, cv2.COLOR_GRAY2BGR)).copy()
+    pts = np.asarray(points, float).reshape(-1, 2)
+    res = np.asarray(residuals, float).reshape(-1, 2)
+    gain = arrow_gain(res, out.shape[1])
+    mags = np.linalg.norm(res, axis=1)
+    top = float(mags.max()) if len(mags) else 1.0
+    thick = max(2, round(out.shape[1] / 700))
+    for (x, y), (dx, dy), m in zip(pts, res, mags, strict=True):
+        t = m / top if top > 0 else 0.0
+        color = (int(255 * (1 - t)), 60, int(255 * t))  # BGR: blue -> red
+        cv2.arrowedLine(out, (round(x), round(y)), (round(x + dx * gain), round(y + dy * gain)),
+                        color, thick, cv2.LINE_AA, tipLength=0.25)
+    label = f"lens-fit residual arrows x{gain:.0f} (largest {top:.2f} px)"
+    cv2.putText(out, label, (20, 20 + 30 * thick), cv2.FONT_HERSHEY_SIMPLEX, thick * 0.6,
+                (20, 20, 20), thick * 3, cv2.LINE_AA)
+    cv2.putText(out, label, (20, 20 + 30 * thick), cv2.FONT_HERSHEY_SIMPLEX, thick * 0.6,
+                (255, 255, 255), thick, cv2.LINE_AA)
+    return _scaled(out)

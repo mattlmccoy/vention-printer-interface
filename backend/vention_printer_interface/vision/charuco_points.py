@@ -34,14 +34,29 @@ class BoardPoints:
     markers_px: list[np.ndarray]  # detected marker outlines (4x2 px each), for drawing
 
 
-def detect_board_points(image: np.ndarray, spec: BoardSpec) -> BoardPoints | None:
-    """All identified points in ``image``, or ``None`` when no board point is found."""
+def detect_board_points(
+    image: np.ndarray, spec: BoardSpec, *, refine_markers: bool = True,
+    camera: tuple[np.ndarray, np.ndarray] | None = None,
+) -> BoardPoints | None:
+    """All identified points in ``image``, or ``None`` when no board point is found.
+
+    Variants measured on real sweep photos (OpenCV ChArUco tutorial, docs.opencv.org/3.4.20/
+    df/d4a/tutorial_charuco_detection.html): ``refine_markers=False`` keeps the detector's own
+    marker corners (the tutorial warns sub-pixel refinement near chessboard squares can pull them
+    off; ``cornerSubPix`` is built for X-junctions, a marker corner is an L); ``camera=(K, dist)``
+    places the ChArUco corners from the board pose through the known lens instead of a local
+    homography (better under distortion)."""
     import cv2
     import cv2.aruco as aruco
 
     gray = _to_gray(image)
     board = _charuco_board(spec)
-    corners, corner_ids, marker_corners, marker_ids = aruco.CharucoDetector(board).detectBoard(gray)
+    params = aruco.CharucoParameters()
+    if camera is not None:
+        params.cameraMatrix = np.asarray(camera[0], float)
+        params.distCoeffs = np.asarray(camera[1], float).reshape(-1, 1)
+    detector = aruco.CharucoDetector(board, params)
+    corners, corner_ids, marker_corners, marker_ids = detector.detectBoard(gray)
     img_pts: list[np.ndarray] = []
     obj_pts: list[np.ndarray] = []
     ids: list[int] = []
@@ -66,9 +81,10 @@ def detect_board_points(image: np.ndarray, spec: BoardSpec) -> BoardPoints | Non
             m = int(raw_id)
             if m not in board_obj:
                 continue  # a marker from the dictionary that is not on this board
-            pts = np.asarray(quad, np.float32).reshape(-1, 1, 2)
-            refined = cv2.cornerSubPix(gray, pts.copy(), _SUBPIX_WIN, (-1, -1), criteria)
-            refined = refined.reshape(4, 2).astype(float)
+            raw = np.asarray(quad, np.float32).reshape(-1, 1, 2)
+            got = (cv2.cornerSubPix(gray, raw.copy(), _SUBPIX_WIN, (-1, -1), criteria)
+                   if refine_markers else raw)
+            refined = np.asarray(got, float).reshape(4, 2)
             outlines.append(refined)
             for k in range(4):
                 img_pts.append(refined[k])

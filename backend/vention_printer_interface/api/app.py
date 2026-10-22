@@ -751,6 +751,7 @@ def create_app(
     experiments_root: Path | None = None,
     limits: SafetyLimits | None = None,
     frontend_dist: Path | None = None,
+    autocal_photo_dir: Path | None = None,
     site_origin: str | None = None,
     heater_io: tuple[int, int] | None = None,
     # Fallback floor per wait step. With move-started detection (PrintController._blocking_done) a
@@ -3514,6 +3515,10 @@ def create_app(
         calibration_path=vision_calibration_path,
         on_saved=_autocal_saved,
         events=ev,
+        # The last sweep's photos, LOCAL and outside Dropbox (Matt, 2026-10-21): ~500 MB per run
+        # at 20 MP, overwritten by the next run; used to compare detection methods on real images.
+        photo_dir=autocal_photo_dir or Path(
+            os.environ.get("VPI_AUTOCAL_PHOTO_DIR") or Path.home() / ".vpi-cache" / "autocal_last"),
     )
 
     register_uvc_routes(

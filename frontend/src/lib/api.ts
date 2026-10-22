@@ -459,6 +459,8 @@ export const api = {
     return res.json() as Promise<SelfCheckResult>;
   },
   autocalSolve: () => req<AutocalReport>("POST", "/api/vision/autocal/solve"),
+  /** Held-out accuracy of each detection method on this run's stored photos (~1-2 min). */
+  autocalCompareDetection: () => req<DetectionComparison>("POST", "/api/vision/autocal/compare-detection"),
   /** Look-only: every identified point + marker outline on one small frame (no session, no motion). */
   autocalPreview: async (blob: Blob, b: { squaresX: number; squaresY: number; squareMm: number; markerMm: number; dict: string }): Promise<AutocalPreview> => {
     const q = new URLSearchParams({ squares_x: String(b.squaresX), squares_y: String(b.squaresY), square_mm: String(b.squareMm), marker_mm: String(b.markerMm), dict: b.dict });
@@ -472,7 +474,7 @@ export const api = {
     return res.json() as Promise<AutocalPreview>;
   },
   /** The capture-pose photo with the bed grid + calibrated area drawn on it (raw / corrected). */
-  autocalOverlay: (view: "raw" | "corrected") => reqBlob("GET", `/api/vision/autocal/overlay.png?view=${view}`),
+  autocalOverlay: (view: "raw" | "corrected" | "residuals") => reqBlob("GET", `/api/vision/autocal/overlay.png?view=${view}`),
   /** The last solved sweep saved by the operator, or null when none (404) — the report on reload. */
   autocalLast: async (): Promise<LastSweep | null> => {
     try { return await req<LastSweep>("GET", "/api/vision/autocal/last"); }
@@ -502,6 +504,14 @@ export interface AutocalSession {
   image_size: [number, number] | null;
   samples: Array<{ recoater_mm: number; usable: boolean; corners: number }>;
   coverage_cells: boolean[][];
+}
+export interface DetectionComparison {
+  n_photos: number;
+  methods: Array<{
+    method: string; label: string; n_photos: number; n_heldout?: number; error?: string;
+    lens_mm?: number | null; lens_px?: number; shift_rms_mm?: number;
+    heldout_mean_mm?: number | null; heldout_sd_mm?: number | null; heldout_worst_mm?: number | null;
+  }>;
 }
 export interface AutocalPreview {
   found: boolean;

@@ -37,3 +37,14 @@ export function markerQuads(points: Pt[], nChess: number): Pt[][] {
   for (let i = nChess; i + 4 <= points.length; i += 4) out.push(points.slice(i, i + 4));
   return out;
 }
+
+/** Arrow enlargement for lens-fit residuals: the 95th-percentile arrow draws 2% of the photo width
+ *  (same rule and numpy-style linear percentile as the operator's residual overlay). */
+export function arrowGain(residuals: Pt[], imageW: number): number {
+  const m = residuals.map(([dx, dy]) => Math.hypot(dx, dy)).sort((a, b) => a - b);
+  if (!m.length) return 1;
+  const r = 0.95 * (m.length - 1);
+  const lo = Math.floor(r);
+  const p95 = m[lo] + (m[Math.min(lo + 1, m.length - 1)] - m[lo]) * (r - lo);
+  return p95 > 0 ? (0.02 * imageW) / p95 : 1;
+}

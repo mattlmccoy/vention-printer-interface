@@ -3,6 +3,28 @@
 Notable changes to the Vention Printer Interface. Versions follow semantic versioning; each entry
 corresponds to a tagged merge to `main`.
 
+## v0.19.0 — 2026-10-21
+
+### Added
+- **Lens-fit residual arrows.**
+  - Each board point's residual (direction and size, enlarged) is drawn in the run report's photo map and on the capture-pose photo.
+  - Arrows lined up in one direction show a systematic misfit; scattered ones show noise.
+  - On a rendered board they already show marker corners biased outward (sub-pixel refinement is built for chessboard X-corners, not a marker's L-corner).
+- **Fine board preset for 20 MP stills:** "fine — 12×12, 5 mm" (3.75 mm markers, DICT_4X4_100).
+  - 121 chessboard corners instead of the 4×4 board's 9, in a 60 mm pattern that fits the 98.5 mm round cut.
+  - Chessboard corners are the accurate kind (OpenCV ChArUco tutorial).
+- **The last sweep's photos are kept** on this computer, outside Dropbox (`~/.vpi-cache/autocal_last`, override with `VPI_AUTOCAL_PHOTO_DIR`).
+  - Overwritten by the next run, about 500 MB at 20 MP.
+  - Before this, no calibration photo was stored anywhere.
+- **Compare detection methods on the stored photos** (Calibrate page, after a solve). Three ways of finding the points are each measured on photos the fit never saw:
+  - as now;
+  - marker corners not refined;
+  - corners placed through the solved lens.
+  - The last two follow the OpenCV ChArUco tutorial. Nothing changes by default until real photos show a win.
+
+### Not changed
+- **Single-pass registration of print stills was tried and dropped.** On a ground-truth test it was no sharper (6.341 vs 6.338 grey-level error). At 20 MP it saves 0.17 s per still but costs 1.9 s on the first still and ~56 MB of memory.
+
 ## v0.18.0 — 2026-10-21
 
 ### Added

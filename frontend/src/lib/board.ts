@@ -6,6 +6,7 @@
 
 export const BOARD_PRESETS = [
   { value: "small_cylinder", label: "small — 4×4 (round Ø98.5 for the cylinder, or square)" },
+  { value: "fine_20mp", label: "fine — 12×12, 5 mm (for 20 MP stills; round Ø98.5 or square)" },
   { value: "medium_5x7", label: "medium — 5×7" },
   { value: "large_6x9", label: "large — 6×9" },
 ] as const;
@@ -64,7 +65,7 @@ export function boardQuery(cfg: BoardConfig, formatOverride?: BoardFormat): stri
 }
 
 /** Circular-cut default per preset — mirrors backend board_gen.PRESET_CUT_DIAMETER_MM. */
-export const PRESET_CUT_DIAMETER_MM: Partial<Record<BoardPreset, number>> = { small_cylinder: 98.5 };
+export const PRESET_CUT_DIAMETER_MM: Partial<Record<BoardPreset, number>> = { small_cylinder: 98.5, fine_20mp: 98.5 };
 
 /** Switch preset: a named preset brings its own cut (the small board drops into the ~99.2 mm
  *  build cylinder bore, so it is cut round at 98.5 mm); Custom keeps whatever cut you had. */
@@ -113,6 +114,7 @@ export interface BoardGeometry { squaresX: number; squaresY: number; squareMm: n
 /** Geometry of the shipped presets — mirrors backend vision/board_gen.py BOARD_PRESETS. */
 export const PRESET_GEOMETRY: Record<BoardPreset, BoardGeometry> = {
   small_cylinder: { squaresX: 4, squaresY: 4, squareMm: 16, markerMm: 12 },
+  fine_20mp: { squaresX: 12, squaresY: 12, squareMm: 5, markerMm: 3.75 },
   medium_5x7: { squaresX: 5, squaresY: 7, squareMm: 25, markerMm: 18 },
   large_6x9: { squaresX: 6, squaresY: 9, squareMm: 30, markerMm: 22 },
 };

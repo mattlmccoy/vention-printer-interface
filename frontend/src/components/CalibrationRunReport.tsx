@@ -1,6 +1,7 @@
 import type { CSSProperties } from "react";
 import { residualText, type ResidualGroup } from "../lib/autocal.ts";
 import { checkRows, compareCalibrations, type RunResult, type SavedCalibration } from "../lib/autocal_report.ts";
+import { arrowGain, type Pt } from "../lib/overlay_geom.ts";
 
 /** One solved sweep as the operator saved it (GET /api/vision/autocal/last). */
 export interface LastSweep {
@@ -8,7 +9,7 @@ export interface LastSweep {
   image_size: [number, number];
   capture_mm: number;
   result: RunResult & { reasons?: string[]; residuals?: Record<string, ResidualGroup>; current?: SavedCalibration | null };
-  views: Array<{ recoater_mm: number; points: number; chessboard: number; markers: number; image_points: [number, number][] }>;
+  views: Array<{ recoater_mm: number; points: number; chessboard: number; markers: number; image_points: [number, number][]; residuals_px?: [number, number][] | null }>;
 }
 
 const MAP_W = 320;
@@ -30,6 +31,11 @@ export function CalibrationRunReport({ last }: { last: LastSweep }) {
   const bx0 = Math.min(0, ...xs) - pad, bx1 = Math.max(0, ...xs) + pad;
   const by0 = Math.min(0, ...ys) - pad, by1 = Math.max(0, ...ys) + pad;
   const when = last.saved_at ? new Date(last.saved_at).toLocaleString() : "unknown time";
+  // Lens-fit residual arrows (direction + size, enlarged), when the operator saved them (0.19.0+).
+  const arrows: Array<{ p: Pt; r: Pt }> = last.views.flatMap((v) => (v.residuals_px ?? []).map((r, j) => ({ p: v.image_points[j], r })))
+    .filter((a) => a.p && a.r);
+  const gain = arrowGain(arrows.map((a) => a.r), w);
+  const top = Math.max(1e-9, ...arrows.map((a) => Math.hypot(a.r[0], a.r[1])));
 
   return (
     <div className="grid-gap" style={{ marginTop: 12 }}>
@@ -85,10 +91,18 @@ export function CalibrationRunReport({ last }: { last: LastSweep }) {
             {[1, 2].map((k) => <line key={`v${k}`} x1={(w * k) / 3} y1={0} x2={(w * k) / 3} y2={h} stroke="var(--line-strong)" strokeWidth={w / 400} />)}
             {[1, 2].map((k) => <line key={`h${k}`} x1={0} y1={(h * k) / 3} x2={w} y2={(h * k) / 3} stroke="var(--line-strong)" strokeWidth={w / 400} />)}
             {last.views.flatMap((v, i) => v.image_points.map(([x, y], j) => (
-              <circle key={`${i}-${j}`} cx={x} cy={y} r={dot} fill="var(--accent)" fillOpacity={0.55} />
+              <circle key={`${i}-${j}`} cx={x} cy={y} r={dot} fill="var(--accent)" fillOpacity={arrows.length ? 0.25 : 0.55} />
             )))}
+            {arrows.map(({ p: [x, y], r: [dx, dy] }, k) => {
+              const t = Math.hypot(dx, dy) / top;
+              return <line key={`a${k}`} x1={x} y1={y} x2={x + dx * gain} y2={y + dy * gain}
+                stroke={`rgb(${Math.round(60 + 195 * t)}, 80, ${Math.round(255 * (1 - t))})`} strokeWidth={w / 900} />;
+            })}
           </svg>
-          <figcaption className="hint" style={{ margin: "4px 0 0" }}>Every board point seen, in the photo ({w}×{h}); grid = the 9 coverage regions.</figcaption>
+          <figcaption className="hint" style={{ margin: "4px 0 0" }}>
+            Every board point seen, in the photo ({w}×{h}); grid = the 9 coverage regions.
+            {arrows.length > 0 && ` Lines = lens-fit residual from each point (direction and size, enlarged ×${Math.round(gain)}; blue small → red large, largest ${top.toFixed(2)} px). Consistent directions in one area mean a systematic misfit there; random directions mean noise.`}
+          </figcaption>
         </figure>
         <figure style={{ margin: 0 }}>
           {region.length >= 3 ? (

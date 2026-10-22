@@ -240,3 +240,41 @@ Matt chose all four in a poll: solve after a stop, run report, compare with save
 - The solve response adds `current`: the active calibration's version, image_size, reprojection mm (or px for an older one), shift RMS, scale ratio, area extent and method. It is null when there is none.
 - Pure `compareCalibrations(next, current)` → rows + verdict ("better" / "worse" / "different photo size — the saved one does not apply to these photos" / "no saved calibration"), with node tests.
 - Tests: `test_solve_includes_the_calibration_in_use`.
+
+## PR E — residual arrows, single-pass registration, fine board, OpenCV-guided detection (0.19.0; 2026-10-21)
+
+Matt picked all four in a poll after the run analysis and the OpenCV ChArUco tutorial (docs.opencv.org/3.4.20/df/d4a/tutorial_charuco_detection.html). Photo storage: **last run only, local, outside Dropbox**.
+
+### Task 13: Residual arrows in the tool
+- `AutocalResult.point_residuals`: per usable view, Nx2 (projected − detected, px) from the distortion fit.
+- Solve saves `residuals_px` per view in `.autocal_last_sweep.json`; `/last` returns them.
+- `overlay.png?view=residuals` draws arrows on the capture photo, scaled and coloured by magnitude.
+- The report's point map draws the arrows, with a stated scale.
+- Tests:
+  - `test_point_residuals_match_the_fit` (RMS of all equals `reprojection_rms_px`);
+  - `test_last_report_includes_residual_arrows`;
+  - `test_residual_overlay_png`;
+  - node `arrowScale`.
+
+### Task 14: Single-pass registration
+- `register_frame` uses `build_bed_remap` (one resampling), cached per calibration version.
+- Test: a synthetic raw photo made from a known bed raster through known K/dist/H. Single-pass error vs ground truth ≤ two-pass, and ≤ a bound.
+
+### Task 15: Fine board preset for 20 MP
+- `fine_20mp`: 12×12 squares, 5 mm, 3.75 mm markers. DICT_4X4_100 is auto-picked (72 markers needed). It fits the 98.5 mm round cut.
+- Tests:
+  - preset geometry + dict;
+  - fits the cut;
+  - a cv2-rendered crop detects ≥ 100 chessboard corners.
+
+### Task 16: OpenCV-guided detection, measured on stored photos
+- **Photo storage:** the sample route saves each upload to `<photo_dir>/NN_<mm>.png`, and a session start clears it. Default photo_dir is `~/.vpi-cache/autocal_last`, overridable by the `VPI_AUTOCAL_PHOTO_DIR` env / create_app arg.
+- **Detection variants** for `detect_board_points(image, spec, *, refine_markers=True, camera=None)`:
+  - `refine_markers=False` (the tutorial's advice);
+  - `camera=(K, dist)`: pose-based ChArUco interpolation via `CharucoParameters`.
+- **Comparison route:** `POST /api/vision/autocal/compare-detection` runs leave-one-photo-out on the stored photos for current / no-marker-refine / with-intrinsics. It returns held-out error per variant and is shown in the run report.
+- **Default:** none switches by default until real data shows a win (data-contract rule).
+- Tests:
+  - photos stored and cleared;
+  - variants run;
+  - compare route on the test sweep returns 3 rows with finite errors.

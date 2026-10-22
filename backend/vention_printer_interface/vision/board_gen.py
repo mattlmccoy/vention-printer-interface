@@ -150,12 +150,23 @@ BOARD_PRESETS: dict[str, BoardSpec] = {
         marker_length_mm=22.0,
         aruco_dict="DICT_4X4_50",
     ),
+    # For the 20 MP science stills (~0.026 mm/px, a 5 mm square ~190 px): 121 chessboard corners
+    # (the accurate kind; OpenCV ChArUco tutorial) instead of the 4x4 board's 9, in a 60 mm
+    # pattern that fits the cylinder cut (hypot 84.9 mm). 72 markers -> DICT_4X4_100.
+    "fine_20mp": BoardSpec(
+        kind="charuco",
+        squares_x=12,
+        squares_y=12,
+        square_length_mm=5.0,
+        marker_length_mm=3.75,
+        aruco_dict="DICT_4X4_100",
+    ),
 }
 
 # Presets that must fit a round build cylinder get a circular cut by default (diameter, mm).
 # small_cylinder: the build cylinder bore measures ~99.2 mm; a 98.5 mm cut (~98.3-98.4 mm after
 # kerf) drops in with ~0.4 mm a side. The 64 mm pattern needs >= 92.5 mm (90.5 across + clearance).
-PRESET_CUT_DIAMETER_MM: dict[str, float] = {"small_cylinder": 98.5}
+PRESET_CUT_DIAMETER_MM: dict[str, float] = {"small_cylinder": 98.5, "fine_20mp": 98.5}
 
 # Colour every filled cell engraves in (single engrave layer). Polarity chooses which cells.
 _ENGRAVE_COLOR = "#000000"
