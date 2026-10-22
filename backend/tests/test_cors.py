@@ -29,6 +29,8 @@ def test_html_is_no_store(tmp_path: Path) -> None:
     dist = tmp_path / "dist"
     dist.mkdir()
     (dist / "index.html").write_text("<html></html>")
+    from vention_printer_interface import __version__
+    (dist / "version.json").write_text(f'{{"version": "{__version__}"}}')  # a current build
     app = create_app(backend="none", experiments_root=tmp_path, frontend_dist=dist)
     with TestClient(app) as c:
         r = c.get("/")

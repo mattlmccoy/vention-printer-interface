@@ -93,6 +93,8 @@ Run the full app (UI + API) against the simulator:
 
 ```bash
 cd frontend && npm install && npm run build     # builds frontend/dist, served by the operator
+# The operator serves frontend/dist only when dist/version.json matches its own version; an
+# older build is never shown - "/" then explains why and opens the GitHub Pages console instead.
 cd ../backend && uv run vpi-serve --backend simulated   # open http://127.0.0.1:8020
 # UI hot-reload during development:
 cd frontend && npm run dev                      # http://127.0.0.1:5175 (proxies /api + /ws to :8020)
