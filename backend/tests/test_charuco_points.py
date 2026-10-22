@@ -73,3 +73,28 @@ def test_marker_only_view_is_used() -> None:  # Review Focus 1
 
 def test_blank_image_is_none() -> None:
     assert detect_board_points(np.full((400, 400), 255, np.uint8), SPEC) is None
+
+
+
+def test_marker_refinement_can_be_turned_off() -> None:
+    # OpenCV ChArUco tutorial: refining marker corners near chessboard squares can pull them off.
+    a = detect_board_points(IMG, SPEC)
+    b = detect_board_points(IMG, SPEC, refine_markers=False)
+    assert a is not None and b is not None
+    assert (a.ids.ravel() == b.ids.ravel()).all()
+    mk = a.kinds == "marker"
+    assert not np.allclose(a.image_points[mk], b.image_points[mk])  # refinement really skipped
+    assert np.allclose(a.image_points[~mk], b.image_points[~mk])  # chessboard corners unchanged
+
+
+def test_detection_with_a_known_lens_finds_the_same_corners() -> None:
+    # With the lens known, ChArUco corners are placed from the board pose (tutorial), not a
+    # local homography. On an undistorted render it must find the same ids at the same places.
+    k = np.array([[1000.0, 0, IMG.shape[1] / 2], [0, 1000.0, IMG.shape[0] / 2], [0, 0, 1]])
+    a = detect_board_points(IMG, SPEC)
+    b = detect_board_points(IMG, SPEC, camera=(k, np.zeros(5)))
+    assert a is not None and b is not None
+    ca, cb = a.kinds == "corner", b.kinds == "corner"
+    assert sorted(a.ids[ca].ravel()) == sorted(b.ids[cb].ravel())
+    order_a, order_b = np.argsort(a.ids[ca].ravel()), np.argsort(b.ids[cb].ravel())
+    assert np.abs(a.image_points[ca][order_a] - b.image_points[cb][order_b]).max() < 0.2

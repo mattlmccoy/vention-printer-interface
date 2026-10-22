@@ -54,7 +54,8 @@ def _photo(offset_mm: float, size: tuple[int, int] = FRAME) -> bytes:
 def _app(tmp_path: Path):  # type: ignore[no-untyped-def]
     app = create_app(backend="none", experiments_root=tmp_path, poll_interval_s=0.05,
                      print_min_wait_s=0.1, print_step_timeout_s=5.0,
-                     vision_source=SimulatedFrameSource(width=32, height=24))
+                     vision_source=SimulatedFrameSource(width=32, height=24),
+                     autocal_photo_dir=tmp_path / "autocal_photos")
     return app
 
 
@@ -380,3 +381,42 @@ def test_residual_overlay_png(tmp_path: Path) -> None:
         assert r.status_code == 200 and r.headers["content-type"] == "image/png"
         img = cv2.imdecode(np.frombuffer(r.content, np.uint8), cv2.IMREAD_COLOR)
         assert (img.shape[1], img.shape[0]) == FRAME
+
+
+# ---- OpenCV-guided detection, measured on the stored sweep photos (plan Task 16) -----------
+def test_sweep_photos_are_kept_locally_and_cleared_on_a_new_run(tmp_path: Path) -> None:
+    app = _app(tmp_path)
+    photos = tmp_path / "autocal_photos"
+    with TestClient(app) as c:
+        _set_capture_pose(app, CAPTURE)
+        _start(c)
+        _sweep(c, [CAPTURE + 5, CAPTURE, CAPTURE - 5])
+        files = sorted(p.name for p in photos.glob("*.png"))
+        assert files == ["00_468.3.png", "01_463.3.png", "02_458.3.png"]
+        img = cv2.imread(str(photos / files[1]))
+        assert (img.shape[1], img.shape[0]) == FRAME
+        (photos / "keep.txt").write_text("not ours")
+        _start(c)
+        assert sorted(p.name for p in photos.iterdir()) == ["keep.txt"]  # only our photos go
+
+
+def test_compare_detection_needs_a_solved_run(tmp_path: Path) -> None:
+    app = _app(tmp_path)
+    with TestClient(app) as c:
+        _set_capture_pose(app, CAPTURE)
+        _start(c)
+        assert c.post("/api/vision/autocal/compare-detection").status_code == 409
+
+
+def test_compare_detection_reports_held_out_error_per_method(tmp_path: Path) -> None:
+    app = _app(tmp_path)
+    with TestClient(app) as c:
+        _solved(c, app)
+        r = c.post("/api/vision/autocal/compare-detection")
+        assert r.status_code == 200, r.text
+        rows = {row["method"]: row for row in r.json()["methods"]}
+        assert set(rows) == {"current", "no_marker_refine", "with_lens"}
+        for row in rows.values():
+            assert row["n_photos"] >= 5 and row["n_heldout"] >= 4
+            assert 0 <= row["heldout_mean_mm"] < 0.1 and row["heldout_worst_mm"] >= 0
+            assert row["lens_mm"] is not None and row["shift_rms_mm"] < 0.1

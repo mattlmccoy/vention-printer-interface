@@ -11,6 +11,15 @@ export interface Release {
 
 export const CHANGELOG: Release[] = [
   {
+    version: "0.19.0",
+    date: "2026-10-21",
+    changes: [
+      "Calibration run report shows each point's lens-fit residual as an arrow (direction and size), also drawn on the capture-pose photo.",
+      "New board preset \"fine — 12×12, 5 mm\" for 20 MP stills: 121 chessboard corners instead of 9, fits the cylinder cut.",
+      "The last calibration sweep's photos are kept on this computer, and the Calibrate page can compare three detection methods on them.",
+    ],
+  },
+  {
     version: "0.18.0",
     date: "2026-10-21",
     changes: [

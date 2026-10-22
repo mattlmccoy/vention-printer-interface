@@ -52,6 +52,7 @@ export function AutoCalibrationPanel({ status, printing }: { status: StatusPaylo
   const [selfCheck, setSelfCheck] = useState<(SelfCheckResult & { url: string; size: [number, number] }) | null>(null);
   const [checking, setChecking] = useState(false);
   const [lastRun, setLastRun] = useState<LastSweep | null>(null);  // the operator's last solved sweep (report)
+  const [compare, setCompare] = useState<{ busy: boolean; data?: import("../lib/api.ts").DetectionComparison; err?: string } | null>(null);
   const [overlays, setOverlays] = useState<{ raw?: string; corrected?: string; residuals?: string; err?: string } | null>(null);
   const [err, setErr] = useState<string | null>(null);
   const [returnArmed, setReturnArmed] = useState(false);
@@ -299,6 +300,38 @@ export function AutoCalibrationPanel({ status, printing }: { status: StatusPaylo
               </div>
             ))}
           {lastRun ? <CalibrationRunReport last={lastRun} /> : <div className="hint">Loading the run report…</div>}
+          <div className="grid-gap" style={{ marginTop: 8 }}>
+            <div className="actions one tight">
+              <button className="cta" disabled={compare?.busy} onClick={() => {
+                setCompare({ busy: true });
+                api.autocalCompareDetection().then((data) => setCompare({ busy: false, data }))
+                  .catch((e) => setCompare({ busy: false, err: e instanceof Error ? e.message : String(e) }));
+              }}>{compare?.busy ? "comparing detection methods… (1–2 min)" : "compare detection methods on these photos"}</button>
+            </div>
+            <div className="hint" style={{ margin: 0 }}>Re-detects this run's stored photos three ways (as now; marker corners not refined; corners placed through the solved lens, as the OpenCV ChArUco tutorial advises) and measures each on photos the fit never saw. Nothing changes until the numbers say so.</div>
+            {compare?.err && <div className="errline" style={{ margin: 0 }}>{compare.err}</div>}
+            {compare?.data && (
+              <div style={{ overflowX: "auto" }}>
+                <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 13, fontVariantNumeric: "tabular-nums" }}>
+                  <thead><tr>{["method", "photos", "error on unseen photos (mean ± SD)", "worst point", "lens fit", "encoder shift"].map((h) => <th key={h} style={{ textAlign: "left", fontWeight: 500, color: "var(--muted)", borderBottom: "1px solid var(--line)", padding: "4px 8px" }}>{h}</th>)}</tr></thead>
+                  <tbody>{compare.data.methods.map((m) => (
+                    <tr key={m.method}>
+                      <td style={{ padding: "4px 8px", borderBottom: "1px solid var(--line)" }}>{m.label}</td>
+                      <td style={{ padding: "4px 8px", borderBottom: "1px solid var(--line)" }}>{m.n_photos}</td>
+                      {m.error
+                        ? <td colSpan={4} style={{ padding: "4px 8px", borderBottom: "1px solid var(--line)", color: "var(--err)" }}>{m.error}</td>
+                        : <>
+                          <td style={{ padding: "4px 8px", borderBottom: "1px solid var(--line)", fontFamily: "var(--font-mono)" }}>{m.heldout_mean_mm == null ? "—" : `${m.heldout_mean_mm.toFixed(3)} ± ${(m.heldout_sd_mm ?? 0).toFixed(3)} mm`}</td>
+                          <td style={{ padding: "4px 8px", borderBottom: "1px solid var(--line)", fontFamily: "var(--font-mono)" }}>{m.heldout_worst_mm == null ? "—" : `${m.heldout_worst_mm.toFixed(3)} mm`}</td>
+                          <td style={{ padding: "4px 8px", borderBottom: "1px solid var(--line)", fontFamily: "var(--font-mono)" }}>{m.lens_mm == null ? "—" : `${m.lens_mm.toFixed(3)} mm`}</td>
+                          <td style={{ padding: "4px 8px", borderBottom: "1px solid var(--line)", fontFamily: "var(--font-mono)" }}>{m.shift_rms_mm == null ? "—" : `${m.shift_rms_mm.toFixed(3)} mm`}</td>
+                        </>}
+                    </tr>
+                  ))}</tbody>
+                </table>
+              </div>
+            )}
+          </div>
           {report.passed && !saved && (
             <div className="grid-gap" style={{ marginTop: 8 }}>
               <div className="hint" style={{ margin: 0 }}>

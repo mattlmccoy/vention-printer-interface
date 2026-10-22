@@ -258,7 +258,7 @@ def test_small_cylinder_preset_fits_101p6_circle() -> None:
 
 
 def test_presets_exist_and_are_charuco() -> None:
-    assert set(BOARD_PRESETS) == {"small_cylinder", "medium_5x7", "large_6x9"}
+    assert set(BOARD_PRESETS) == {"small_cylinder", "fine_20mp", "medium_5x7", "large_6x9"}
     assert resolve_preset("medium_5x7").squares_x == 5
     assert resolve_preset("medium_5x7").squares_y == 7
     assert resolve_preset("large_6x9").squares_x == 6
@@ -700,4 +700,4 @@ def test_small_cylinder_preset_defaults_to_a_circle_that_slips_into_the_99p2mm_b
     # after kerf) leaves ~0.4 mm a side so the board drops in without binding.
     from vention_printer_interface.vision.board_gen import PRESET_CUT_DIAMETER_MM
 
-    assert PRESET_CUT_DIAMETER_MM == {"small_cylinder": 98.5}
+    assert PRESET_CUT_DIAMETER_MM == {"small_cylinder": 98.5, "fine_20mp": 98.5}

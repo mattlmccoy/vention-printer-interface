@@ -22,6 +22,7 @@ from __future__ import annotations
 import dataclasses
 import json
 import math
+import re
 from collections.abc import Callable
 from datetime import UTC, datetime
 from pathlib import Path
@@ -117,6 +118,42 @@ def _finite(d: dict[str, Any]) -> dict[str, Any]:
     return {k: clean(v) for k, v in d.items()}
 
 
+_PHOTO_RE = re.compile(r"^(\d{2,3})_-?[\d.]+\.png$")
+
+
+def _photo_files(photo_dir: Path) -> list[tuple[int, Path]]:
+    if not photo_dir.is_dir():
+        return []
+    out = []
+    for f in photo_dir.iterdir():
+        m = _PHOTO_RE.match(f.name)
+        if m:
+            out.append((int(m.group(1)), f))
+    return sorted(out)
+
+
+def _clear_photos(photo_dir: Path | None) -> None:
+    """A new run starts with an empty photo folder; only files this route wrote are removed."""
+    if photo_dir is None:
+        return
+    for _, f in _photo_files(photo_dir):
+        try:
+            f.unlink()
+        except OSError:
+            pass
+
+
+def _store_photo(photo_dir: Path | None, index: int, recoater_mm: float, data: bytes) -> None:
+    """Keep the uploaded still exactly as received (diagnosis only; never fails a sample)."""
+    if photo_dir is None:
+        return
+    try:
+        photo_dir.mkdir(parents=True, exist_ok=True)
+        (photo_dir / f"{index:02d}_{recoater_mm:.1f}.png").write_bytes(data)
+    except OSError:
+        pass
+
+
 def _sweep_path(root: Path) -> Path:
     return Path(root) / ".autocal_last_sweep.json"
 
@@ -187,6 +224,7 @@ def register_autocal_routes(
     calibration_path: Path,
     on_saved: Callable[[Calibration], None],
     events: Callable[[str, dict[str, Any]], None],
+    photo_dir: Path | None = None,
 ) -> None:
     state: dict[str, Any] = {"session": None}
 
@@ -244,6 +282,7 @@ def register_autocal_routes(
         except ValueError as exc:
             raise HTTPException(400, str(exc)) from exc
         window = (float(body.window_min_mm), float(body.window_max_mm))
+        _clear_photos(photo_dir)
         _window_path(root).write_text(
             json.dumps({"min_mm": window[0], "max_mm": window[1]}), encoding="utf-8")
         state["session"] = {
@@ -266,6 +305,7 @@ def register_autocal_routes(
         if not math.isfinite(recoater_mm):
             raise HTTPException(400, "recoater position must be a finite number (is it homed?)")
         image, size = await _session_photo(request, s)
+        _store_photo(photo_dir, len(s["samples"]), float(recoater_mm), await request.body())
         # Every identified point: chessboard corners AND marker corners (the whole board).
         det = detect_board_points(image, s["spec"])
         pts = (np.zeros((0, 2)) if det is None
@@ -433,6 +473,67 @@ def register_autocal_routes(
         return {"saved_at": saved.get("saved_at"), "image_size": saved.get("image_size"),
                 "capture_mm": saved.get("capture_mm"), "board": saved.get("board"),
                 "result": saved.get("result"), "views": views}
+
+    @app.post("/api/vision/autocal/compare-detection")
+    def autocal_compare_detection() -> dict[str, Any]:
+        """Leave-one-photo-out accuracy of each detection method on THIS run's stored photos:
+        the current method, without our marker-corner refinement, and with the solved lens
+        (OpenCV ChArUco tutorial). Measures; changes nothing. ~1-2 min at 20 MP."""
+        s = session()
+        res = s["result"]
+        if res is None:
+            raise HTTPException(409, "solve the run first: one method uses its lens")
+        if photo_dir is None:
+            raise HTTPException(409, "photo storage is off on this operator")
+        files = {i: f for i, f in _photo_files(photo_dir)}
+        if not files:
+            raise HTTPException(409, "no photos stored for this run (they are kept from 0.19.0)")
+        import cv2
+
+        from vention_printer_interface.vision.autocal_heldout import heldout_errors
+
+        images = {i: cv2.imread(str(f), cv2.IMREAD_GRAYSCALE) for i, f in files.items()}
+        mm = {i: s["samples"][i]["recoater_mm"] for i in images if i < len(s["samples"])}
+        methods: list[tuple[str, str, dict[str, Any]]] = [
+            ("current", "as used now (marker corners refined)", {}),
+            ("no_marker_refine", "marker corners not refined (OpenCV advice)",
+             {"refine_markers": False}),
+            ("with_lens", "corners placed through the solved lens (OpenCV advice)",
+             {"camera": (res.camera_matrix, res.dist_coeffs)}),
+        ]
+        out = []
+        for key, label, kw in methods:
+            views = []
+            for i, img in images.items():
+                if img is None or i not in mm:
+                    continue
+                det = detect_board_points(img, s["spec"], **kw)
+                if det is None or len(det.ids) < MIN_CORNERS:
+                    continue
+                views.append(AutocalView(mm[i], np.asarray(det.image_points, float),
+                                         np.asarray(det.object_points, float),
+                                         np.asarray(det.ids)))
+            row: dict[str, Any] = {"method": key, "label": label, "n_photos": len(views)}
+            try:
+                full = solve_autocal(views, capture_recoater_mm=s["plan"].capture_mm,
+                                     image_size=s["image_size"])
+                held = heldout_errors(views, capture_recoater_mm=s["plan"].capture_mm,
+                                      image_size=s["image_size"])
+            except ValueError as exc:
+                out.append({**row, "error": str(exc)})
+                continue
+            rms = np.array([h["rms_mm"] for h in held])
+            row.update({
+                "n_heldout": len(held), "lens_mm": full.reprojection_rms_mm,
+                "lens_px": full.reprojection_rms_px, "shift_rms_mm": full.shift_rms_mm,
+                "heldout_mean_mm": float(rms.mean()) if len(rms) else None,
+                "heldout_sd_mm": float(rms.std(ddof=1)) if len(rms) > 1 else None,
+                "heldout_worst_mm": max((h["max_mm"] for h in held), default=None),
+                "per_photo": held,
+            })
+            out.append(_finite(row))
+        events("autocal_compare_detection", {"methods": [r["method"] for r in out]})
+        return {"methods": out, "n_photos": len(images)}
 
     @app.post("/api/vision/autocal/selfcheck")
     async def autocal_selfcheck(request: Request) -> dict[str, Any]:
