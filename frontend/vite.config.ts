@@ -31,7 +31,17 @@ function appVersion(): string {
 export default defineConfig({
   base: process.env.VITE_BASE ?? "/",
   define: { __APP_VERSION__: JSON.stringify(appVersion()), __BUILD_ID__: JSON.stringify(buildId()) },
-  plugins: [react()],
+  plugins: [
+    react(),
+    // dist/version.json: the operator serves its own copy of the console only when this matches its
+    // version (backend api/app.py stale_console_reason) - a stale build is never served silently.
+    {
+      name: "version-stamp",
+      generateBundle() {
+        this.emitFile({ type: "asset", fileName: "version.json", source: JSON.stringify({ version: appVersion(), build: buildId() }) });
+      },
+    },
+  ],
   server: {
     port: 5175,
     proxy: {

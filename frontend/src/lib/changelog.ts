@@ -11,6 +11,13 @@ export interface Release {
 
 export const CHANGELOG: Release[] = [
   {
+    version: "0.19.1",
+    date: "2026-10-21",
+    changes: [
+      "Opening the operator's own address (localhost:8020) no longer shows an old console; it explains why and opens this one.",
+    ],
+  },
+  {
     version: "0.19.0",
     date: "2026-10-21",
     changes: [

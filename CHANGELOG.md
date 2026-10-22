@@ -3,6 +3,15 @@
 Notable changes to the Vention Printer Interface. Versions follow semantic versioning; each entry
 corresponds to a tagged merge to `main`.
 
+## v0.19.1 — 2026-10-21
+
+### Fixed
+- **http://localhost:8020 showed a months-old console.** The operator serves its own copy of the console from `frontend/dist`. That folder is not part of git, so `git pull` + `uv sync` never rebuilt it: the lab Mac served console 0.10.4 (built 2026-09-21) next to a 0.19.0 operator.
+  - Each console build now writes `dist/version.json`. The operator serves its copy only when that version matches its own.
+  - Otherwise `http://localhost:8020` explains why (both versions) and opens the current console on GitHub Pages.
+  - A build without a version stamp counts as out of date.
+  - The API is unaffected.
+
 ## v0.19.0 — 2026-10-21
 
 ### Added

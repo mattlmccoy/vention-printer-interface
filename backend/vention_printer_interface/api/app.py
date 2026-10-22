@@ -32,7 +32,13 @@ from urllib.parse import quote
 import numpy as np
 from fastapi import FastAPI, HTTPException, Query, Request, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import FileResponse, JSONResponse, Response, StreamingResponse
+from fastapi.responses import (
+    FileResponse,
+    HTMLResponse,
+    JSONResponse,
+    Response,
+    StreamingResponse,
+)
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 
@@ -227,6 +233,43 @@ RUN_FILES = frozenset(
 )
 VISION_FILE_MEDIA_TYPES = {".webp": "image/webp", ".png": "image/png", ".json": "application/json"}
 _DEFAULT_FRONTEND_DIST = Path(__file__).resolve().parents[3] / "frontend" / "dist"
+SITE_CONSOLE_PATH = "/vention-printer-interface/"  # the GitHub Pages console under site_origin
+
+
+def stale_console_reason(dist: Path) -> str | None:
+    """Why the local console build must not be served, or None when it matches this operator.
+
+    The build stamps ``dist/version.json`` (frontend/vite.config.ts); a missing or unreadable
+    stamp is treated as stale, because there is no way to tell how old that build is."""
+    if not (dist / "index.html").is_file():
+        return "there is no console build on this computer"
+    try:
+        stamp = json.loads((dist / "version.json").read_text(encoding="utf-8"))
+        built = str(stamp["version"])
+    except (OSError, ValueError, KeyError, TypeError):
+        return (f"this computer's console build has an unknown version (no version stamp); "
+                f"the operator is {__version__}")
+    if built != __version__:
+        return f"this computer's console build is {built}; the operator is {__version__}"
+    return None
+
+
+def _console_pointer_page(reason: str, site_url: str | None) -> str:
+    """What "/" shows instead of a stale console: the reason and the current console's link."""
+    import html
+
+    go = (f'<meta http-equiv="refresh" content="4;url={html.escape(site_url)}">'
+          if site_url else "")
+    link = (f'<p>Opening the current console in a few seconds: '
+            f'<a href="{html.escape(site_url)}">{html.escape(site_url)}</a></p>'
+            if site_url else "<p>Build the console (frontend: npm run build) or use the site "
+            "console.</p>")
+    return (f'<!doctype html><meta charset="utf-8"><title>Binder Jet console</title>{go}'
+            '<body style="font:16px system-ui;margin:40px;max-width:640px">'
+            "<h1 style=\"font-size:20px\">The console on this computer is out of date</h1>"
+            f"<p>{html.escape(reason)}. It is not shown, so you never operate the printer "
+            "through an old interface.</p>"
+            f"{link}<p>The operator itself is running; only this copy of the console is old.</p>")
 DEFAULT_HEATER_IO: tuple[int, int] = (1, 0)  # UNVERIFIED: identify during commissioning
 OPERATOR_RESTART_DELAY_S = 0.4  # let the HTTP response flush before the process replaces itself
 
@@ -3530,8 +3573,19 @@ def create_app(
     )
 
     dist = frontend_dist or _DEFAULT_FRONTEND_DIST
-    if dist.exists():
+    stale = stale_console_reason(dist)
+    if stale is None:
         app.mount("/", StaticFiles(directory=str(dist), html=True), name="frontend")
+    else:
+        # Never serve an old console silently (2026-10-21: localhost:8020 served 0.10.4 to a
+        # 0.19.0 operator - the gitignored dist is not rebuilt by `git pull` + `uv sync`).
+        log.info("not serving the local console: %s", stale)
+        site_url = f"{site_origin.rstrip('/')}{SITE_CONSOLE_PATH}" if site_origin else None
+        page = _console_pointer_page(stale, site_url)
+
+        @app.get("/", include_in_schema=False)
+        def local_console_pointer() -> HTMLResponse:
+            return HTMLResponse(page, headers={"Cache-Control": "no-store"})
     return app
 
 
