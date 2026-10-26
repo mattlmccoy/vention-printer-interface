@@ -11,6 +11,13 @@ export interface Release {
 
 export const CHANGELOG: Release[] = [
   {
+    version: "0.19.2",
+    date: "2026-10-26",
+    changes: [
+      "Automatic calibration now fits the board's chessboard corners only. The marker corners were blurring the fit and made every real run fail; markers still identify the board and show on the overlays.",
+    ],
+  },
+  {
     version: "0.19.1",
     date: "2026-10-21",
     changes: [

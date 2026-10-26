@@ -22,7 +22,9 @@ from vention_printer_interface.vision.charuco_points import BoardPoints
 
 SELF_RMS_MM = 0.1
 SELF_WORST_MM = 0.2
-SELF_MIN_POINTS = 12
+# Chessboard corners only since 2026-10-26 (a 4x4 board has 9 per photo); was 12 with marker
+# corners. 6 X-corners give 15 independent pair distances.
+SELF_MIN_POINTS = 6
 # A self-check photo whose every point is within this of a sweep photo's points is the same pose.
 UNMOVED_PX = 2.0
 

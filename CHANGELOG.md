@@ -3,6 +3,17 @@
 Notable changes to the Vention Printer Interface. Versions follow semantic versioning; each entry
 corresponds to a tagged merge to `main`.
 
+## v0.19.2 — 2026-10-26
+
+### Fixed
+- **Automatic calibration always failed on real photos: the marker corners were the bad points.**
+  - At 20 MP the science photos are soft (edges blur over 4–6 px). A marker corner is an L-shaped corner that blur pulls off by 1–3 px; the chessboard corners are X-junctions and stay accurate.
+  - On the 19 real photos of 2026-10-26, fitting chessboard + marker corners gave a 0.105 mm error on photos the fit never saw and failed every limit.
+  - The 108 chessboard corners alone gave 0.047 mm (lens fit 0.022 mm, encoder shift 0.048 mm) and pass.
+  - The calibration now fits the chessboard corners only. The markers still identify every point and are still drawn on the overlays, as the OpenCV ChArUco tutorial intends; they are no longer measured.
+  - The self-check scores chessboard corners too (at least 6 per photo; a 4×4 board has 9).
+  - The calibrated area shrinks to where chessboard corners were seen (about 77 × 32 mm on that run).
+
 ## v0.19.1 — 2026-10-21
 
 ### Fixed

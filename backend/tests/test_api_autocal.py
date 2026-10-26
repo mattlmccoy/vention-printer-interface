@@ -197,7 +197,7 @@ def test_save_requires_a_passing_self_check(tmp_path: Path) -> None:
         assert r.status_code == 409 and "self-check" in r.json()["detail"]
         sc = c.post("/api/vision/autocal/selfcheck", content=_moved_photo()).json()
         assert sc["passed"] is True, sc["reasons"]
-        assert sc["moved"] is True and sc["n_used"] >= 12
+        assert sc["moved"] is True and sc["n_used"] >= 6  # chessboard corners only
         assert sc["rms_mm"] <= 0.05
         assert c.post("/api/vision/autocal/save").status_code == 200
 
@@ -228,7 +228,7 @@ def test_self_check_is_stored_in_provenance(tmp_path: Path) -> None:
         c.post("/api/vision/autocal/selfcheck", content=_moved_photo())
         assert c.post("/api/vision/autocal/save").status_code == 200
         prov = json.loads((tmp_path / ".vision_calibration.json").read_text())["provenance"]
-        assert prov["self_check"]["passed"] is True and prov["self_check"]["n_used"] >= 12
+        assert prov["self_check"]["passed"] is True and prov["self_check"]["n_used"] >= 6
         assert prov["self_check"]["moved"] is True
 
 
@@ -280,7 +280,8 @@ def test_solve_reports_limits_and_per_view_counts(tmp_path: Path) -> None:
         for v in res["views"]:
             assert v["points"] == v["chessboard"] + v["markers"]
         cap = min(res["views"], key=lambda v: abs(v["recoater_mm"] - CAPTURE))
-        assert (cap["points"], cap["chessboard"], cap["markers"]) == (41, 9, 32)
+        # the fit uses chessboard corners only (markers identify, are not measured)
+        assert (cap["points"], cap["chessboard"], cap["markers"]) == (9, 9, 0)
 
 
 def test_last_report_round_trips_and_is_404_before_any_solve(tmp_path: Path) -> None:
@@ -420,3 +421,31 @@ def test_compare_detection_reports_held_out_error_per_method(tmp_path: Path) -> 
             assert row["n_photos"] >= 5 and row["n_heldout"] >= 4
             assert 0 <= row["heldout_mean_mm"] < 0.1 and row["heldout_worst_mm"] >= 0
             assert row["lens_mm"] is not None and row["shift_rms_mm"] < 0.1
+
+
+# ---- fit on chessboard corners only (2026-10-26 real run) ---------------------------------
+# On 19 real 5120x3840 photos the marker corners (L-corners, soft image) were the bad points:
+# held-out error 0.105 mm with them vs 0.047 mm with the 108 chessboard X-corners alone, which
+# alone passed every limit. Markers identify the board (OpenCV ChArUco tutorial); they are no
+# longer measurement points for the fit or the self-check.
+def test_solve_fits_chessboard_corners_only(tmp_path: Path) -> None:
+    app = _app(tmp_path)
+    with TestClient(app) as c:
+        _set_capture_pose(app, CAPTURE)
+        poses = _start(c).json()["poses"]
+        _sweep(c, poses)
+        res = c.post("/api/vision/autocal/solve").json()
+        assert res["passed"] is True, res["reasons"]
+        assert res["fit_points"]["markers"] == 0 and res["fit_points"]["chessboard"] > 0
+        assert res["residuals"]["marker"]["n"] == 0
+        last = c.get("/api/vision/autocal/last").json()
+        assert all(v["markers"] == 0 for v in last["views"])
+
+
+def test_self_check_scores_chessboard_corners(tmp_path: Path) -> None:
+    app = _app(tmp_path)
+    with TestClient(app) as c:
+        _solved(c, app)
+        sc = c.post("/api/vision/autocal/selfcheck", content=_moved_photo()).json()
+        assert sc["passed"] is True, sc["reasons"]
+        assert 6 <= sc["n_used"] <= 9  # one photo of the 4x4 board has 9 chessboard corners

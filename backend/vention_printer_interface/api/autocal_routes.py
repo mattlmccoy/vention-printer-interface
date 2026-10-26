@@ -49,7 +49,11 @@ from vention_printer_interface.vision.board_gen import (
     validate_charuco_spec,
     with_auto_dict,
 )
-from vention_printer_interface.vision.charuco_points import MARKER_ID_BASE, detect_board_points
+from vention_printer_interface.vision.charuco_points import (
+    MARKER_ID_BASE,
+    BoardPoints,
+    detect_board_points,
+)
 from vention_printer_interface.vision.charuco_selfcheck import score_self_check
 from vention_printer_interface.vision.coverage import corner_cells
 from vention_printer_interface.vision.overlay import (
@@ -152,6 +156,26 @@ def _store_photo(photo_dir: Path | None, index: int, recoater_mm: float, data: b
         (photo_dir / f"{index:02d}_{recoater_mm:.1f}.png").write_bytes(data)
     except OSError:
         pass
+
+
+def _fit_views(samples: list[dict[str, Any]]) -> list[AutocalView]:
+    """Usable sweep photos reduced to their chessboard corners (ids < MARKER_ID_BASE)."""
+    out = []
+    for x in samples:
+        if not x["usable"] or x["ids"] is None:
+            continue
+        keep = np.asarray(x["ids"]).ravel() < MARKER_ID_BASE
+        if int(keep.sum()) >= MIN_CORNERS:
+            out.append(AutocalView(x["recoater_mm"], np.asarray(x["image_points"])[keep],
+                                   np.asarray(x["object_points"])[keep],
+                                   np.asarray(x["ids"]).reshape(-1, 1)[keep]))
+    return out
+
+
+def _chessboard_points(det: BoardPoints) -> BoardPoints:
+    keep = det.kinds == "corner"
+    return BoardPoints(image_points=det.image_points[keep], object_points=det.object_points[keep],
+                       ids=det.ids[keep], kinds=det.kinds[keep], markers_px=det.markers_px)
 
 
 def _sweep_path(root: Path) -> Path:
@@ -337,8 +361,11 @@ def register_autocal_routes(
     @app.post("/api/vision/autocal/solve")
     def autocal_solve() -> dict[str, Any]:
         s = session()
-        views = [AutocalView(x["recoater_mm"], x["image_points"], x["object_points"], x["ids"])
-                 for x in s["samples"] if x["usable"]]
+        # Fit on the chessboard X-corners only; markers identify the board but are not measured
+        # (2026-10-26, 19 real photos: held-out 0.047 mm on X-corners vs 0.105 mm with marker
+        # L-corners, which blur pulls off by 1-3 px; OpenCV ChArUco tutorial).
+        views = _fit_views(s["samples"])
+        s["fit_views"] = views
         if s["image_size"] is None:
             raise HTTPException(400, "no photos yet")
         try:
@@ -361,8 +388,8 @@ def register_autocal_routes(
             "reprojection_limit_mm": MAX_REPROJ_MM, "residuals": res.residuals,
             "limits": {"min_views": MIN_VIEWS, "reprojection_mm": MAX_REPROJ_MM,
                        "shift_rms_mm": MAX_SHIFT_RMS_MM},
-            "views": [_view_counts(x["recoater_mm"], x["ids"])
-                      for x in s["samples"] if x["usable"]],
+            "views": [_view_counts(v.recoater_mm, v.ids) for v in views],
+            "fit_points": {"chessboard": int(sum(len(v.ids) for v in views)), "markers": 0},
             "current": _calibration_in_use(calibration_path),
         })
         # Keep the sweep's points on disk so a failed run can be diagnosed (and re-solved) without
@@ -371,13 +398,12 @@ def register_autocal_routes(
             _sweep_path(root).write_text(json.dumps({
                 "saved_at": datetime.now(UTC).isoformat(), "image_size": list(s["image_size"]),
                 "capture_mm": s["plan"].capture_mm, "board": dataclasses.asdict(s["spec"]),
-                "views": [{"recoater_mm": x["recoater_mm"],
-                           "image_points": np.asarray(x["image_points"]).tolist(),
-                           "object_points": np.asarray(x["object_points"]).tolist(),
-                           "ids": np.asarray(x["ids"]).ravel().tolist(),
+                "views": [{"recoater_mm": v.recoater_mm,
+                           "image_points": np.asarray(v.image_points).tolist(),
+                           "object_points": np.asarray(v.object_points).tolist(),
+                           "ids": np.asarray(v.ids).ravel().tolist(),
                            "residuals_px": np.round(np.asarray(r), 4).tolist()}
-                          for x, r in zip([x for x in s["samples"] if x["usable"]],
-                                          res.point_residuals, strict=True)],
+                          for v, r in zip(views, res.point_residuals, strict=True)],
                 "result": out,
             }), encoding="utf-8")
         except OSError:
@@ -433,10 +459,10 @@ def register_autocal_routes(
         import cv2
 
         if view == "residuals":
-            usable = [x for x in s["samples"] if x["usable"]]
-            near = min(range(len(usable)),
-                       key=lambda i: abs(usable[i]["recoater_mm"] - s["plan"].capture_mm))
-            img = draw_residual_arrows(s["capture_image"], usable[near]["image_points"],
+            fit = s["fit_views"]
+            near = min(range(len(fit)),
+                       key=lambda i: abs(fit[i].recoater_mm - s["plan"].capture_mm))
+            img = draw_residual_arrows(s["capture_image"], fit[near].image_points,
                                        res.point_residuals[near])
             ok, buf = cv2.imencode(".png", img)
             if not ok:
@@ -549,7 +575,7 @@ def register_autocal_routes(
             raise HTTPException(409, "solve a passing run before the self-check")
         image, _size = await _session_photo(request, s)
         det = detect_board_points(image, s["spec"])
-        views = [] if det is None else [det]
+        views = [] if det is None else [_chessboard_points(det)]
 
         def to_bed(px: np.ndarray) -> np.ndarray:
             return apply_homography(res.H, undistort_points(px, res.camera_matrix,
