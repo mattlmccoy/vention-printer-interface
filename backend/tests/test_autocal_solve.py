@@ -260,3 +260,51 @@ def test_point_residuals_match_the_fit() -> None:
     allr = np.vstack(res.point_residuals)
     assert float(np.sqrt((np.linalg.norm(allr, axis=1) ** 2).mean())) == pytest.approx(
         res.reprojection_rms_px, rel=1e-3)
+
+
+# ---- several board placements (2026-10-26: the board only ever covered a band of the frame, so
+# the lens model was extrapolated over the rest) -------------------------------------------------
+# A lens the constrained fit cannot represent exactly (k3 != 0, optical centre 70/50 px off) seen
+# from 200 mm: the board covers ~41% of the frame height, like the real board's ~47% of the width.
+# One placement then leaves ~29 um at the far region (real photo, 2026-10-26: 31 um in-band).
+REAL_LIKE = {"dist": (-0.25, 0.08, 0.0, 0.0, 0.25), "pp": (1030.0, 590.0), "height_mm": 200.0}
+
+
+def _grid_residual_mm(res, view) -> float:  # type: ignore[no-untyped-def]
+    """How far one photo's points sit from a perfect board grid after the calibration (rotation,
+    translation and one scale removed): the lens error left at those image positions."""
+    from vention_printer_interface.vision.validation_view import similarity_residuals
+
+    bed = _map(res, view.image_points)
+    r = similarity_residuals(bed, np.asarray(view.object_points, float)[:, :2])
+    return float(np.sqrt((np.linalg.norm(r, axis=1) ** 2).mean()))
+
+
+def test_a_second_placement_calibrates_the_part_of_the_frame_the_first_never_saw() -> None:
+    a, truth = synth_views(spec=SPEC, with_markers=True, **REAL_LIKE)  # type: ignore[arg-type]
+    b, _ = synth_views(spec=SPEC, with_markers=True, board_offset_mm=(0.0, 50.0),
+                       board_rotation_deg=4.0, placement=1, seed=3, **REAL_LIKE)  # type: ignore[arg-type]
+    b_cap = _capture_view(b, truth.capture_mm)  # B's board sits where A never reached
+    one = solve_autocal(a, capture_recoater_mm=truth.capture_mm, image_size=SIZE)
+    both = solve_autocal(a + b, capture_recoater_mm=truth.capture_mm, image_size=SIZE)
+    assert _grid_residual_mm(one, b_cap) > 0.02  # the fixture really extrapolates badly
+    assert _grid_residual_mm(both, b_cap) < 0.5 * _grid_residual_mm(one, b_cap)
+    span = lambda r: np.ptp(np.asarray(r.valid_region_mm), axis=0)  # noqa: E731
+    assert span(both)[1] > span(one)[1] + 20  # the calibrated area grows across the frame
+    assert both.shift_rms_mm < 0.05 and abs(both.scale_ratio - 1.0) < 0.002
+
+
+def test_the_bed_frame_stays_on_the_first_placement() -> None:
+    a, truth = synth_views(spec=SPEC, with_markers=True)
+    b, _ = synth_views(spec=SPEC, with_markers=True, board_offset_mm=(0.0, 30.0), placement=1)
+    one = solve_autocal(a, capture_recoater_mm=truth.capture_mm, image_size=SIZE)
+    both = solve_autocal(a + b, capture_recoater_mm=truth.capture_mm, image_size=SIZE)
+    cap = _capture_view(a, truth.capture_mm)
+    assert np.abs(_map(both, cap.image_points) - _map(one, cap.image_points)).max() < 0.02
+
+
+def test_a_placement_with_one_photo_is_refused() -> None:
+    a, truth = synth_views(spec=SPEC)
+    b, _ = synth_views(spec=SPEC, board_offset_mm=(0.0, 30.0), placement=1, shifts_mm=(0.0,))
+    with pytest.raises(ValueError, match="placement 2"):
+        solve_autocal(a + b, capture_recoater_mm=truth.capture_mm, image_size=SIZE)

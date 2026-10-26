@@ -249,7 +249,9 @@ def register_autocal_routes(
             "board_thickness_mm": s["board_thickness_mm"],
             "image_size": list(size) if size else None,
             "samples": [{"recoater_mm": x["recoater_mm"], "usable": x["usable"],
-                         "corners": x["corners"]} for x in s["samples"]],
+                         "corners": x["corners"], "placement": x.get("placement", 0)}
+                        for x in s["samples"]],
+            "placement_index": s.get("placement_index", 0),
             "coverage_cells": cells,
         }
 
@@ -290,6 +292,7 @@ def register_autocal_routes(
             "board_thickness_mm": float(body.board_thickness_mm), "samples": [],
             "image_size": None, "result": None, "verdict": None, "self_check": None,
             "capture_image": None, "capture_dmm": None, "capture_points": None,
+            "placement_index": 0,
         }
         events("autocal_start", {"poses": plan.poses, "window": list(window)})
         return summary(state["session"])
@@ -315,11 +318,14 @@ def register_autocal_routes(
         s["image_size"] = s["image_size"] or size
         # Keep the photo nearest the capture pose (memory only) for the overlays on that photo.
         dmm = abs(float(recoater_mm) - s["plan"].capture_mm)
-        if dmm <= CAPTURE_POSE_TOL_MM and (s["capture_dmm"] is None or dmm < s["capture_dmm"]):
+        first_placement = s.get("placement_index", 0) == 0  # its capture photo is the reference
+        if first_placement and dmm <= CAPTURE_POSE_TOL_MM and (
+                s["capture_dmm"] is None or dmm < s["capture_dmm"]):
             s["capture_image"], s["capture_dmm"] = image, dmm
             s["capture_points"] = None if det is None else (pts, np.asarray(det.object_points))
         s["samples"].append({
             "recoater_mm": float(recoater_mm), "usable": usable, "corners": int(len(pts)),
+            "placement": s.get("placement_index", 0),
             "image_points": pts,
             "object_points": None if det is None else np.asarray(det.object_points, float),
             "ids": None if det is None or det.ids is None else np.asarray(det.ids),
@@ -334,10 +340,25 @@ def register_autocal_routes(
             "coverage_cells": summary(s)["coverage_cells"],
         }
 
+    @app.post("/api/vision/autocal/placement")
+    def autocal_new_placement() -> dict[str, Any]:
+        """Start another board placement in the SAME run: the operator moves the board to a part
+        of the bed the previous sweep did not cover and sweeps again; the solve combines them, so
+        the lens is measured across the frame instead of extrapolated (2026-10-26)."""
+        s = session()
+        current = s.get("placement_index", 0)
+        if not any(x["usable"] and x.get("placement", 0) == current for x in s["samples"]):
+            raise HTTPException(409, "take this placement's sweep first (no usable photos yet)")
+        s["placement_index"] = current + 1
+        s["result"] = s["verdict"] = s["self_check"] = None
+        events("autocal_placement", {"placement": current + 1})
+        return {"placement": current + 1, "session": summary(s)}
+
     @app.post("/api/vision/autocal/solve")
     def autocal_solve() -> dict[str, Any]:
         s = session()
-        views = [AutocalView(x["recoater_mm"], x["image_points"], x["object_points"], x["ids"])
+        views = [AutocalView(x["recoater_mm"], x["image_points"], x["object_points"], x["ids"],
+                             placement=x.get("placement", 0))
                  for x in s["samples"] if x["usable"]]
         if s["image_size"] is None:
             raise HTTPException(400, "no photos yet")
@@ -361,8 +382,10 @@ def register_autocal_routes(
             "reprojection_limit_mm": MAX_REPROJ_MM, "residuals": res.residuals,
             "limits": {"min_views": MIN_VIEWS, "reprojection_mm": MAX_REPROJ_MM,
                        "shift_rms_mm": MAX_SHIFT_RMS_MM},
-            "views": [_view_counts(x["recoater_mm"], x["ids"])
+            "views": [{**_view_counts(x["recoater_mm"], x["ids"]),
+                       "placement": x.get("placement", 0)}
                       for x in s["samples"] if x["usable"]],
+            "placements": len({x.get("placement", 0) for x in s["samples"] if x["usable"]}),
             "current": _calibration_in_use(calibration_path),
         })
         # Keep the sweep's points on disk so a failed run can be diagnosed (and re-solved) without
@@ -375,6 +398,7 @@ def register_autocal_routes(
                            "image_points": np.asarray(x["image_points"]).tolist(),
                            "object_points": np.asarray(x["object_points"]).tolist(),
                            "ids": np.asarray(x["ids"]).ravel().tolist(),
+                           "placement": x.get("placement", 0),
                            "residuals_px": np.round(np.asarray(r), 4).tolist()}
                           for x, r in zip([x for x in s["samples"] if x["usable"]],
                                           res.point_residuals, strict=True)],
@@ -512,7 +536,8 @@ def register_autocal_routes(
                     continue
                 views.append(AutocalView(mm[i], np.asarray(det.image_points, float),
                                          np.asarray(det.object_points, float),
-                                         np.asarray(det.ids)))
+                                         np.asarray(det.ids),
+                                         placement=s["samples"][i].get("placement", 0)))
             row: dict[str, Any] = {"method": key, "label": label, "n_photos": len(views)}
             try:
                 full = solve_autocal(views, capture_recoater_mm=s["plan"].capture_mm,

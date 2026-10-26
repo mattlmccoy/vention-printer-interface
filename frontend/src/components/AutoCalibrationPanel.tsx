@@ -16,8 +16,8 @@ import { CalibrationLivePreview } from "./CalibrationLivePreview.tsx";
 const storage = typeof localStorage === "undefined" ? null : localStorage;
 const SECONDS_PER_POSE = 3;
 
-type Phase = "idle" | "confirm" | "running" | "solving" | "result";
-interface Shot { pose: number; mm: number; usable: boolean; corners: number; url: string; size: [number, number]; pts: [number, number][]; nChess: number }
+type Phase = "idle" | "confirm" | "running" | "solving" | "result" | "placing";
+interface Shot { pose: number; mm: number; usable: boolean; corners: number; url: string; size: [number, number]; pts: [number, number][]; nChess: number; placement: number }
 
 /** One-button science-camera calibration (spec docs/superpowers/specs/2026-10-20-auto-calibration-
  *  design.md): place the board, press Start, confirm the planned recoater positions, watch. The
@@ -93,13 +93,24 @@ export function AutoCalibrationPanel({ status, printing }: { status: StatusPaylo
   const busy = phase === "running" || phase === "solving";
 
   const plan = async () => {
-    setErr(null); setReport(null); setSaved(null); setShots([]); setCells(null); setSelfCheck(null); setOverlays(null);
+    setErr(null); setReport(null); setSaved(null); setShots([]); setCells(null); setSelfCheck(null); setOverlays(null); setPlacementIdx(0);
     try {
       const s = await api.autocalStart({
         spec: sessionSpecFromDef(board!), window_min_mm: Number(winMin), window_max_mm: Number(winMax),
         placement, board_thickness_mm: Number(thickness),
       });
       setSession(s); setPhase("confirm");
+    } catch (e) { setErr(e instanceof Error ? e.message : String(e)); }
+  };
+
+  // Another board placement in the same run (2026-10-26: one placement only covers a band of the
+  // frame; the rest of the lens was extrapolated). Nothing moves until "sweep this placement".
+  const [placementIdx, setPlacementIdx] = useState(0);
+  const addPlacement = async () => {
+    try {
+      const r = await api.autocalNewPlacement();
+      setPlacementIdx(r.placement); setSession(r.session); setSelfCheck(null); setOverlays(null); setErr(null);
+      setPhase("placing");
     } catch (e) { setErr(e instanceof Error ? e.message : String(e)); }
   };
 
@@ -129,6 +140,7 @@ export function AutoCalibrationPanel({ status, printing }: { status: StatusPaylo
             setShots((prev) => [...prev, {
               pose: mm, mm, usable: r.usable, corners: r.corners, url: URL.createObjectURL(blob),
               size: r.image_size, pts: r.corners_px ?? [], nChess: r.chessboard_corners ?? (r.corners_px ?? []).length,
+              placement: placementIdx,
             }]);
             return r;
           },
@@ -235,6 +247,18 @@ export function AutoCalibrationPanel({ status, printing }: { status: StatusPaylo
               : lastRun ? { size: lastRun.image_size, points: lastRun.views.flatMap((v) => v.image_points) } : null} />
         </details>
       )}
+      {phase === "placing" && session && (
+        <div className="warnline">
+          Placement {placementIdx + 1}: move the board to a part of the bed the previous sweep{placementIdx > 1 ? "s" : ""} did not cover —
+          to the left or right of where it was, flat on the same surface, still in view at the capture pose. The live view below shows
+          the area already covered (dashed). Then sweep this placement; the recoater makes the same moves as before
+          ({cleanNum(session.poses[0], 1)} → {cleanNum(session.poses.at(-1) ?? 0, 1)} mm). The solve combines every placement.
+          <div className="actions one tight" style={{ marginTop: 8 }}>
+            <button className="cta primary" onClick={() => void run()}>sweep this placement</button>
+            <button className="cta" onClick={() => setPhase("result")} disabled={!report}>back to the result</button>
+          </div>
+        </div>
+      )}
       {phase === "confirm" && session && (
         <div className="warnline">
           The recoater (now at {(() => { const v = status?.controller?.telemetry?.positions?.[String(RECOATER_AXIS)]; return typeof v === "number" ? `${cleanNum(v, 1)} mm` : "an unknown position"; })()}) will move to {cleanNum(session.pre_approach_mm, 1)} mm, then step down through {session.poses.length} positions
@@ -248,7 +272,7 @@ export function AutoCalibrationPanel({ status, printing }: { status: StatusPaylo
       )}
       {(phase === "running" || phase === "solving") && (
         <div className="actions one tight">
-          <span className="hint" style={{ margin: 0 }}>{phase === "running" ? `photo ${shots.length} of ${session?.poses.length ?? "?"}` : "solving…"}</span>
+          <span className="hint" style={{ margin: 0 }}>{phase === "running" ? `placement ${placementIdx + 1}: photo ${shots.filter((x) => x.placement === placementIdx).length} of ${session?.poses.length ?? "?"}` : "solving…"}</span>
           {phase === "running" && <button className="cta" onClick={stop}>stop</button>}
         </div>
       )}
@@ -365,7 +389,8 @@ export function AutoCalibrationPanel({ status, printing }: { status: StatusPaylo
           <div className="actions one tight">
             {report.passed && !saved && <button className="cta primary" disabled={!selfCheck?.passed} title={selfCheck?.passed ? undefined : "Run a passing self-check first."} onClick={() => void save()}>save calibration</button>}
             {saved && <span className="okline" style={{ margin: 0 }}>Saved as {saved}. Next: Settings → Validate.</span>}
-            <button className="cta" onClick={() => { setPhase("idle"); setSession(null); setSelfCheck(null); }}>start over</button>
+            {!saved && <button className="cta" title="Move the board to a part of the bed this run has not covered, then sweep again; the solve combines all placements." onClick={() => void addPlacement()}>add a board placement</button>}
+            <button className="cta" onClick={() => { setPhase("idle"); setSession(null); setSelfCheck(null); setPlacementIdx(0); }}>start over</button>
           </div>
           <CalibrationSizeNote refreshKey={saved ? 1 : 0} />
         </div>

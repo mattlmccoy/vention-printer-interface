@@ -32,8 +32,10 @@ def _canvas() -> np.ndarray:
     d = aruco.getPredefinedDictionary(aruco.DICT_4X4_50)
     board = aruco.CharucoBoard((4, 4), 16.0, 12.0, d)
     img: np.ndarray = board.generateImage((640, 640), marginSize=0)  # 64 mm at 10 px/mm
-    canvas = np.full((FRAME[1], 640 + 2 * 600), 255, np.uint8)
-    y = (FRAME[1] - 640) // 2
+    # 2 x 200 px of extra height so a crop can show the board moved ACROSS the bed (a second
+    # placement); the default crop is the same picture as before.
+    canvas = np.full((FRAME[1] + 400, 640 + 2 * 600), 255, np.uint8)
+    y = (FRAME[1] + 400 - 640) // 2
     canvas[y:y + 640, 600:1240] = img
     return canvas
 
@@ -41,11 +43,13 @@ def _canvas() -> np.ndarray:
 _CANVAS = _canvas()
 
 
-def _photo(offset_mm: float, size: tuple[int, int] = FRAME) -> bytes:
+def _photo(offset_mm: float, size: tuple[int, int] = FRAME, across_px: int = 0) -> bytes:
     # Camera at +offset along the recoater -> the board appears shifted -offset in the photo.
+    # across_px: the board placed elsewhere across the bed (a second placement).
     cx = 600 + 320 + int(round(offset_mm * PX_PER_MM))
     x0 = cx - size[0] // 2
-    crop = _CANVAS[(FRAME[1] - size[1]) // 2:(FRAME[1] - size[1]) // 2 + size[1], x0:x0 + size[0]]
+    y0 = (FRAME[1] + 400 - size[1]) // 2 + across_px
+    crop = _CANVAS[y0:y0 + size[1], x0:x0 + size[0]]
     ok, buf = cv2.imencode(".png", cv2.cvtColor(crop, cv2.COLOR_GRAY2BGR))
     assert ok
     return bytes(buf.tobytes())
@@ -94,9 +98,10 @@ def _solved(c: TestClient, app) -> None:  # type: ignore[no-untyped-def]
     assert res["passed"] is True, res["reasons"]
 
 
-def _sweep(c: TestClient, poses: list[float]) -> None:
+def _sweep(c: TestClient, poses: list[float], across_px: int = 0) -> None:
     for p in poses:
-        r = c.post(f"/api/vision/autocal/sample?recoater_mm={p}", content=_photo(p - CAPTURE))
+        r = c.post(f"/api/vision/autocal/sample?recoater_mm={p}",
+                   content=_photo(p - CAPTURE, across_px=across_px))
         assert r.status_code == 200, r.text
 
 
@@ -420,3 +425,35 @@ def test_compare_detection_reports_held_out_error_per_method(tmp_path: Path) -> 
             assert row["n_photos"] >= 5 and row["n_heldout"] >= 4
             assert 0 <= row["heldout_mean_mm"] < 0.1 and row["heldout_worst_mm"] >= 0
             assert row["lens_mm"] is not None and row["shift_rms_mm"] < 0.1
+
+
+# ---- several board placements (2026-10-26: the board only ever covered a band of the frame) -
+def test_a_new_placement_adds_to_the_same_run(tmp_path: Path) -> None:
+    app = _app(tmp_path)
+    with TestClient(app) as c:
+        _set_capture_pose(app, CAPTURE)
+        poses = _start(c).json()["poses"]
+        _sweep(c, poses)
+        one = c.post("/api/vision/autocal/solve").json()
+        r = c.post("/api/vision/autocal/placement")
+        assert r.status_code == 200 and r.json()["placement"] == 1
+        _sweep(c, poses, across_px=-180)  # the board moved ~18 mm across the bed
+        both = c.post("/api/vision/autocal/solve").json()
+        assert both["passed"] is True, both["reasons"]
+        assert both["placements"] == 2 and one["placements"] == 1
+        assert {v["placement"] for v in both["views"]} == {0, 1}
+        span = lambda res: np.ptp(np.asarray(res["valid_region_mm"]), axis=0)  # noqa: E731
+        # the test photo is only 70 mm tall for a 64 mm board, so the area can grow ~2 mm here
+        # (the coverage gain itself is pinned by test_autocal_solve's real-like synthetic)
+        assert min(span(both)) > min(span(one)) + 1.5
+        session = c.get("/api/vision/autocal/session").json()
+        assert {x["placement"] for x in session["samples"]} == {0, 1}
+
+
+def test_a_new_placement_before_any_photo_is_refused(tmp_path: Path) -> None:
+    app = _app(tmp_path)
+    with TestClient(app) as c:
+        _set_capture_pose(app, CAPTURE)
+        _start(c)
+        r = c.post("/api/vision/autocal/placement")
+        assert r.status_code == 409 and "sweep" in r.json()["detail"]

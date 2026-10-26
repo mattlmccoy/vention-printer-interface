@@ -3,6 +3,19 @@
 Notable changes to the Vention Printer Interface. Versions follow semantic versioning; each entry
 corresponds to a tagged merge to `main`.
 
+## v0.20.0 — 2026-10-26
+
+### Added
+- **Calibrate with several board placements in one run.** The recoater only moves the board along one axis of the photo, so one placement calibrates a band. At the 2026-10-26 zoom the board covered ~47% of the photo width, and the lens correction over the rest was extrapolated by up to ~5 mm.
+  - **How:** after a sweep, press **add a board placement**, move the board to a part of the bed not yet covered (left or right, flat on the same surface), and sweep again. Repeat as needed; the solve combines every placement.
+  - **What the solve does:**
+    - The lens fit uses every photo of every placement.
+    - The bed frame stays on the first placement's capture-pose photo.
+    - Each later placement gets its own encoder-shift check, since its board pose differs; the encoder scale is pooled.
+    - With two or more placements, the lens's optical centre is also fitted, because it is measurable once the data spans the frame.
+  - **Effect on a synthetic lens like the real one** (board over 41% of the frame): the error where only the second placement reached drops from 29 µm with one placement to 13 µm with two.
+  - **Where to see it:** the run report lists placements and photos per placement, and the per-photo table shows each photo's placement.
+
 ## v0.19.3 — 2026-10-26
 
 ### Fixed
