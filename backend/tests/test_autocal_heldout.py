@@ -21,3 +21,10 @@ def test_heldout_error_is_small_on_ground_truth() -> None:
     assert len(rows) == len(views) - 1  # the capture-pose photo defines the reference
     assert max(r["rms_mm"] for r in rows) < 0.03
     assert all(r["max_mm"] >= r["rms_mm"] for r in rows)
+
+
+def test_heldout_error_ignores_the_boards_own_scale_error() -> None:
+    # The calibration is in encoder mm; a 0.2%-small engraved board must not read as map error.
+    views, truth = synth_views(spec=SPEC, with_markers=True, board_scale=0.998)
+    rows = heldout_errors(views, capture_recoater_mm=truth.capture_mm, image_size=(1920, 1080))
+    assert max(r["rms_mm"] for r in rows) < 0.03

@@ -3,6 +3,19 @@
 Notable changes to the Vention Printer Interface. Versions follow semantic versioning; each entry
 corresponds to a tagged merge to `main`.
 
+## v0.19.3 — 2026-10-26
+
+### Fixed
+- **The calibration inherited the engraved board's scale error, so certified validation failed.** Two independent references showed the calibration's millimetres too large: the recoater encoder said 0.20% (scale ratio 1.0020), and the certified chessboard said 0.27% (scale bias 1.0027). The ChArUco board is engraved about 0.2% small. The self-check could not see it, because it measures the board with its own ruler.
+  - **Encoder mm:** the solve now rescales the calibration to the recoater encoder's millimetres.
+  - **Shift check:** it is measured with that scale fitted out.
+  - **Self-check:** it compares against the board's measured true size.
+  - **Limit:** a disagreement of more than 0.5% fails ("measure the board's scale bar with calipers") instead of being absorbed.
+  - **Effect on the real 2026-10-26 sweep:** the error on unseen photos dropped from 0.066 to 0.033 mm, the worst point from 0.140 to 0.098 mm, and the encoder-shift check from 0.061 to 0.033 mm.
+  - **Recalibrate** to get the corrected scale.
+- **Validation now shows why it passed or failed, on the actual chessboard photo.** Every corner is coloured against the target (green / amber / red), with an arrow towards where the calibration says it should be. Corners outside the calibrated area are grey, and the area is outlined. The result also gives the error with scale removed and says whether the miss is mostly scale. Every validation photo and result is stored under its calibration version (`experiments/validations/<version>/`).
+- **Validate said "No calibration loaded yet" right after saving one.** Status now reports the saved calibration when the camera service is idle; print stills already used it.
+
 ## v0.19.1 — 2026-10-21
 
 ### Fixed

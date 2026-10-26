@@ -556,7 +556,8 @@ def register_autocal_routes(
                                                             res.dist_coeffs))
 
         sweep = [x["image_points"] for x in s["samples"] if x["usable"]]
-        sc = score_self_check(views, to_bed, res.valid_region_mm, sweep)
+        sc = score_self_check(views, to_bed, res.valid_region_mm, sweep,
+                              board_scale=1.0 / res.scale_ratio)
         s["self_check"] = sc
         events("autocal_selfcheck", {"passed": sc.passed, "rms_mm": sc.rms_mm,
                                      "n_used": sc.n_used})

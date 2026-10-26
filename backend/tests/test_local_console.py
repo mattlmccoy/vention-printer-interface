@@ -65,3 +65,21 @@ def test_no_build_at_all_points_at_the_site_console(tmp_path: Path) -> None:
 def test_the_api_is_unaffected(tmp_path: Path) -> None:
     with _client(tmp_path, _dist(tmp_path, {"version": "0.10.4"})) as c:
         assert c.get("/api/health").json()["version"] == __version__
+
+
+def test_vision_status_reports_the_saved_calibration_when_the_camera_service_is_idle(
+    tmp_path: Path,
+) -> None:
+    # 2026-10-26: Validate said "No calibration loaded yet" right after a calibration was saved:
+    # the camera service was idle, and status only read its in-memory copy. Print stills already
+    # load the saved file in that case, so status must report it too.
+    import numpy as np
+
+    from vention_printer_interface.vision.registration import Calibration, save_calibration
+
+    save_calibration(tmp_path / ".vision_calibration.json", Calibration(
+        H=np.eye(3), mm_per_px=0.5, bed_extent_mm=(0.0, 0.0, 10.0, 10.0), version="cal-saved",
+        reprojection_error=0.0, image_size=(5120, 3840)))
+    with _client(tmp_path, None) as c:
+        st = c.get("/api/vision/status").json()
+        assert st["calibration"] == "cal-saved" and st["calibration_image_size"] == [5120, 3840]

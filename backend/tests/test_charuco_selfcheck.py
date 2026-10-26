@@ -111,3 +111,16 @@ def test_self_check_flags_an_unmoved_board(solved) -> None:  # type: ignore[no-u
     assert sc.n_used >= SELF_MIN_POINTS
     assert not sc.moved
     assert any("did not move" in r for r in sc.reasons)
+
+
+def test_self_check_uses_the_measured_board_scale() -> None:
+    # The sweep measured the engraved board 0.2% small against the encoder; the self-check
+    # compares mapped distances with the board's TRUE distances, not its nominal ones.
+    views, truth = synth_views(spec=SPEC, with_markers=True, board_scale=0.998)
+    res = solve_autocal(views, capture_recoater_mm=truth.capture_mm, image_size=SIZE)
+    moved, _ = synth_views(spec=SPEC, with_markers=True, board_rotation_deg=25.0,
+                           shifts_mm=(10.0,), seed=11, board_scale=0.998)
+    sc = score_self_check([_points(v) for v in moved], _to_bed(res), res.valid_region_mm,
+                          board_scale=1.0 / res.scale_ratio)
+    assert sc.passed, sc.reasons
+    assert abs(sc.scale_bias - 1.0) < 0.0005

@@ -21,7 +21,6 @@ import numpy as np
 from vention_printer_interface.vision.registration import (
     apply_homography,
     build_bed_remap,
-    rigid_transform_2d,
     undistort_points,
 )
 
@@ -59,14 +58,22 @@ def fit_board_to_bed(
     image_points: np.ndarray, object_points: np.ndarray, result: Any
 ) -> Callable[[np.ndarray], np.ndarray]:
     """Board mm -> bed mm for the board as it lay in one photo: the photo's points through the
-    solved calibration, then a rigid (no scale) fit onto their board coordinates."""
+    solved calibration, then a similarity fit (rotation, translation and ONE scale) onto their
+    nominal board coordinates. The scale is the engraved board's true size in encoder mm (the
+    calibration is in encoder mm since 2026-10-26), so a board that is not its nominal size is
+    not mistaken for a mapping error."""
     bed = apply_homography(result.H, undistort_points(image_points, result.camera_matrix,
                                                       result.dist_coeffs))
     obj = np.asarray(object_points, float).reshape(-1, 3)[:, :2]
-    r_mat, t_vec = rigid_transform_2d(obj, bed)
+    mo, mb = obj.mean(axis=0), bed.mean(axis=0)
+    u, sv, vt = np.linalg.svd((bed - mb).T @ (obj - mo))
+    d = np.sign(np.linalg.det(u @ vt))
+    r_mat = u @ np.diag([1.0, d]) @ vt
+    scale = float((sv * np.array([1.0, d])).sum() / ((obj - mo) ** 2).sum())
+    t_vec = mb - scale * (r_mat @ mo)
 
     def to_bed(xy: np.ndarray) -> np.ndarray:
-        out: np.ndarray = np.asarray(xy, float).reshape(-1, 2) @ r_mat.T + t_vec
+        out: np.ndarray = scale * (np.asarray(xy, float).reshape(-1, 2) @ r_mat.T) + t_vec
         return out
 
     return to_bed

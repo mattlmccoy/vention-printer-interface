@@ -78,11 +78,31 @@ def test_no_mirror_in_the_bed_frame() -> None:
     assert float(np.linalg.det(truth.board_to_bed)) == pytest.approx(1.0)
 
 
-def test_encoder_scale_error_is_caught() -> None:
+def test_a_large_scale_disagreement_fails_instead_of_being_corrected() -> None:
+    # Board vs recoater 2% apart is not an engraving tolerance: refuse, never absorb it.
+    from vention_printer_interface.vision.autocal_solve import judge
+
     views, truth = synth_views(spec=SPEC, encoder_scale=1.02)
     res = solve_autocal(views, capture_recoater_mm=truth.capture_mm, image_size=SIZE)
     assert res.scale_ratio == pytest.approx(1 / 1.02, abs=0.002)
-    assert res.shift_rms_mm > 0.1
+    passed, reasons = judge(res)
+    assert not passed and any("scale" in r and "calipers" in r for r in reasons)
+
+
+def test_a_small_board_scale_error_is_corrected_to_the_recoater_encoder() -> None:
+    # 2026-10-26 real run: encoder said the board's mm were 0.20% off (1.0020) and the certified
+    # chessboard said 0.27%: the engraved ChArUco board is ~0.2% small. The calibration must give
+    # TRUE (encoder) mm, and the shift check must not count the board's scale as a misfit.
+    from vention_printer_interface.vision.autocal_solve import judge
+
+    views, truth = synth_views(spec=SPEC, with_markers=True, board_scale=0.998)
+    res = solve_autocal(views, capture_recoater_mm=truth.capture_mm, image_size=SIZE)
+    assert res.scale_ratio == pytest.approx(1 / 0.998, abs=0.0005)
+    cap = _capture_view(views, truth.capture_mm)
+    err = np.abs(_map(res, cap.image_points) - truth.bed_xy(cap.object_points)).max()
+    assert err < 0.02  # uncorrected: up to 0.2% x ~45 mm = 0.09 mm
+    assert res.shift_rms_mm < 0.03
+    assert judge(res)[0]
 
 
 def test_a_good_run_has_small_shift_and_reprojection_errors() -> None:

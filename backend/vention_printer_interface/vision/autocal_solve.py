@@ -47,6 +47,9 @@ MIN_VIEWS = 5
 # 5120x3840, so the first full-resolution run (1.40 px = 0.036 mm, every mm check passing) failed.
 MAX_REPROJ_MM = 0.05
 MAX_SHIFT_RMS_MM = 0.1
+# Board-vs-encoder scale disagreement that is corrected (an engraving tolerance); beyond this the
+# board or the encoder is wrong and the run fails rather than absorbing it.
+MAX_SCALE_DEV = 0.005
 CAPTURE_POSE_TOL_MM = 0.15  # the capture-pose view must be read back within this of the pose
 
 
@@ -212,7 +215,11 @@ def solve_autocal(
     if scale_ratio == 0:
         raise ValueError("the board did not move between photos; check the recoater moved")
     x_hat = -v_fit / scale_ratio  # bed +X in board coordinates (camera +mm -> board appears -X)
-    residual = d_all + delta_all[:, None] * x_hat[None, :]
+    # Scale: the recoater encoder is the length reference. scale_ratio = board-mm per encoder-mm;
+    # != 1 means the engraved board is not its nominal size (2026-10-26: 1.0020, and the certified
+    # chessboard agreed at 1.0027). The shift check measures consistency with that scale fitted
+    # out, then the mapping is rescaled to encoder mm (judge() refuses large disagreements).
+    residual = (d_all - delta_all[:, None] * v_fit[None, :]) / scale_ratio
     dist_mm = np.linalg.norm(residual, axis=1)
 
     c, s = float(x_hat[0]), float(x_hat[1])
@@ -221,7 +228,8 @@ def solve_autocal(
     to_bed_board = np.eye(3)
     to_bed_board[:2, :2] = rot
     to_bed_board[:2, 2] = -rot @ origin
-    h_bed = to_bed_board @ h_board
+    to_encoder_mm = np.diag([1.0 / scale_ratio, 1.0 / scale_ratio, 1.0])
+    h_bed = to_encoder_mm @ to_bed_board @ h_board
     mm_per_px, extent, region, px_mm = _bed_raster(h_bed, k, dist, usable, image_size,
                                                    max_bed_px)
     return AutocalResult(
@@ -244,6 +252,12 @@ def judge(result: AutocalResult) -> tuple[bool, list[str]]:
             f"lens fit error {result.reprojection_rms_mm:.2g} mm on the bed "
             f"({result.reprojection_rms_px:.2g} px at {result.px_mm:.4f} mm/px) is above the "
             f"{MAX_REPROJ_MM:g} mm limit"
+        )
+    if abs(result.scale_ratio - 1.0) > MAX_SCALE_DEV:
+        reasons.append(
+            f"the board and the recoater disagree on scale by "
+            f"{(result.scale_ratio - 1.0) * 100:+.2f}% (corrected only up to "
+            f"{MAX_SCALE_DEV * 100:g}%) — measure the board's scale bar with calipers"
         )
     if result.shift_rms_mm > MAX_SHIFT_RMS_MM:
         reasons.append(
