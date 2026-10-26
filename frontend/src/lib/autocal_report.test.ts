@@ -1,6 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { canSolvePartial, checkRows, compareCalibrations } from "./autocal_report.ts";
+import { canSolvePartial, checkRows, compareCalibrations, placementSummary } from "./autocal_report.ts";
 
 // The 23-photo run of 2026-10-21 (real numbers, from experiments/.autocal_last_sweep.json).
 const run = {
@@ -53,4 +53,10 @@ test("compare: same size, better encoder shift and lens fit reads 'better'", () 
   const c = compareCalibrations(run, { version: "cal-x", image_size: [5120, 3840], reprojection_rms_mm: 0.045, reprojection_rms_px: 1.75, shift_rms_mm: 0.08, scale_ratio: 1.003, area_mm: [90, 60], method: "auto-sweep" });
   assert.equal(c.tone, "ok");
   assert.match(c.verdict, /better/);
+});
+
+test("placements are summarised by how many photos each contributed", () => {
+  assert.equal(placementSummary([{ placement: 0 }, { placement: 0 }, { placement: 1 }]), "2 placements: 2 + 1 photos");
+  assert.equal(placementSummary([{ placement: 0 }, {}]), "1 placement: 2 photos");
+  assert.equal(placementSummary([]), "no photos");
 });

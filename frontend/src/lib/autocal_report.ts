@@ -89,3 +89,13 @@ export function compareCalibrations(r: RunResult, cur: SavedCalibration | null):
   if (score.every((s) => s <= 0) && score.some((s) => s < 0)) return { tone: "warn", verdict: `This run is worse than the saved calibration (${cur.version}) — keep the saved one unless the board or camera changed.`, rows };
   return { tone: "info", verdict: `Mixed against the saved calibration (${cur.version}) — compare the rows.`, rows };
 }
+
+/** "2 placements: 14 + 12 photos": how many photos each board placement contributed (a photo
+ *  without a placement is from the first). */
+export function placementSummary(views: Array<{ placement?: number }>): string {
+  if (!views.length) return "no photos";
+  const counts = new Map<number, number>();
+  for (const v of views) counts.set(v.placement ?? 0, (counts.get(v.placement ?? 0) ?? 0) + 1);
+  const keys = [...counts.keys()].sort((a, b) => a - b);
+  return `${keys.length} placement${keys.length === 1 ? "" : "s"}: ${keys.map((k) => counts.get(k)).join(" + ")} photos`;
+}

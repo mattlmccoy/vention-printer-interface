@@ -482,6 +482,8 @@ export const api = {
   },
   autocalSave: () => req<{ calibration_version: string }>("POST", "/api/vision/autocal/save"),
   autocalCancel: () => req<{ active: false }>("POST", "/api/vision/autocal/cancel"),
+  /** Start another board placement in the same run (the board is moved, then swept again). */
+  autocalNewPlacement: () => req<{ placement: number; session: AutocalSession }>("POST", "/api/vision/autocal/placement"),
 };
 
 export interface AutocalStartBody {
@@ -502,7 +504,8 @@ export interface AutocalSession {
   placement: "substrate" | "cylinder";
   board_thickness_mm: number;
   image_size: [number, number] | null;
-  samples: Array<{ recoater_mm: number; usable: boolean; corners: number }>;
+  samples: Array<{ recoater_mm: number; usable: boolean; corners: number; placement?: number }>;
+  placement_index?: number;
   coverage_cells: boolean[][];
 }
 export interface DetectionComparison {

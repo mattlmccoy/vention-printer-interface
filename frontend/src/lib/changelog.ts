@@ -11,6 +11,13 @@ export interface Release {
 
 export const CHANGELOG: Release[] = [
   {
+    version: "0.20.0",
+    date: "2026-10-26",
+    changes: [
+      "Calibrate with several board placements: after a sweep, \"add a board placement\", move the board to an uncovered part of the bed and sweep again. The lens is then measured across the frame instead of extrapolated.",
+    ],
+  },
+  {
     version: "0.19.3",
     date: "2026-10-26",
     changes: [

@@ -60,6 +60,8 @@ def synth_views(
     shifts_mm: tuple[float, ...] = tuple(float(s) for s in range(-40, 41, 5)),
     encoder_scale: float = 1.0,
     board_scale: float = 1.0,
+    board_offset_mm: tuple[float, float] = (0.0, 0.0),  # world XY: a second board placement
+    placement: int = 0,
     noise_px: float = 0.05,
     seed: int = 7,
     with_markers: bool = False,
@@ -87,7 +89,7 @@ def synth_views(
     b2w = rot @ flip  # board xy -> world xy (improper: board frame is image-handed)
 
     def to_world(p: np.ndarray) -> np.ndarray:
-        xy = board_scale * (b2w @ (p[:, :2] - centre).T).T
+        xy = board_scale * (b2w @ (p[:, :2] - centre).T).T + np.asarray(board_offset_mm)
         return np.column_stack([xy, np.zeros(len(p))])
 
     # Camera looking down (-Z); image x = world +X rotated by yaw about the optical axis.
@@ -111,6 +113,7 @@ def synth_views(
         views.append(AutocalView(
             recoater_mm=round(capture_mm + s * encoder_scale, 3),
             image_points=img[inside], object_points=obj[inside], ids=ids[inside],
+            placement=placement,
         ))
     # bed = (Xw - Xw0, -(Yw - Yw0)) = flip @ b2w @ (board - board0) -> a proper rotation of board xy
     board_to_bed = flip @ b2w

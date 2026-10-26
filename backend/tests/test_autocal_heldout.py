@@ -28,3 +28,12 @@ def test_heldout_error_ignores_the_boards_own_scale_error() -> None:
     views, truth = synth_views(spec=SPEC, with_markers=True, board_scale=0.998)
     rows = heldout_errors(views, capture_recoater_mm=truth.capture_mm, image_size=(1920, 1080))
     assert max(r["rms_mm"] for r in rows) < 0.03
+
+
+def test_heldout_scores_each_placement_against_its_own_board_pose() -> None:
+    a, truth = synth_views(spec=SPEC, with_markers=True)
+    b, _ = synth_views(spec=SPEC, with_markers=True, board_offset_mm=(0.0, 30.0),
+                       board_rotation_deg=4.0, placement=1, seed=3)
+    rows = heldout_errors(a + b, capture_recoater_mm=truth.capture_mm, image_size=(1920, 1080))
+    assert {r["placement"] for r in rows} == {0, 1}
+    assert max(r["rms_mm"] for r in rows) < 0.03

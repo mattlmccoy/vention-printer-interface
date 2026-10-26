@@ -1,6 +1,6 @@
 import type { CSSProperties } from "react";
 import { residualText, type ResidualGroup } from "../lib/autocal.ts";
-import { checkRows, compareCalibrations, type RunResult, type SavedCalibration } from "../lib/autocal_report.ts";
+import { checkRows, compareCalibrations, placementSummary, type RunResult, type SavedCalibration } from "../lib/autocal_report.ts";
 import { arrowGain, type Pt } from "../lib/overlay_geom.ts";
 
 /** One solved sweep as the operator saved it (GET /api/vision/autocal/last). */
@@ -9,7 +9,7 @@ export interface LastSweep {
   image_size: [number, number];
   capture_mm: number;
   result: RunResult & { reasons?: string[]; residuals?: Record<string, ResidualGroup>; current?: SavedCalibration | null };
-  views: Array<{ recoater_mm: number; points: number; chessboard: number; markers: number; image_points: [number, number][]; residuals_px?: [number, number][] | null }>;
+  views: Array<{ recoater_mm: number; points: number; chessboard: number; markers: number; image_points: [number, number][]; residuals_px?: [number, number][] | null; placement?: number }>;
 }
 
 const MAP_W = 320;
@@ -40,7 +40,7 @@ export function CalibrationRunReport({ last }: { last: LastSweep }) {
   return (
     <div className="grid-gap" style={{ marginTop: 12 }}>
       <div className={r.passed ? "okline" : "errline"} style={{ margin: 0 }}>
-        Run report ({when}, {r.n_views} usable photos at {w}×{h}): {r.passed ? "passed" : "did not pass"}.
+        Run report ({when}, {placementSummary(last.views)} at {w}×{h}): {r.passed ? "passed" : "did not pass"}.
         {r.reasons && r.reasons.length > 0 && <ul style={{ margin: "4px 0 0 18px" }}>{r.reasons.map((x) => <li key={x}>{x}</li>)}</ul>}
       </div>
 
@@ -123,9 +123,10 @@ export function CalibrationRunReport({ last }: { last: LastSweep }) {
         <summary>Each photo ({last.views.length})</summary>
         <div style={{ overflowX: "auto" }}>
           <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 13, marginTop: 6, fontVariantNumeric: "tabular-nums" }}>
-            <thead><tr><th style={th}>recoater (mm)</th><th style={th}>points</th><th style={th}>chessboard</th><th style={th}>markers</th></tr></thead>
+            <thead><tr><th style={th}>placement</th><th style={th}>recoater (mm)</th><th style={th}>points</th><th style={th}>chessboard</th><th style={th}>markers</th></tr></thead>
             <tbody>{last.views.map((v, i) => (
               <tr key={i} style={Math.abs(v.recoater_mm - last.capture_mm) < 0.2 ? { background: "var(--warn-bg)" } : undefined}>
+                <td style={td}>{(v.placement ?? 0) + 1}</td>
                 <td style={td}>{v.recoater_mm.toFixed(1)}{Math.abs(v.recoater_mm - last.capture_mm) < 0.2 ? " (capture pose)" : ""}</td>
                 <td style={td}>{v.points}</td><td style={td}>{v.chessboard}</td><td style={td}>{v.markers}</td>
               </tr>

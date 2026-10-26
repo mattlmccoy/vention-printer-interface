@@ -26,20 +26,31 @@ from vention_printer_interface.vision.registration import apply_homography, undi
 def heldout_errors(
     views: list[AutocalView], *, capture_recoater_mm: float, image_size: tuple[int, int]
 ) -> list[dict[str, Any]]:
-    """Per held-out photo: ``{"recoater_mm", "rms_mm", "max_mm", "n"}``."""
-    cap = min(views, key=lambda v: abs(v.recoater_mm - capture_recoater_mm))
+    """Per held-out photo: ``{"recoater_mm", "placement", "rms_mm", "max_mm", "n"}``.
+
+    Each placement is judged against its OWN board pose (its photo nearest the capture pose):
+    the board was moved between placements, so another placement's pose is not its truth. A
+    placement's reference photo is never held out."""
+    groups: dict[int, list[AutocalView]] = {}
+    for v in views:
+        groups.setdefault(int(v.placement), []).append(v)
+    refs = {p: min(vs, key=lambda v: abs(v.recoater_mm - capture_recoater_mm))
+            for p, vs in groups.items()}
     rows: list[dict[str, Any]] = []
     for v in views:
-        if v is cap or abs(v.recoater_mm - capture_recoater_mm) <= CAPTURE_POSE_TOL_MM:
+        p = int(v.placement)
+        ref = refs[p]
+        if v is ref or abs(v.recoater_mm - ref.recoater_mm) <= CAPTURE_POSE_TOL_MM:
             continue
         res = solve_autocal([u for u in views if u is not v],
                             capture_recoater_mm=capture_recoater_mm, image_size=image_size)
-        to_bed = fit_board_to_bed(cap.image_points, cap.object_points, res)
+        to_bed = fit_board_to_bed(ref.image_points, ref.object_points, res)
         mapped = apply_homography(res.H, undistort_points(
             np.asarray(v.image_points, float), res.camera_matrix, res.dist_coeffs))
         board_xy = np.asarray(v.object_points, float).reshape(-1, 3)[:, :2]
-        truth = to_bed(board_xy) - (v.recoater_mm - cap.recoater_mm) * np.array([1.0, 0.0])
+        truth = to_bed(board_xy) - (v.recoater_mm - ref.recoater_mm) * np.array([1.0, 0.0])
         e = np.linalg.norm(mapped - truth, axis=1)
-        rows.append({"recoater_mm": float(v.recoater_mm), "rms_mm": float(np.sqrt((e ** 2).mean())),
-                     "max_mm": float(e.max()), "n": int(len(e))})
+        rows.append({"recoater_mm": float(v.recoater_mm), "placement": p,
+                     "rms_mm": float(np.sqrt((e ** 2).mean())), "max_mm": float(e.max()),
+                     "n": int(len(e))})
     return rows

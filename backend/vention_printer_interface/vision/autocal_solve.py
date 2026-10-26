@@ -59,6 +59,9 @@ class AutocalView:
     image_points: np.ndarray  # Nx2 px
     object_points: np.ndarray  # Nx3 board mm (Z = 0)
     ids: np.ndarray  # Nx1 ChArUco corner ids
+    # Which board placement this photo belongs to (0 = the first; the board is moved between
+    # placements so the sweep covers more of the frame).
+    placement: int = 0
 
 
 @dataclass(frozen=True)
@@ -89,7 +92,7 @@ class AutocalResult:
 
 
 def _fit_distortion(
-    views: list[AutocalView], image_size: tuple[int, int]
+    views: list[AutocalView], image_size: tuple[int, int], *, free_principal_point: bool = False,
 ) -> tuple[np.ndarray, np.ndarray, float, dict[str, dict[str, float]], list[np.ndarray]]:
     import cv2
 
@@ -98,12 +101,16 @@ def _fit_distortion(
     # Principal point FIXED at the image centre too: on the synthetic sweep (true principal point
     # 12/-8 px off-centre, k1=-0.15, k2=0.05) the tangential terms absorb the offset; all-view
     # mapping error was 0.011 mm RMS / 0.033 mm worst fixed vs 0.013 / 0.046 mm free (2026-10-20).
+    # With SEVERAL board placements the data spans the frame and the optical centre becomes
+    # measurable: freeing it cut the far-region error 16.9 -> 13.2 um on a real-like synthetic
+    # (k3 stays fixed: freeing it made that worse). One placement keeps it fixed (2026-10-26 real
+    # single-band run: freeing it did not improve held-out accuracy).
     flags = (
         cv2.CALIB_USE_INTRINSIC_GUESS
         | cv2.CALIB_FIX_FOCAL_LENGTH
         | cv2.CALIB_FIX_ASPECT_RATIO
-        | cv2.CALIB_FIX_PRINCIPAL_POINT
         | cv2.CALIB_FIX_K3
+        | (0 if free_principal_point else cv2.CALIB_FIX_PRINCIPAL_POINT)
     )
     criteria = (cv2.TERM_CRITERIA_COUNT + cv2.TERM_CRITERIA_EPS, 200, 1e-10)
     obj = [np.asarray(v.object_points, np.float32).reshape(-1, 3) for v in views]
@@ -183,13 +190,25 @@ def solve_autocal(
         raise ValueError(
             f"need at least 2 usable photos (≥{MIN_CORNERS} corners each); got {len(usable)} views"
         )
-    cap = min(usable, key=lambda v: abs(v.recoater_mm - capture_recoater_mm))
+    # Placements: the board is moved between sweeps so more of the frame is calibrated. The FIRST
+    # placement defines the bed frame (its capture-pose photo); every placement gets its own
+    # reference photo for the encoder-shift check, because its board pose differs.
+    groups: dict[int, list[AutocalView]] = {}
+    for v in usable:
+        groups.setdefault(int(v.placement), []).append(v)
+    first = min(groups)
+    cap = min(groups[first], key=lambda v: abs(v.recoater_mm - capture_recoater_mm))
     if abs(cap.recoater_mm - capture_recoater_mm) > CAPTURE_POSE_TOL_MM:
         raise ValueError(
             f"no usable photo at the capture pose ({capture_recoater_mm:g} mm): the board must be "
             "visible there, because that photo defines the bed reference"
         )
-    k, dist, rms, residuals, vectors = _fit_distortion(usable, image_size)
+    for p, vs in groups.items():
+        if p != first and len({round(v.recoater_mm, 1) for v in vs}) < 2:
+            raise ValueError(f"placement {p + 1} needs at least 2 usable photos at different "
+                             "recoater positions; run its sweep again")
+    k, dist, rms, residuals, vectors = _fit_distortion(
+        usable, image_size, free_principal_point=len(groups) > 1)
 
     def undist(v: AutocalView) -> np.ndarray:
         return undistort_points(np.asarray(v.image_points, float).reshape(-1, 2), k, dist)
@@ -197,34 +216,51 @@ def solve_autocal(
     board_xy = {id(v): np.asarray(v.object_points, float).reshape(-1, 3)[:, :2] for v in usable}
     h_board = compute_homography(undist(cap), board_xy[id(cap)])
 
-    # Recoater direction: displacement d of each corner (mapped through the capture calibration vs
-    # its true board position) is Δ·v; least squares over every corner of every other view.
-    others = [v for v in usable if v is not cap]
-    deltas, disps = [], []
-    for v in others:
-        delta = v.recoater_mm - cap.recoater_mm
-        d = apply_homography(h_board, undist(v)) - board_xy[id(v)]
-        deltas.append(np.full(len(d), delta))
-        disps.append(d)
-    delta_all, d_all = np.concatenate(deltas), np.vstack(disps)
-    denom = float((delta_all ** 2).sum())
-    if denom <= 0:
-        raise ValueError("all photos were taken at the same recoater position; need a sweep")
-    v_fit = (delta_all[:, None] * d_all).sum(axis=0) / denom
-    scale_ratio = float(np.linalg.norm(v_fit))
-    if scale_ratio == 0:
+    # Recoater direction, per placement: displacement d of each corner (mapped through that
+    # placement's reference photo vs its true board position) is Δ·v; least squares over every
+    # corner of every other photo. Scale (|v|) is pooled over placements, weighted by Σ Δ².
+    v_fit = np.zeros(2)
+    scale_num = scale_den = 0.0
+    residual_parts: list[np.ndarray] = []
+    for p, vs in groups.items():
+        ref = cap if p == first else min(vs, key=lambda v: abs(v.recoater_mm - capture_recoater_mm))
+        hb = h_board if p == first else compute_homography(undist(ref), board_xy[id(ref)])
+        deltas, disps = [], []
+        for v in vs:
+            if v is ref:
+                continue
+            d = apply_homography(hb, undist(v)) - board_xy[id(v)]
+            deltas.append(np.full(len(d), v.recoater_mm - ref.recoater_mm))
+            disps.append(d)
+        if not deltas:
+            continue
+        delta_p, d_p = np.concatenate(deltas), np.vstack(disps)
+        denom = float((delta_p ** 2).sum())
+        if denom <= 0:
+            if p == first:
+                raise ValueError("all photos were taken at the same recoater position; need a "
+                                 "sweep")
+            continue
+        v_p = (delta_p[:, None] * d_p).sum(axis=0) / denom
+        if p == first:
+            v_fit = v_p
+        scale_num += float(np.linalg.norm(v_p)) * denom
+        scale_den += denom
+        residual_parts.append(d_p - delta_p[:, None] * v_p[None, :])
+    if scale_den <= 0 or not np.linalg.norm(v_fit) > 0:
         raise ValueError("the board did not move between photos; check the recoater moved")
-    x_hat = -v_fit / scale_ratio  # bed +X in board coordinates (camera +mm -> board appears -X)
+    scale_ratio = scale_num / scale_den
+    x_hat = -v_fit / float(np.linalg.norm(v_fit))  # bed +X in board coordinates (camera +mm ->
+    # board appears -X)
     # Scale: the recoater encoder is the length reference. scale_ratio = board-mm per encoder-mm;
     # != 1 means the engraved board is not its nominal size (2026-10-26: 1.0020, and the certified
     # chessboard agreed at 1.0027). The shift check measures consistency with that scale fitted
     # out, then the mapping is rescaled to encoder mm (judge() refuses large disagreements).
-    residual = (d_all - delta_all[:, None] * v_fit[None, :]) / scale_ratio
-    dist_mm = np.linalg.norm(residual, axis=1)
+    dist_mm = np.linalg.norm(np.vstack(residual_parts), axis=1) / scale_ratio
 
     c, s = float(x_hat[0]), float(x_hat[1])
     rot = np.array([[c, s], [-s, c]])  # proper rotation taking x_hat to (1, 0)
-    origin = _origin_board_xy(usable)
+    origin = _origin_board_xy(groups[first])  # the first placement's corner 0
     to_bed_board = np.eye(3)
     to_bed_board[:2, :2] = rot
     to_bed_board[:2, 2] = -rot @ origin
