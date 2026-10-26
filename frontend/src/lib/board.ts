@@ -7,6 +7,7 @@
 export const BOARD_PRESETS = [
   { value: "small_cylinder", label: "small — 4×4 (round Ø98.5 for the cylinder, or square)" },
   { value: "fine_20mp", label: "fine — 12×12, 5 mm (for 20 MP stills; round Ø98.5 or square)" },
+  { value: "frame_zoom", label: "frame — 10×7, 12 mm (fills the zoomed view; square, on the substrate)" },
   { value: "medium_5x7", label: "medium — 5×7" },
   { value: "large_6x9", label: "large — 6×9" },
 ] as const;
@@ -115,6 +116,7 @@ export interface BoardGeometry { squaresX: number; squaresY: number; squareMm: n
 export const PRESET_GEOMETRY: Record<BoardPreset, BoardGeometry> = {
   small_cylinder: { squaresX: 4, squaresY: 4, squareMm: 16, markerMm: 12 },
   fine_20mp: { squaresX: 12, squaresY: 12, squareMm: 5, markerMm: 3.75 },
+  frame_zoom: { squaresX: 10, squaresY: 7, squareMm: 12, markerMm: 9 },
   medium_5x7: { squaresX: 5, squaresY: 7, squareMm: 25, markerMm: 18 },
   large_6x9: { squaresX: 6, squaresY: 9, squareMm: 30, markerMm: 22 },
 };

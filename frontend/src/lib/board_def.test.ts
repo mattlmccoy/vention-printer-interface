@@ -72,7 +72,8 @@ test("sessionSpecFromDef carries the dictionary to the calibrate session", () =>
 
 test("the Calibrate page offers every shipped preset as a ready board", () => {
   const c = calibBoardChoices(null);
-  assert.deepEqual(c.map((x) => x.key), ["small_cylinder", "fine_20mp", "medium_5x7", "large_6x9"]);
+  assert.deepEqual(c.map((x) => x.key), ["small_cylinder", "fine_20mp", "frame_zoom", "medium_5x7", "large_6x9"]);
+  assert.deepEqual(c[2].def, { dict: "DICT_4X4_50", squaresX: 10, squaresY: 7, squareMm: 12, markerMm: 9 });
   assert.deepEqual(c[1].def, { dict: "DICT_4X4_100", squaresX: 12, squaresY: 12, squareMm: 5, markerMm: 3.75 });
   assert.deepEqual(c[0].def, { dict: "DICT_4X4_50", squaresX: 4, squaresY: 4, squareMm: 16, markerMm: 12 });
   assert.match(c[0].label, /4×4.*16 mm/);

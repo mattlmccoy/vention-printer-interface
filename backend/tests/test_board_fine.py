@@ -44,3 +44,22 @@ def test_fine_board_finds_every_chessboard_corner_in_view() -> None:
     assert pts is not None
     assert int((pts.kinds == "corner").sum()) == 9 * 11  # vs 9 on the whole 4x4 board
     assert np.isfinite(pts.image_points).all()
+
+
+# ---- frame-sized board (2026-10-26: at the zoomed setting the view is ~126 x 95 mm; the 64 mm
+# board covered ~47% of the width, so one placement left the edges uncalibrated) -------------
+def test_frame_preset_fills_the_zoomed_view() -> None:
+    s = resolve_preset("frame_zoom")
+    assert (s.squares_x, s.squares_y, s.square_length_mm, s.marker_length_mm) == (10, 7, 12.0, 9.0)
+    assert s.aruco_dict == "DICT_4X4_50"  # 35 markers
+    assert "frame_zoom" not in PRESET_CUT_DIAMETER_MM  # 120 x 84 mm: a square cut, on the substrate
+    assert 10 * 12.0 <= 126 and 7 * 12.0 <= 95
+
+
+def test_frame_board_is_fully_detected() -> None:
+    s = resolve_preset("frame_zoom")
+    board = aruco.CharucoBoard((10, 7), 12.0, 9.0, aruco.getPredefinedDictionary(aruco.DICT_4X4_50))
+    img = board.generateImage((1240, 880), marginSize=20)  # ~10 px/mm
+    pts = detect_board_points(cv2.cvtColor(img, cv2.COLOR_GRAY2BGR), s)
+    assert pts is not None
+    assert int((pts.kinds == "corner").sum()) == 9 * 6 and len(pts.markers_px) == 35

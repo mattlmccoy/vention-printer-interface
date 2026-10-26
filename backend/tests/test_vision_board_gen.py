@@ -258,7 +258,8 @@ def test_small_cylinder_preset_fits_101p6_circle() -> None:
 
 
 def test_presets_exist_and_are_charuco() -> None:
-    assert set(BOARD_PRESETS) == {"small_cylinder", "fine_20mp", "medium_5x7", "large_6x9"}
+    assert set(BOARD_PRESETS) == {"small_cylinder", "fine_20mp", "frame_zoom", "medium_5x7",
+                                  "large_6x9"}
     assert resolve_preset("medium_5x7").squares_x == 5
     assert resolve_preset("medium_5x7").squares_y == 7
     assert resolve_preset("large_6x9").squares_x == 6
