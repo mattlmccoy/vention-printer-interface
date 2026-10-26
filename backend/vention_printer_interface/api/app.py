@@ -15,6 +15,7 @@ import logging
 import math
 import os
 import platform
+import re
 import shutil
 import socket
 import subprocess
@@ -210,6 +211,10 @@ from vention_printer_interface.vision.registration import (
 )
 from vention_printer_interface.vision.store import read_manifest, write_overview_frame
 from vention_printer_interface.vision.uvc_backend import MacUvcBackend, UvcBackend
+from vention_printer_interface.vision.validation_view import (
+    annotate_validation,
+    similarity_residuals,
+)
 
 log = logging.getLogger(__name__)
 
@@ -233,7 +238,15 @@ RUN_FILES = frozenset(
 )
 VISION_FILE_MEDIA_TYPES = {".webp": "image/webp", ".png": "image/png", ".json": "application/json"}
 _DEFAULT_FRONTEND_DIST = Path(__file__).resolve().parents[3] / "frontend" / "dist"
-SITE_CONSOLE_PATH = "/vention-printer-interface/"  # the GitHub Pages console under site_origin
+SITE_CONSOLE_PATH = "/vention-printer-interface/"
+_SAFE_NAME = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$")
+
+
+def _safe_name(name: str) -> str:
+    """A path segment we created ourselves (calibration version / stamp): never a traversal."""
+    if not _SAFE_NAME.match(name) or ".." in name:
+        raise HTTPException(400, f"unsafe name {name!r}")
+    return name  # the GitHub Pages console under site_origin
 
 
 def stale_console_reason(dist: Path) -> str | None:
@@ -2380,7 +2393,10 @@ def create_app(
             active_roles.append(camera_config.overview.role)
         if vision is not None:
             active_roles.append(camera_config.science.role)
-        calib: Calibration | None = vision.calibration if vision is not None else None
+        # The camera service is often idle between prints; print stills then load the SAVED
+        # calibration (science upload route), so report that one rather than "none".
+        calib: Calibration | None = (vision.calibration if vision is not None
+                                     else load_calibration(vision_calibration_path))
         unresolved: list[str] = list(getattr(app.state, "vision_unresolved_roles", []))
         return {
             "cameras": active_roles,
@@ -3124,7 +3140,9 @@ def create_app(
             frame = vision.grab_once()  # on-demand: open -> grab -> close, never held open
         except Exception as exc:  # noqa: BLE001 - a grab failure must not 500 the request
             raise HTTPException(400, f"frame grab failed: {exc}") from exc
-        return _score_checkerboard_mm(frame.image, spec, body.square_size_mm, calib)
+        result = _score_checkerboard_mm(frame.image, spec, body.square_size_mm, calib)
+        result.pop("_viz", None)
+        return result
 
     def _score_checkerboard_mm(
         image: np.ndarray, spec: BoardSpec, certified_mm: float, calib: Calibration,
@@ -3147,6 +3165,7 @@ def create_app(
         if found is None:
             raise HTTPException(400, "checkerboard not detected in frame")
         img_pts, grid = found
+        raw_px = np.asarray(img_pts, float).reshape(-1, 2).copy()
         if calib.camera_matrix is not None:
             dist = calib.dist_coeffs if calib.dist_coeffs is not None else np.zeros(5)
             img_pts = undistort_points(img_pts, calib.camera_matrix, dist)
@@ -3161,6 +3180,7 @@ def create_app(
         region = calib.provenance.get("valid_region_mm") if calib.provenance else None
         area_known = bool(region)
         n_outside = 0
+        keep = np.ones(len(measured_mm), bool)
         if area_known:
             poly = np.asarray(region, np.float32).reshape(-1, 1, 2)
             import cv2
@@ -3180,7 +3200,15 @@ def create_app(
         r_mat, t_vec = rigid_transform_2d(measured_mm, known_mm)
         aligned_mm = measured_mm @ r_mat.T + t_vec
         scored = validate_dimensions(known_mm, aligned_mm)
+        free = np.linalg.norm(similarity_residuals(measured_mm, known_mm), axis=1)
+        errors = np.linalg.norm(aligned_mm - known_mm, axis=1)
         return {
+            "scale_free_rms_mm": float(np.sqrt((free ** 2).mean())),
+            "scale_free_max_mm": float(free.max()),
+            # for the annotated photo (popped before the response)
+            "_viz": {"raw_px": raw_px, "scored": keep,
+                     "predicted_mm": (known_mm - t_vec) @ r_mat, "error_mm": errors,
+                     "region": region},
             "rms_mm": scored["rms_mm"],
             "max_mm": scored["max_mm"],
             "per_point": scored["points"],
@@ -3194,6 +3222,48 @@ def create_app(
             "passed": bool(scored["max_mm"] <= target_mm),
             "image_size": [int(image.shape[1]), int(image.shape[0])],
         }
+
+    def _store_validation(
+        image: np.ndarray, calib: Calibration, result: dict[str, Any], viz: dict[str, Any],
+        target_mm: float, certified_mm: float,
+    ) -> str:
+        """Keep every validation (annotated photo + result) under its calibration version and
+        return the annotated photo's URL. ``experiments/validations/<version>/<UTC stamp>/``."""
+        import cv2
+
+        stamp = datetime.now(UTC).strftime("%Y%m%dT%H%M%S%fZ")
+        folder = root / "validations" / _safe_name(calib.version) / stamp
+        summary = [
+            f"{'PASS' if result['passed'] else 'FAIL'}: worst {result['max_mm']:.3f} mm, "
+            f"RMS {result['rms_mm']:.3f} mm (target {target_mm:g} mm)",
+            f"scale bias {result['scale_bias']:.4f}; with scale removed: RMS "
+            f"{result['scale_free_rms_mm']:.3f} mm, worst {result['scale_free_max_mm']:.3f} mm",
+            "green <= target, amber <= 2x, red > 2x, grey = outside calibrated area",
+        ]
+        img = annotate_validation(image, raw_px=viz["raw_px"], scored=viz["scored"],
+                                  predicted_mm=viz["predicted_mm"], error_mm=viz["error_mm"],
+                                  target_mm=target_mm, calib=calib, region=viz["region"],
+                                  summary=summary)
+        try:
+            folder.mkdir(parents=True, exist_ok=True)
+            cv2.imwrite(str(folder / "annotated.jpg"), img, [cv2.IMWRITE_JPEG_QUALITY, 88])
+            (folder / "result.json").write_text(json.dumps({
+                "calibration_version": calib.version, "validated_at": stamp,
+                "certified_mm": certified_mm,
+                **{k: v for k, v in result.items() if k != "per_point"},
+            }, default=float), encoding="utf-8")
+        except OSError as exc:
+            log.warning("could not store the validation: %s", exc)
+        return f"/api/vision/validations/{_safe_name(calib.version)}/{stamp}/annotated.jpg"
+
+    @app.get("/api/vision/validations/{version}/{stamp}/annotated.jpg")
+    def vision_validation_image(version: str, stamp: str) -> FileResponse:
+        if not (_SAFE_NAME.match(version) and _SAFE_NAME.match(stamp)):
+            raise HTTPException(404, "not found")
+        f = root / "validations" / version / stamp / "annotated.jpg"
+        if not f.is_file():
+            raise HTTPException(404, "not found")
+        return FileResponse(f, media_type="image/jpeg", headers={"Cache-Control": "no-store"})
 
     @app.post("/api/vision/validate/scale-upload")
     async def vision_validate_scale_upload(
@@ -3229,6 +3299,9 @@ def create_app(
         spec = BoardSpec(kind="checkerboard", cols=cols, rows=rows,
                          square_size_mm=square_size_mm if square_size_mm > 0 else certified_mm)
         result = _score_checkerboard_mm(arr, spec, certified_mm, calib, target_mm)
+        viz = result.pop("_viz")
+        result["annotated_url"] = _store_validation(arr, calib, result, viz, target_mm,
+                                                    certified_mm)
         # Persist trust keyed to this calibration version, so the analysis can tell validated apart.
         save_validation(
             root / ".vision_validation.json",

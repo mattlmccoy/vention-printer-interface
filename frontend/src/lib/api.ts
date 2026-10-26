@@ -182,7 +182,7 @@ export interface VisionBoardSpecBody {
 // GET/POST /api/vision/calibrate/session — see backend app.py's `_calib_session_state`.
 export interface CalibCoverage { cells_filled: number; tilt_bins_filled: number; enough: boolean; gaps: string[]; total_views: number }
 export interface VisionCalibSession { n_views: number; image_size?: [number, number] | null; spec: Record<string, unknown> | null; ready: boolean; coverage?: CalibCoverage }
-export interface VisionValidateScaleResult { rms_mm: number; max_mm: number; scale_bias: number; n_points: number; target_mm: number; passed: boolean; per_point?: Array<{ error_mm: number }>; image_size?: [number, number]; n_outside?: number; area_known?: boolean; area_note?: string }
+export interface VisionValidateScaleResult { rms_mm: number; max_mm: number; scale_bias: number; n_points: number; target_mm: number; passed: boolean; per_point?: Array<{ error_mm: number }>; image_size?: [number, number]; n_outside?: number; area_known?: boolean; area_note?: string; scale_free_rms_mm?: number; scale_free_max_mm?: number; annotated_url?: string }
 // Camera-center sweep (browser-driven): the client steps the recoater + captures a science frame
 // per pose; the server scores each frame's bore offset and picks the centering recoater pose.
 export interface CenterSweepSample { recoater_mm: number; offset_px: number | null }

@@ -10,6 +10,7 @@ squares (ground truth by construction).
 
 from __future__ import annotations
 
+import json
 from pathlib import Path
 
 import cv2
@@ -136,3 +137,44 @@ def test_a_mirrored_grid_numbering_still_scores(tmp_path: Path) -> None:
     with _client(tmp_path) as c:
         out = c.post("/api/vision/validate/scale-upload", params=Q, content=_png(_crop())).json()
         assert out["rms_mm"] < 0.02, out
+
+
+# ---- why a validation failed, on the photo itself (2026-10-26: FAIL 0.129 mm, no visual) ---
+def _save_scaled_calib(root: Path, scale: float) -> None:
+    hs = np.diag([scale, scale, 1.0]) @ H  # a calibration whose mm are `scale` x too large
+    save_calibration(root / ".vision_calibration.json", Calibration(
+        H=hs, mm_per_px=0.5, bed_extent_mm=(500.0, 300.0, 700.0, 450.0), version="cal-scaled",
+        reprojection_error=0.0,
+        camera_matrix=np.array([[1000.0, 0, FRAME[0] / 2], [0, 1000.0, FRAME[1] / 2], [0, 0, 1]]),
+        dist_coeffs=np.zeros(5), distortion_model="opencv-5", image_size=FRAME, provenance={}))
+
+
+def test_validation_separates_scale_from_the_rest(tmp_path: Path) -> None:
+    _save_scaled_calib(tmp_path, 1.003)
+    with _client(tmp_path) as c:
+        out = c.post("/api/vision/validate/scale-upload", params=Q, content=_png(_crop())).json()
+        assert abs(out["scale_bias"] - 1.003) < 0.0005
+        assert out["scale_free_rms_mm"] < 0.01 < out["rms_mm"]
+        assert out["scale_free_max_mm"] < out["max_mm"]
+
+
+def test_validation_returns_an_annotated_photo(tmp_path: Path) -> None:
+    _save_calib(tmp_path, WHOLE)
+    with _client(tmp_path) as c:
+        out = c.post("/api/vision/validate/scale-upload", params=Q, content=_png(_crop())).json()
+        r = c.get(out["annotated_url"])
+        assert r.status_code == 200 and r.headers["content-type"] == "image/jpeg"
+        img = cv2.imdecode(np.frombuffer(r.content, np.uint8), cv2.IMREAD_COLOR)
+        assert (img.shape[1], img.shape[0]) == FRAME  # narrow photos are not resized
+
+
+def test_each_validation_is_stored_under_its_calibration(tmp_path: Path) -> None:
+    _save_calib(tmp_path, WHOLE)
+    with _client(tmp_path) as c:
+        out = c.post("/api/vision/validate/scale-upload", params=Q, content=_png(_crop())).json()
+        stored = list((tmp_path / "validations" / "cal-partial").glob("*/result.json"))
+        assert len(stored) == 1
+        saved = json.loads(stored[0].read_text())
+        assert saved["max_mm"] == out["max_mm"] and saved["calibration_version"] == "cal-partial"
+        assert (stored[0].parent / "annotated.jpg").is_file()
+        assert c.get("/api/vision/validations/..%2F..%2Fetc/x/annotated.jpg").status_code == 404

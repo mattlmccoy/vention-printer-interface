@@ -11,6 +11,15 @@ export interface Release {
 
 export const CHANGELOG: Release[] = [
   {
+    version: "0.19.3",
+    date: "2026-10-26",
+    changes: [
+      "Calibration is corrected to the recoater encoder's millimetres: the engraved ChArUco board is ~0.2% small, which made certified validation fail. Recalibrate to get it.",
+      "Validate shows the chessboard photo with every corner's error (colour + arrow), how much of the error is scale, and keeps every validation.",
+      "Validate no longer says \"No calibration loaded yet\" when one is saved.",
+    ],
+  },
+  {
     version: "0.19.1",
     date: "2026-10-21",
     changes: [

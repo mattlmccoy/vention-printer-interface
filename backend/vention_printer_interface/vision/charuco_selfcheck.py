@@ -70,6 +70,7 @@ def score_self_check(
     to_bed: Callable[[np.ndarray], np.ndarray],
     region_mm: Sequence[tuple[float, float]] | None,
     sweep_poses_px: Sequence[np.ndarray] = (),
+    board_scale: float = 1.0,
 ) -> SelfCheck:
     """Score ``views`` through ``to_bed`` (image px -> bed mm: undistort + H).
 
@@ -98,7 +99,9 @@ def score_self_check(
             continue
         i, j = np.triu_indices(len(bed), k=1)
         mapped = np.linalg.norm(bed[i] - bed[j], axis=1)
-        true = np.linalg.norm(obj[i] - obj[j], axis=1)
+        # the board's TRUE distances: nominal x its measured scale (the sweep measured it
+        # against the recoater encoder; the calibration is in encoder mm)
+        true = board_scale * np.linalg.norm(obj[i] - obj[j], axis=1)
         errs.append(mapped - true)
         sum_mapped += float(mapped.sum())
         sum_true += float(true.sum())

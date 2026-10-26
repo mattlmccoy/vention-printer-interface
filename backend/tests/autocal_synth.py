@@ -28,10 +28,12 @@ class GroundTruth:
     capture_mm: float
     board_to_bed: np.ndarray  # 2x2 proper rotation: bed = R @ (board_xy - board_xy[id0])
     origin_board_xy: np.ndarray
+    board_scale: float = 1.0  # true board size / nominal (an engraving scale error)
 
     def bed_xy(self, object_points: np.ndarray) -> np.ndarray:
+        """TRUE bed mm of nominal board points (the engraved board is ``board_scale`` x nominal)."""
         xy = np.asarray(object_points, float).reshape(-1, 3)[:, :2]
-        out: np.ndarray = (self.board_to_bed @ (xy - self.origin_board_xy).T).T
+        out: np.ndarray = self.board_scale * (self.board_to_bed @ (xy - self.origin_board_xy).T).T
         return out
 
 
@@ -57,6 +59,7 @@ def synth_views(
     capture_mm: float = 463.3,
     shifts_mm: tuple[float, ...] = tuple(float(s) for s in range(-40, 41, 5)),
     encoder_scale: float = 1.0,
+    board_scale: float = 1.0,
     noise_px: float = 0.05,
     seed: int = 7,
     with_markers: bool = False,
@@ -84,7 +87,7 @@ def synth_views(
     b2w = rot @ flip  # board xy -> world xy (improper: board frame is image-handed)
 
     def to_world(p: np.ndarray) -> np.ndarray:
-        xy = (b2w @ (p[:, :2] - centre).T).T
+        xy = board_scale * (b2w @ (p[:, :2] - centre).T).T
         return np.column_stack([xy, np.zeros(len(p))])
 
     # Camera looking down (-Z); image x = world +X rotated by yaw about the optical axis.
@@ -111,4 +114,4 @@ def synth_views(
         ))
     # bed = (Xw - Xw0, -(Yw - Yw0)) = flip @ b2w @ (board - board0) -> a proper rotation of board xy
     board_to_bed = flip @ b2w
-    return views, GroundTruth(capture_mm, board_to_bed, obj[0, :2].copy())
+    return views, GroundTruth(capture_mm, board_to_bed, obj[0, :2].copy(), board_scale)

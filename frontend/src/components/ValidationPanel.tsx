@@ -1,7 +1,7 @@
 import { useState } from "react";
-import { api, type VisionValidateScaleResult } from "../lib/api.ts";
+import { api, operatorBase, type VisionValidateScaleResult } from "../lib/api.ts";
 import { captureScienceStillOnce } from "../lib/science_still.ts";
-import { validationCoverageText } from "../lib/validation_text.ts";
+import { validationCoverageText, validationScaleText } from "../lib/validation_text.ts";
 import { ToleranceBand } from "./ToleranceBand.tsx";
 import { PlotExportButtons } from "./PlotExportButtons.tsx";
 import { CalibrationSizeNote } from "./CalibrationSizeNote.tsx";
@@ -66,6 +66,13 @@ export function ValidationPanel({ call, printing }: { call: Call; printing: bool
             hint={`rms ${result.rms_mm.toFixed(3)} mm · scale bias ${result.scale_bias.toFixed(4)}${result.image_size ? ` · ${result.image_size[0]}×${result.image_size[1]} photo` : ""}`}
           />
           <div className={result.area_known === true ? "hint" : "warnline"} style={{ marginTop: 4 }}>{validationCoverageText(result)}</div>
+          {validationScaleText(result) && <div className="hint" style={{ marginTop: 4 }}>{validationScaleText(result)}</div>}
+          {result.annotated_url && (
+            <figure style={{ margin: "10px 0 0" }}>
+              <img src={`${operatorBase()}${result.annotated_url}`} alt="validation photo with every corner's error" style={{ width: "100%", display: "block", border: "1px solid var(--line)" }} />
+              <figcaption className="hint" style={{ margin: "4px 0 0" }}>Each chessboard corner on the actual photo: green within the target, amber within 2×, red beyond; the arrow points to where the calibration says that corner should be (enlarged). Grey = outside the calibrated area (green outline), not scored. Arrows all pointing outward or inward from the centre mean a scale error; a pattern only at the edges means the lens fit.</figcaption>
+            </figure>
+          )}
           {result.per_point && result.per_point.length > 0 && (
             <PlotExportButtons
               fetchBlob={(fmt) => api.plotValidation(
