@@ -99,3 +99,37 @@ export function placementSummary(views: Array<{ placement?: number }>): string {
   const keys = [...counts.keys()].sort((a, b) => a - b);
   return `${keys.length} placement${keys.length === 1 ? "" : "s"}: ${keys.map((k) => counts.get(k)).join(" + ")} photos`;
 }
+
+/** One row of the operator's per-run point-method table (api/autocal_routes.py solve output). */
+export interface PointMethodRow {
+  method: string; label: string; n_photos: number; n_points: number; chosen: boolean; passed: boolean;
+  lens_mm?: number | null; n_heldout?: number; heldout_mean_mm?: number | null; heldout_worst_mm?: number | null;
+  error?: string;
+}
+
+/** The three point methods tried on this run and the one it kept (lowest error on held-out photos:
+ *  fit on every photo but one, predict that one; every method is scored on the same points).
+ *  null for a run from before 0.21.0. */
+export function pointMethodSummary(rows: PointMethodRow[] | undefined): {
+  verdict: string; rows: Array<{ label: string; points: string; heldout: string; worst: string; kept: boolean; note: string }>;
+} | null {
+  if (!rows || !rows.length) return null;
+  const mm = (v: number | null | undefined) => (v == null ? "—" : `${v.toFixed(3)} mm`);
+  const kept = rows.find((r) => r.chosen);
+  const verdict = !kept
+    ? "No point method was kept."
+    : kept.heldout_mean_mm == null
+      ? `Kept: ${kept.label} (no held-out photos to compare the methods on).`
+      : `Kept: ${kept.label} — lowest average error on held-out photos (${mm(kept.heldout_mean_mm)}).`;
+  return {
+    verdict,
+    rows: rows.map((r) => ({
+      label: r.label,
+      points: `${r.n_points} points, ${r.n_photos} photos`,
+      heldout: r.error ? "—" : mm(r.heldout_mean_mm),
+      worst: r.error ? "—" : mm(r.heldout_worst_mm),
+      kept: r.chosen,
+      note: r.error ?? (r.passed ? "" : "does not pass the run's limits"),
+    })),
+  };
+}

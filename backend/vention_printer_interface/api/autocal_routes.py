@@ -32,6 +32,7 @@ import numpy as np
 from fastapi import FastAPI, HTTPException, Query, Request, Response
 from pydantic import BaseModel
 
+from vention_printer_interface.vision.autocal_methods import solve_best
 from vention_printer_interface.vision.autocal_plan import plan_sweep
 from vention_printer_interface.vision.autocal_solve import (
     CAPTURE_POSE_TOL_MM,
@@ -114,6 +115,8 @@ def _finite(d: dict[str, Any]) -> dict[str, Any]:
             return None
         if isinstance(v, dict):
             return {k: clean(x) for k, x in v.items()}
+        if isinstance(v, list):
+            return [clean(x) for x in v]
         return v
     return {k: clean(v) for k, v in d.items()}
 
@@ -292,7 +295,7 @@ def register_autocal_routes(
             "board_thickness_mm": float(body.board_thickness_mm), "samples": [],
             "image_size": None, "result": None, "verdict": None, "self_check": None,
             "capture_image": None, "capture_dmm": None, "capture_points": None,
-            "placement_index": 0,
+            "placement_index": 0, "fit_views": None, "point_method": None, "point_methods": None,
         }
         events("autocal_start", {"poses": plan.poses, "window": list(window)})
         return summary(state["session"])
@@ -363,12 +366,16 @@ def register_autocal_routes(
         if s["image_size"] is None:
             raise HTTPException(400, "no photos yet")
         try:
-            res = solve_autocal(views, capture_recoater_mm=s["plan"].capture_mm,
-                                image_size=s["image_size"])
+            # Every point method, scored on held-out photos; the run keeps the best.
+            best = solve_best(views, capture_recoater_mm=s["plan"].capture_mm,
+                              image_size=s["image_size"])
         except ValueError as exc:
             raise HTTPException(400, str(exc)) from exc
+        res = best.result
         passed, reasons = judge(res)
         s["result"], s["verdict"], s["self_check"] = res, (passed, reasons), None
+        s["fit_views"], s["point_method"] = best.views, best.method
+        s["point_methods"] = best.methods
         out = _finite({
             "passed": passed, "reasons": reasons,
             "reprojection_rms_px": res.reprojection_rms_px, "shift_rms_mm": res.shift_rms_mm,
@@ -387,6 +394,7 @@ def register_autocal_routes(
                       for x in s["samples"] if x["usable"]],
             "placements": len({x.get("placement", 0) for x in s["samples"] if x["usable"]}),
             "current": _calibration_in_use(calibration_path),
+            "point_method": best.method, "point_methods": best.methods,
         })
         # Keep the sweep's points on disk so a failed run can be diagnosed (and re-solved) without
         # repeating the motion; one file, overwritten by the next solve.
@@ -394,14 +402,15 @@ def register_autocal_routes(
             _sweep_path(root).write_text(json.dumps({
                 "saved_at": datetime.now(UTC).isoformat(), "image_size": list(s["image_size"]),
                 "capture_mm": s["plan"].capture_mm, "board": dataclasses.asdict(s["spec"]),
-                "views": [{"recoater_mm": x["recoater_mm"],
-                           "image_points": np.asarray(x["image_points"]).tolist(),
-                           "object_points": np.asarray(x["object_points"]).tolist(),
-                           "ids": np.asarray(x["ids"]).ravel().tolist(),
-                           "placement": x.get("placement", 0),
+                # The points the kept method was fitted on, with their residuals.
+                "point_method": best.method,
+                "views": [{"recoater_mm": v.recoater_mm,
+                           "image_points": np.asarray(v.image_points).tolist(),
+                           "object_points": np.asarray(v.object_points).tolist(),
+                           "ids": np.asarray(v.ids).ravel().tolist(),
+                           "placement": v.placement,
                            "residuals_px": np.round(np.asarray(r), 4).tolist()}
-                          for x, r in zip([x for x in s["samples"] if x["usable"]],
-                                          res.point_residuals, strict=True)],
+                          for v, r in zip(best.views, res.point_residuals, strict=True)],
                 "result": out,
             }), encoding="utf-8")
         except OSError:
@@ -457,10 +466,10 @@ def register_autocal_routes(
         import cv2
 
         if view == "residuals":
-            usable = [x for x in s["samples"] if x["usable"]]
-            near = min(range(len(usable)),
-                       key=lambda i: abs(usable[i]["recoater_mm"] - s["plan"].capture_mm))
-            img = draw_residual_arrows(s["capture_image"], usable[near]["image_points"],
+            fit = s["fit_views"]  # aligned with res.point_residuals (the kept point method)
+            near = min(range(len(fit)),
+                       key=lambda i: abs(fit[i].recoater_mm - s["plan"].capture_mm))
+            img = draw_residual_arrows(s["capture_image"], fit[near].image_points,
                                        res.point_residuals[near])
             ok, buf = cv2.imencode(".png", img)
             if not ok:
@@ -612,6 +621,8 @@ def register_autocal_routes(
             "reprojection_rms_mm": res.reprojection_rms_mm, "px_mm": res.px_mm,
             "valid_region_mm": [list(p) for p in res.valid_region_mm],
             "self_check": _finite(s["self_check"].to_dict()),
+            "point_method": s["point_method"],
+            "point_methods": _finite({"rows": s["point_methods"]})["rows"],
         }
         calib = to_calibration(res, version=version, provenance=provenance)
         save_calibration(calibration_path, calib)

@@ -3,6 +3,22 @@
 Notable changes to the Vention Printer Interface. Versions follow semantic versioning; each entry
 corresponds to a tagged merge to `main`.
 
+## v0.21.0 — 2026-10-26
+
+### Added
+- **Each calibration run picks its points by held-out accuracy.** The solve now fits three ways and keeps the one that best predicts photos it was not fitted on:
+  - every identified point (chessboard and marker corners);
+  - the same, minus points the lens fit misses by more than 3 px;
+  - chessboard corners only.
+  - **How it is scored:** each photo is left out in turn, the calibration is refitted on the others, and the left-out photo's points are predicted. Every method is scored on the same points (all points of the left-out photo), so a method with fewer, cleaner points gets no easier test.
+  - **Rule:** the lowest average error among methods that pass the run's limits wins. A method must beat an earlier one by at least 1 µm to replace it; `all` is first.
+  - **On the real 2026-10-26 sweep:** all points 32.8 µm average / 98 µm worst; outliers dropped 32.8 / 100 µm; chessboard only 84.8 / 716 µm. Chessboard-only extrapolates poorly to the frame edges from 76 points. Scored on its own points it read 28.4 µm, which is why the scoring set is fixed. All points are kept.
+  - **Where to see it:** the run report shows all three with the kept one marked. The saved calibration records `point_method` and the table in its provenance.
+- **Frame board preset (10 × 7, 12 mm squares).** Sized to fill the zoomed science-camera view in one placement on the substrate.
+
+### Fixed
+- The held-out accuracy check no longer crashes on a photo with fewer than 4 points of the kind being fitted. The real sweep's edge photos have 0–3 chessboard corners.
+
 ## v0.20.0 — 2026-10-26
 
 ### Added
