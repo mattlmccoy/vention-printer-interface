@@ -83,7 +83,8 @@ def test_every_photo_of_a_sweep_gets_the_same_labels_as_the_full_plate() -> None
         assert _labels_match_truth(view, y0, ids)
         # object points are the certified grid in mm
         lab = np.column_stack([np.asarray(ids).ravel() % 17, np.asarray(ids).ravel() // 17])
-        assert np.allclose(np.asarray(obj)[:, :2], lab * 4.5) and np.allclose(np.asarray(obj)[:, 2], 0)
+        assert np.allclose(np.asarray(obj)[:, :2], lab * 4.5)
+        assert np.allclose(np.asarray(obj)[:, 2], 0)
 
 
 def test_a_photo_whose_shift_is_ambiguous_is_dropped_not_mislabelled() -> None:

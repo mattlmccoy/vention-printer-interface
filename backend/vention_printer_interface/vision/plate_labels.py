@@ -47,7 +47,8 @@ def orient_grid(points: np.ndarray, grid: np.ndarray) -> np.ndarray:
     else:
         lab = np.column_stack([g[:, 1] * np.sign(e_row[0]), g[:, 0] * np.sign(e_col[1])])
     lab = lab - lab.min(axis=0)
-    return np.rint(lab).astype(int)
+    out: np.ndarray = np.rint(lab).astype(int)
+    return out
 
 
 def _homography(src: np.ndarray, dst: np.ndarray) -> np.ndarray:
