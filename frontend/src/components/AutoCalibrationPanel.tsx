@@ -1,7 +1,8 @@
 import { useEffect, useRef, useState } from "react";
 import { api, type AutocalReport, type AutocalSession } from "../lib/api.ts";
 import { lensFitText, preflight, RECOATER_AXIS, runSweep, selfCheckSummary, type SelfCheckResult, waitSettled } from "../lib/autocal.ts";
-import { boardDefError, calibBoardChoices, defaultBoardChoice, loadBoardDef, saveBoardDef, sessionSpecFromDef } from "../lib/board_def.ts";
+import { boardDefError, calibBoardChoices, defaultBoardChoice, loadBoardDef, saveBoardDef } from "../lib/board_def.ts";
+import { autocalSpec, CERTIFIED_PLATE, lengthReferenceText } from "../lib/autocal_board.ts";
 import { loadRoleMap } from "../lib/camera_roles.ts";
 import { captureScienceStillOnce } from "../lib/science_still.ts";
 import { cleanNum } from "../lib/format.ts";
@@ -14,6 +15,8 @@ import { CalibrationOverlay } from "./CalibrationOverlay.tsx";
 import { CalibrationLivePreview } from "./CalibrationLivePreview.tsx";
 
 const storage = typeof localStorage === "undefined" ? null : localStorage;
+const PLATE_PICKED = "vpi.autocal.plate.v1";  // the certified plate was the last board picked here
+const readPlatePicked = () => { try { return storage?.getItem(PLATE_PICKED) === "1"; } catch { return false; } };
 const SECONDS_PER_POSE = 3;
 
 type Phase = "idle" | "confirm" | "running" | "solving" | "result" | "placing";
@@ -30,11 +33,13 @@ export function AutoCalibrationPanel({ status, printing }: { status: StatusPaylo
   // encoder-shift scale check fails the run.
   const [savedBoard] = useState(() => loadBoardDef(storage));
   const boardChoices = calibBoardChoices(savedBoard);
-  const [boardKey, setBoardKey] = useState(() => defaultBoardChoice(boardChoices, savedBoard));
+  const [boardKey, setBoardKey] = useState(() => readPlatePicked() ? CERTIFIED_PLATE.key : defaultBoardChoice(boardChoices, savedBoard));
+  const plate = boardKey === CERTIFIED_PLATE.key;
   const board = boardChoices.find((c) => c.key === boardKey)?.def ?? null;
-  const boardErr = board ? boardDefError(board) : "pick the board you placed";
+  const boardErr = plate ? null : board ? boardDefError(board) : "pick the board you placed";
   const pickBoard = (key: string) => {
     setBoardKey(key);
+    try { storage?.setItem(PLATE_PICKED, key === CERTIFIED_PLATE.key ? "1" : "0"); } catch { /* storage disabled */ }
     const def = boardChoices.find((c) => c.key === key)?.def;
     if (def) saveBoardDef(storage, def);
   };
@@ -96,7 +101,7 @@ export function AutoCalibrationPanel({ status, printing }: { status: StatusPaylo
     setErr(null); setReport(null); setSaved(null); setShots([]); setCells(null); setSelfCheck(null); setOverlays(null); setPlacementIdx(0);
     try {
       const s = await api.autocalStart({
-        spec: sessionSpecFromDef(board!), window_min_mm: Number(winMin), window_max_mm: Number(winMax),
+        spec: autocalSpec(boardKey, board)!, window_min_mm: Number(winMin), window_max_mm: Number(winMax),
         placement, board_thickness_mm: Number(thickness),
       });
       setSession(s); setPhase("confirm");
@@ -187,12 +192,13 @@ export function AutoCalibrationPanel({ status, printing }: { status: StatusPaylo
   return (
     <div className="grid-gap">
       <div className="hint" style={{ marginTop: 0 }}>
-        Place the ChArUco board once, press Start, confirm the planned recoater positions, and watch. The science camera rides
+        Place the board once, press Start, confirm the planned recoater positions, and watch. The science camera rides
         the recoater, so the machine moves the camera across the board; no clicking per photo.
       </div>
       <div className="fields">
-        <span title="The ChArUco board you placed. Detection needs its exact squares, sizes and marker dictionary. A custom board made on the Calibration board page appears here too.">calibration board</span>
+        <span title="The board you placed. The certified chessboard is flat and manufactured, so its squares are the length reference. A ChArUco board needs its exact squares, sizes and marker dictionary; a custom board made on the Calibration board page appears here too.">calibration board</span>
         <select value={boardKey} onChange={(e) => pickBoard(e.target.value)} disabled={busy}>
+          <option value={CERTIFIED_PLATE.key}>{CERTIFIED_PLATE.label}</option>
           {boardChoices.map((c) => <option key={c.key} value={c.key}>{c.label}</option>)}
         </select>
         <span title="Where the board sits: on the static substrate (square) or down in the build cylinder (round).">board placement</span>
@@ -200,7 +206,7 @@ export function AutoCalibrationPanel({ status, printing }: { status: StatusPaylo
           <option value="substrate">on the substrate</option>
           <option value="cylinder">in the build cylinder</option>
         </select>
-        <span title="Recorded with the calibration so the offset from the print plane can be corrected later.">board thickness (mm)</span>
+        <span title={plate ? "Caliper-measure the plate: its top surface is the plane this calibration measures on." : "Recorded with the calibration so the offset from the print plane can be corrected later."}>board thickness (mm)</span>
         <input type="number" step="0.001" min={0} value={thickness} onChange={(e) => setThickness(e.target.value)} disabled={busy} />
         <span title="The recoater never moves outside this range. With the board on the substrate, 523 mm keeps the blade off the board.">safety window (mm)</span>
         <span className="row" style={{ gap: 6 }}>
@@ -239,7 +245,14 @@ export function AutoCalibrationPanel({ status, printing }: { status: StatusPaylo
           <CalibrationRunReport last={lastRun} />
         </details>
       )}
-      {board && phase !== "running" && phase !== "solving" && (
+      {plate && phase === "idle" && (
+        <div className="hint" style={{ margin: 0 }}>
+          Certified chessboard: the plate must be fully in the photo at the capture pose (it is: 81 mm in a ~95 mm view), so
+          the photos near it number every corner; further along the sweep the plate runs off the photo and the encoder
+          fixes which corners those are. A photo that cannot be numbered safely is dropped and listed.
+        </div>
+      )}
+      {board && !plate && phase !== "running" && phase !== "solving" && (
         <details open={phase === "result"}>
           <summary>Live view with the identified points{phase === "result" ? " (place the board for the self-check)" : ""}</summary>
           <CalibrationLivePreview board={board} covered={
@@ -304,6 +317,11 @@ export function AutoCalibrationPanel({ status, printing }: { status: StatusPaylo
           <div className="kv">
             <span>lens fit</span><span>{lensFitText(report)}</span>
             <span>plane</span><span>{report.plane_note}; {report.placement}, board {report.board_thickness_mm} mm thick</span>
+            <span>length reference</span><span>{lengthReferenceText(report)}</span>
+            {(report.dropped_views?.length ?? 0) > 0 && (<>
+              <span>photos dropped</span>
+              <span>{report.dropped_views!.map((d) => `${d.recoater_mm.toFixed(1)} mm: ${d.reason}`).join("; ")}</span>
+            </>)}
           </div>
           {overlays && (overlays.err
             ? <div className="warnline">Overlay unavailable: {overlays.err}</div>
@@ -325,14 +343,14 @@ export function AutoCalibrationPanel({ status, printing }: { status: StatusPaylo
             ))}
           {lastRun ? <CalibrationRunReport last={lastRun} /> : <div className="hint">Loading the run report…</div>}
           <div className="grid-gap" style={{ marginTop: 8 }}>
-            <div className="actions one tight">
+            {!plate && <div className="actions one tight">
               <button className="cta" disabled={compare?.busy} onClick={() => {
                 setCompare({ busy: true });
                 api.autocalCompareDetection().then((data) => setCompare({ busy: false, data }))
                   .catch((e) => setCompare({ busy: false, err: e instanceof Error ? e.message : String(e) }));
               }}>{compare?.busy ? "comparing detection methods… (1–2 min)" : "compare detection methods on these photos"}</button>
-            </div>
-            <div className="hint" style={{ margin: 0 }}>Re-detects this run's stored photos three ways (as now; marker corners not refined; corners placed through the solved lens, as the OpenCV ChArUco tutorial advises) and measures each on photos the fit never saw. Nothing changes until the numbers say so.</div>
+            </div>}
+            {!plate && <div className="hint" style={{ margin: 0 }}>Re-detects this run's stored photos three ways (as now; marker corners not refined; corners placed through the solved lens, as the OpenCV ChArUco tutorial advises) and measures each on photos the fit never saw. Nothing changes until the numbers say so.</div>}
             {compare?.err && <div className="errline" style={{ margin: 0 }}>{compare.err}</div>}
             {compare?.data && (
               <div style={{ overflowX: "auto" }}>
