@@ -55,6 +55,9 @@ from vention_printer_interface.analysis.dimensional import (
 )
 from vention_printer_interface.analysis.lane_b import analyze_lane_b_from_pngs
 from vention_printer_interface.api.autocal_routes import register_autocal_routes
+from vention_printer_interface.api.calibration_history_routes import (
+    register_calibration_history_routes,
+)
 from vention_printer_interface.api.uvc_routes import register_uvc_routes
 from vention_printer_interface.build_info import operator_build
 from vention_printer_interface.control.backlash_cal import (
@@ -150,6 +153,10 @@ from vention_printer_interface.vision.board_gen import (
     resolve_preset,
     validate_charuco_spec,
     with_auto_dict,
+)
+from vention_printer_interface.vision.calibration_history import (
+    archive_calibration,
+    backfill_active,
 )
 from vention_printer_interface.vision.cameras import (
     CameraConfig,
@@ -2856,6 +2863,13 @@ def create_app(
             },
         )
 
+    def _archive(calib: Calibration) -> None:
+        """Keep a manual calibration in the history too (no report or photos)."""
+        try:
+            archive_calibration(root, calib)
+        except (OSError, ValueError) as exc:
+            log.warning("could not archive calibration %s: %s", calib.version, exc)
+
     @app.post("/api/vision/calibrate")
     def vision_calibrate(body: VisionCalibrateBody) -> dict[str, Any]:
         raster_problem = bed_raster_error(body.mm_per_px, body.bed_extent_mm)
@@ -2915,6 +2929,7 @@ def create_app(
             validation=validation or {},
         )
         save_calibration(vision_calibration_path, calib)
+        _archive(calib)
         vision = vision_service()
         if vision is not None:
             vision.set_calibration(calib)
@@ -3097,6 +3112,7 @@ def create_app(
             validation={},
         )
         save_calibration(vision_calibration_path, calib)
+        _archive(calib)
         vision = vision_service()
         if vision is not None:
             vision.set_calibration(calib)
@@ -3226,9 +3242,10 @@ def create_app(
     def _store_validation(
         image: np.ndarray, calib: Calibration, result: dict[str, Any], viz: dict[str, Any],
         target_mm: float, certified_mm: float,
-    ) -> str:
-        """Keep every validation (annotated photo + result) under its calibration version and
-        return the annotated photo's URL. ``experiments/validations/<version>/<UTC stamp>/``."""
+    ) -> tuple[str, str]:
+        """Keep every validation (annotated photo, the photo as taken, result) under its
+        calibration version; returns the (annotated, raw) photo URLs.
+        ``experiments/validations/<version>/<UTC stamp>/``."""
         import cv2
 
         stamp = datetime.now(UTC).strftime("%Y%m%dT%H%M%S%fZ")
@@ -3247,6 +3264,8 @@ def create_app(
         try:
             folder.mkdir(parents=True, exist_ok=True)
             cv2.imwrite(str(folder / "annotated.jpg"), img, [cv2.IMWRITE_JPEG_QUALITY, 88])
+            # The plate as photographed, unmarked: for reports (Matt, 2026-10-26).
+            cv2.imwrite(str(folder / "raw.jpg"), image, [cv2.IMWRITE_JPEG_QUALITY, 92])
             (folder / "result.json").write_text(json.dumps({
                 "calibration_version": calib.version, "validated_at": stamp,
                 "certified_mm": certified_mm,
@@ -3254,13 +3273,15 @@ def create_app(
             }, default=float), encoding="utf-8")
         except OSError as exc:
             log.warning("could not store the validation: %s", exc)
-        return f"/api/vision/validations/{_safe_name(calib.version)}/{stamp}/annotated.jpg"
+        url = f"/api/vision/validations/{_safe_name(calib.version)}/{stamp}"
+        return f"{url}/annotated.jpg", f"{url}/raw.jpg"
 
-    @app.get("/api/vision/validations/{version}/{stamp}/annotated.jpg")
-    def vision_validation_image(version: str, stamp: str) -> FileResponse:
-        if not (_SAFE_NAME.match(version) and _SAFE_NAME.match(stamp)):
+    @app.get("/api/vision/validations/{version}/{stamp}/{name}.jpg")
+    def vision_validation_image(version: str, stamp: str, name: str) -> FileResponse:
+        if name not in ("annotated", "raw") or not (
+                _SAFE_NAME.match(version) and _SAFE_NAME.match(stamp)):
             raise HTTPException(404, "not found")
-        f = root / "validations" / version / stamp / "annotated.jpg"
+        f = root / "validations" / version / stamp / f"{name}.jpg"
         if not f.is_file():
             raise HTTPException(404, "not found")
         return FileResponse(f, media_type="image/jpeg", headers={"Cache-Control": "no-store"})
@@ -3300,8 +3321,8 @@ def create_app(
                          square_size_mm=square_size_mm if square_size_mm > 0 else certified_mm)
         result = _score_checkerboard_mm(arr, spec, certified_mm, calib, target_mm)
         viz = result.pop("_viz")
-        result["annotated_url"] = _store_validation(arr, calib, result, viz, target_mm,
-                                                    certified_mm)
+        result["annotated_url"], result["raw_url"] = _store_validation(
+            arr, calib, result, viz, target_mm, certified_mm)
         # Persist trust keyed to this calibration version, so the analysis can tell validated apart.
         save_validation(
             root / ".vision_validation.json",
@@ -3624,6 +3645,10 @@ def create_app(
         if vision is not None:
             vision.set_calibration(calib)
 
+    # The last sweep's photos, LOCAL and outside Dropbox (Matt, 2026-10-21): ~500 MB per run
+    # at 20 MP, overwritten by the next run; used to compare detection methods on real images.
+    autocal_photos = autocal_photo_dir or Path(
+        os.environ.get("VPI_AUTOCAL_PHOTO_DIR") or Path.home() / ".vpi-cache" / "autocal_last")
     register_autocal_routes(
         app,
         root=root,
@@ -3631,11 +3656,36 @@ def create_app(
         calibration_path=vision_calibration_path,
         on_saved=_autocal_saved,
         events=ev,
-        # The last sweep's photos, LOCAL and outside Dropbox (Matt, 2026-10-21): ~500 MB per run
-        # at 20 MP, overwritten by the next run; used to compare detection methods on real images.
-        photo_dir=autocal_photo_dir or Path(
-            os.environ.get("VPI_AUTOCAL_PHOTO_DIR") or Path.home() / ".vpi-cache" / "autocal_last"),
+        photo_dir=autocal_photos,
     )
+
+    def _active_calibration() -> Calibration | None:
+        vision = vision_service()
+        if vision is not None and vision.calibration is not None:
+            return vision.calibration
+        return load_calibration(vision_calibration_path)
+
+    register_calibration_history_routes(
+        app, root=root, calibration_path=vision_calibration_path, active=_active_calibration,
+        on_activated=_autocal_saved, events=ev,
+    )
+
+    def _backfill_history() -> None:
+        """Archive a calibration saved before the history existed (once; ~2 s at 20 MP)."""
+        try:
+            calib = load_calibration(vision_calibration_path)
+            if calib is None:
+                return
+            sweep_file = root / ".autocal_last_sweep.json"
+            sweep = json.loads(sweep_file.read_text(encoding="utf-8")) \
+                if sweep_file.is_file() else None
+            if backfill_active(root, calib, sweep=sweep, photo_dir=autocal_photos):
+                log.info("calibration history: archived %s", calib.version)
+        except (OSError, ValueError, KeyError) as exc:
+            log.warning("calibration history backfill skipped: %s", exc)
+
+    threading.Thread(target=_backfill_history, name="calibration-history-backfill",
+                     daemon=True).start()
 
     register_uvc_routes(
         app,

@@ -11,6 +11,14 @@ export interface Release {
 
 export const CHANGELOG: Release[] = [
   {
+    version: "0.22.0",
+    date: "2026-10-26",
+    changes: [
+      "Settings → Calibrations: every saved science-camera calibration with its photos, run report, self-check and validations, viewable any time; \"use this calibration\" restores an older one.",
+      "Validations now also keep the certified plate's photo as taken (unmarked), linked from Validate and kept under Calibrations.",
+    ],
+  },
+  {
     version: "0.21.0",
     date: "2026-10-26",
     changes: [

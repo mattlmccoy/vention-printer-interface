@@ -1,3 +1,4 @@
+import { CalibrationHistoryPanel } from "../CalibrationHistoryPanel.tsx";
 import { useEffect, useRef, useState } from "react";
 import { api, type BacklashHistoryItem, type BacklashRecord, type BacklashSession, type CenterSweepBest, type Drive, type OffloadJob, type OffloadPlanRow, type TimingConfig, type VisionCalibrateResult } from "../../lib/api.ts";
 import { captureScienceStillOnce } from "../../lib/science_still.ts";
@@ -641,6 +642,7 @@ export function SettingsView({ status, gates, call, base, onOpenQuickStart }: {
     { key: "board", title: "Calibration board", sub: "ChArUco / checkerboard" },
     { key: "calib", title: "Calibrate", sub: "intrinsics & bed plane" },
     { key: "validate", title: "Validate", sub: "dimensional ±0.1 mm" },
+    { key: "history", title: "Calibrations", sub: "every saved calibration" },
     { key: "pose", title: "Capture pose", sub: "overhead science cam" },
     { key: "manual", title: "Manual calibration", sub: "raw image↔world points" },
     // key stays "unattended" (the tab's former name) so an existing selection still lands here.
@@ -711,6 +713,7 @@ export function SettingsView({ status, gates, call, base, onOpenQuickStart }: {
             </div>
           )}
           {sel === "validate" && <ValidationPanel call={call} printing={gates.printActive} />}
+          {sel === "history" && <CalibrationHistoryPanel />}
           {sel === "pose" && <CaptureCalibration status={status} gates={gates} call={call} base={base} />}
           {sel === "manual" && <div className="body"><CalibrationForm call={call} disabled={!gates.reachable} /></div>}
           {sel === "unattended" && <CameraInventoryPanel />}

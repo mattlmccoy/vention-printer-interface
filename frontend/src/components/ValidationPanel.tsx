@@ -70,6 +70,7 @@ export function ValidationPanel({ call, printing }: { call: Call; printing: bool
           {result.annotated_url && (
             <figure style={{ margin: "10px 0 0" }}>
               <img src={`${operatorBase()}${result.annotated_url}`} alt="validation photo with every corner's error" style={{ width: "100%", display: "block", border: "1px solid var(--line)" }} />
+              {result.raw_url && <a className="hint" href={`${operatorBase()}${result.raw_url}`} target="_blank" rel="noreferrer">Open the photo as taken (unmarked, full size) — kept under Settings → Calibrations.</a>}
               <figcaption className="hint" style={{ margin: "4px 0 0" }}>Each chessboard corner on the actual photo: green within the target, amber within 2×, red beyond; the arrow points to where the calibration says that corner should be (enlarged). Grey = outside the calibrated area (green outline), not scored. Arrows all pointing outward or inward from the centre mean a scale error; a pattern only at the edges means the lens fit.</figcaption>
             </figure>
           )}

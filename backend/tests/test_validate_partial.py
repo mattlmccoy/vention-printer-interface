@@ -178,3 +178,15 @@ def test_each_validation_is_stored_under_its_calibration(tmp_path: Path) -> None
         assert saved["max_mm"] == out["max_mm"] and saved["calibration_version"] == "cal-partial"
         assert (stored[0].parent / "annotated.jpg").is_file()
         assert c.get("/api/vision/validations/..%2F..%2Fetc/x/annotated.jpg").status_code == 404
+
+
+def test_validation_keeps_the_unannotated_photo_too(tmp_path: Path) -> None:
+    # A clean picture of the certified plate, for reports (Matt, 2026-10-26).
+    _save_calib(tmp_path, WHOLE)
+    with _client(tmp_path) as c:
+        out = c.post("/api/vision/validate/scale-upload", params=Q, content=_png(_crop())).json()
+        r = c.get(out["raw_url"])
+        assert r.status_code == 200 and r.headers["content-type"] == "image/jpeg"
+        img = cv2.imdecode(np.frombuffer(r.content, np.uint8), cv2.IMREAD_COLOR)
+        assert (img.shape[1], img.shape[0]) == FRAME
+        assert list((tmp_path / "validations" / "cal-partial").glob("*/raw.jpg"))
