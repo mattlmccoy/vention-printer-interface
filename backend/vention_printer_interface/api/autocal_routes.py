@@ -52,7 +52,11 @@ from vention_printer_interface.vision.board_gen import (
     with_auto_dict,
 )
 from vention_printer_interface.vision.calibration_history import archive_calibration
-from vention_printer_interface.vision.charuco_points import MARKER_ID_BASE, detect_board_points
+from vention_printer_interface.vision.charuco_points import (
+    MARKER_ID_BASE,
+    BoardPoints,
+    detect_board_points,
+)
 from vention_printer_interface.vision.charuco_selfcheck import score_self_check
 from vention_printer_interface.vision.coverage import corner_cells
 from vention_printer_interface.vision.overlay import (
@@ -61,10 +65,16 @@ from vention_printer_interface.vision.overlay import (
     draw_residual_arrows,
     fit_board_to_bed,
 )
+from vention_printer_interface.vision.plate_labels import (
+    PlateView,
+    label_plate_sweep,
+    orient_grid,
+)
 from vention_printer_interface.vision.registration import (
     BoardSpec,
     Calibration,
     apply_homography,
+    detect_chessboard_partial,
     load_calibration,
     save_calibration,
     undistort_points,
@@ -81,12 +91,17 @@ APPROACH_NOTE = "from above (descending mm)"
 
 
 class AutocalBoard(BaseModel):
-    kind: Literal["charuco"] = "charuco"
-    squares_x: int
-    squares_y: int
-    square_length_mm: float
-    marker_length_mm: float
+    # "checkerboard" = a certified plain chessboard (2026-10-27: DEvision Q18-100-4.5), which is
+    # the length reference itself; its corners are numbered across the sweep by plate_labels.
+    kind: Literal["charuco", "checkerboard"] = "charuco"
+    squares_x: int = 0
+    squares_y: int = 0
+    square_length_mm: float = 0.0
+    marker_length_mm: float = 0.0
     aruco_dict: str | None = None
+    cols: int = 0  # checkerboard INNER corners per side
+    rows: int = 0
+    square_size_mm: float = 0.0
 
 
 class AutocalSessionBody(BaseModel):
@@ -223,6 +238,95 @@ async def _session_photo(request: Request, s: dict[str, Any]) -> tuple[np.ndarra
     return image, size
 
 
+def _session_spec(b: AutocalBoard) -> BoardSpec:
+    """The session's board, validated (400 with the reason when it cannot be used)."""
+    if b.kind == "checkerboard":
+        if b.cols < 3 or b.rows < 3:
+            raise HTTPException(400, "invalid board: a chessboard needs at least 3 x 3 inner "
+                                     "corners")
+        if not (math.isfinite(b.square_size_mm) and b.square_size_mm > 0):
+            raise HTTPException(400, "invalid board: the chessboard square size must be > 0 mm")
+        return BoardSpec(kind="checkerboard", cols=b.cols, rows=b.rows,
+                         square_size_mm=b.square_size_mm)
+    spec = BoardSpec(kind="charuco", squares_x=b.squares_x, squares_y=b.squares_y,
+                     square_length_mm=b.square_length_mm, marker_length_mm=b.marker_length_mm,
+                     aruco_dict=b.aruco_dict or "DICT_4X4_50")
+    try:
+        if b.aruco_dict is None:
+            spec = with_auto_dict(spec)
+        validate_charuco_spec(spec)
+    except BoardSpecError as exc:
+        raise HTTPException(400, f"invalid board: {exc}") from exc
+    return spec
+
+
+def _plate_points(image: np.ndarray, spec: BoardSpec) -> BoardPoints | None:
+    """A plate photo's corners with RELATIVE labels (enough for distances: the self-check)."""
+    found = detect_chessboard_partial(image)
+    if found is None:
+        return None
+    pts, grid = found
+    lab = orient_grid(pts, grid)
+    obj = np.column_stack([lab * spec.square_size_mm, np.zeros(len(lab))])
+    return BoardPoints(image_points=pts, object_points=obj,
+                       ids=(lab[:, 1] * (spec.cols + 1) + lab[:, 0]).reshape(-1, 1),
+                       kinds=np.array(["corner"] * len(pts)), markers_px=[])
+
+
+def _plate_sample(s: dict[str, Any], image: np.ndarray, size: tuple[int, int],
+                  recoater_mm: float) -> dict[str, Any]:
+    """Keep a plate photo's raw corners; they are numbered at solve, over the whole sweep."""
+    found = detect_chessboard_partial(image)
+    pts = np.zeros((0, 2)) if found is None else np.asarray(found[0], float).reshape(-1, 2)
+    usable = found is not None and len(pts) >= MIN_CORNERS
+    s["image_size"] = s["image_size"] or size
+    dmm = abs(recoater_mm - s["plan"].capture_mm)
+    if s.get("placement_index", 0) == 0 and dmm <= CAPTURE_POSE_TOL_MM and (
+            s["capture_dmm"] is None or dmm < s["capture_dmm"]):
+        s["capture_image"], s["capture_dmm"] = image, dmm
+    s["samples"].append({
+        "recoater_mm": recoater_mm, "usable": usable, "corners": int(len(pts)),
+        "placement": s.get("placement_index", 0), "image_points": pts,
+        "grid": None if found is None else np.asarray(found[1], float),
+        "object_points": None, "ids": None,
+    })
+    s["result"] = s["verdict"] = s["self_check"] = None
+    return {"usable": usable, "corners": int(len(pts)), "image_size": list(size),
+            "chessboard_corners": int(len(pts)), "marker_points": 0,
+            "corners_px": pts.tolist(),
+            "reason": None if usable else f"chessboard not found or fewer than {MIN_CORNERS} "
+                                          "corners",
+            "coverage_cells": corner_cells(
+                [x["image_points"] for x in s["samples"] if x["usable"]], s["image_size"])}
+
+
+def _label_plate(s: dict[str, Any]) -> list[dict[str, Any]]:
+    """Number every usable plate photo's corners across the sweep (plate_labels); returns the
+    photos that could not be numbered, with why. 400 when the sweep cannot be anchored."""
+    spec = s["spec"]
+    usable = [x for x in s["samples"] if x["usable"]]
+    views = [PlateView(x["recoater_mm"], x["image_points"], x["grid"], x.get("placement", 0))
+             for x in usable]
+    try:
+        labelled = label_plate_sweep(views, cols=spec.cols, rows=spec.rows,
+                                     pitch_mm=spec.square_size_mm,
+                                     capture_mm=s["plan"].capture_mm)
+    except ValueError as exc:
+        raise HTTPException(400, str(exc)) from exc
+    dropped: list[dict[str, Any]] = []
+    for x, r in zip(usable, labelled, strict=True):
+        if isinstance(r, str):
+            x["object_points"] = x["ids"] = None
+            dropped.append({"recoater_mm": x["recoater_mm"], "reason": r})
+        else:
+            x["object_points"], x["ids"] = r
+    cap = [x for x in usable if x.get("placement", 0) == 0 and x["object_points"] is not None]
+    if cap:
+        near = min(cap, key=lambda x: abs(x["recoater_mm"] - s["plan"].capture_mm))
+        s["capture_points"] = (near["image_points"], np.asarray(near["object_points"]))
+    return dropped
+
+
 def register_autocal_routes(
     app: FastAPI,
     *,
@@ -269,17 +373,7 @@ def register_autocal_routes(
 
     @app.post("/api/vision/autocal/session")
     def autocal_start(body: AutocalSessionBody) -> dict[str, Any]:
-        spec = BoardSpec(kind="charuco", squares_x=body.spec.squares_x,
-                         squares_y=body.spec.squares_y,
-                         square_length_mm=body.spec.square_length_mm,
-                         marker_length_mm=body.spec.marker_length_mm,
-                         aruco_dict=body.spec.aruco_dict or "DICT_4X4_50")
-        try:
-            if body.spec.aruco_dict is None:
-                spec = with_auto_dict(spec)
-            validate_charuco_spec(spec)
-        except BoardSpecError as exc:
-            raise HTTPException(400, f"invalid board: {exc}") from exc
+        spec = _session_spec(body.spec)
         capture = float(capture_pose())
         if not capture > 0:
             raise HTTPException(400, "no capture pose saved yet (Settings → Capture pose)")
@@ -317,6 +411,8 @@ def register_autocal_routes(
             raise HTTPException(400, "recoater position must be a finite number (is it homed?)")
         image, size = await _session_photo(request, s)
         _store_photo(photo_dir, len(s["samples"]), float(recoater_mm), await request.body())
+        if s["spec"].kind == "checkerboard":
+            return _plate_sample(s, image, size, float(recoater_mm))
         # Every identified point: chessboard corners AND marker corners (the whole board).
         det = detect_board_points(image, s["spec"])
         pts = (np.zeros((0, 2)) if det is None
@@ -365,15 +461,18 @@ def register_autocal_routes(
     @app.post("/api/vision/autocal/solve")
     def autocal_solve() -> dict[str, Any]:
         s = session()
-        views = [AutocalView(x["recoater_mm"], x["image_points"], x["object_points"], x["ids"],
-                             placement=x.get("placement", 0))
-                 for x in s["samples"] if x["usable"]]
         if s["image_size"] is None:
             raise HTTPException(400, "no photos yet")
+        plate = s["spec"].kind == "checkerboard"
+        dropped = _label_plate(s) if plate else []
+        views = [AutocalView(x["recoater_mm"], x["image_points"], x["object_points"], x["ids"],
+                             placement=x.get("placement", 0))
+                 for x in s["samples"] if x["usable"] and x["object_points"] is not None]
+        scale_reference: Literal["encoder", "board"] = "board" if plate else "encoder"
         try:
             # Every point method, scored on held-out photos; the run keeps the best.
             best = solve_best(views, capture_recoater_mm=s["plan"].capture_mm,
-                              image_size=s["image_size"])
+                              image_size=s["image_size"], scale_reference=scale_reference)
         except ValueError as exc:
             raise HTTPException(400, str(exc)) from exc
         res = best.result
@@ -400,6 +499,7 @@ def register_autocal_routes(
             "placements": len({x.get("placement", 0) for x in s["samples"] if x["usable"]}),
             "current": _calibration_in_use(calibration_path),
             "point_method": best.method, "point_methods": best.methods,
+            "scale_reference": scale_reference, "dropped_views": dropped,
         })
         s["report"] = out
         # Keep the sweep's points on disk so a failed run can be diagnosed (and re-solved) without
@@ -473,7 +573,11 @@ def register_autocal_routes(
         if s["capture_points"] is not None and len(s["capture_points"][0]) >= 4:
             spec = s["spec"]
             to_bed = fit_board_to_bed(s["capture_points"][0], s["capture_points"][1], res)
-            lines = board_grid_mm(spec.squares_x, spec.squares_y, spec.square_length_mm, to_bed)
+            if spec.kind == "checkerboard":
+                lines = board_grid_mm(spec.cols + 1, spec.rows + 1, spec.square_size_mm, to_bed)
+            else:
+                lines = board_grid_mm(spec.squares_x, spec.squares_y, spec.square_length_mm,
+                                      to_bed)
         return draw_overlay(s["capture_image"], res, view, lines)
 
     @app.get("/api/vision/autocal/overlay.png")
@@ -520,6 +624,8 @@ def register_autocal_routes(
         (OpenCV ChArUco tutorial). Measures; changes nothing. ~1-2 min at 20 MP."""
         s = session()
         res = s["result"]
+        if s["spec"].kind == "checkerboard":
+            raise HTTPException(409, "detection comparison is for ChArUco runs only")
         if res is None:
             raise HTTPException(409, "solve the run first: one method uses its lens")
         if photo_dir is None:
@@ -588,7 +694,8 @@ def register_autocal_routes(
         if res is None or not s["verdict"] or not s["verdict"][0]:
             raise HTTPException(409, "solve a passing run before the self-check")
         image, _size = await _session_photo(request, s)
-        det = detect_board_points(image, s["spec"])
+        plate = s["spec"].kind == "checkerboard"
+        det = _plate_points(image, s["spec"]) if plate else detect_board_points(image, s["spec"])
         views = [] if det is None else [det]
 
         def to_bed(px: np.ndarray) -> np.ndarray:
@@ -596,8 +703,9 @@ def register_autocal_routes(
                                                             res.dist_coeffs))
 
         sweep = [x["image_points"] for x in s["samples"] if x["usable"]]
+        # A certified plate is its own length reference; the engraved ChArUco is ~0.2 % small.
         sc = score_self_check(views, to_bed, res.valid_region_mm, sweep,
-                              board_scale=1.0 / res.scale_ratio)
+                              board_scale=1.0 if plate else 1.0 / res.scale_ratio)
         s["self_check"] = sc
         events("autocal_selfcheck", {"passed": sc.passed, "rms_mm": sc.rms_mm,
                                      "n_used": sc.n_used})
@@ -622,6 +730,7 @@ def register_autocal_routes(
             "capture_recoater_mm": s["plan"].capture_mm, "approach": APPROACH_NOTE,
             "window": {"min_mm": s["window"][0], "max_mm": s["window"][1]},
             "board": dataclasses.asdict(s["spec"]), "scale_ratio": res.scale_ratio,
+            "scale_reference": "board" if s["spec"].kind == "checkerboard" else "encoder",
             "shift_rms_mm": res.shift_rms_mm, "shift_worst_mm": res.shift_worst_mm,
             "reprojection_rms_px": res.reprojection_rms_px, "n_views": res.n_views,
             "reprojection_rms_mm": res.reprojection_rms_mm, "px_mm": res.px_mm,
