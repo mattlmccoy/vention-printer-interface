@@ -1,0 +1,10 @@
+{
+  "calibration_version": "cal-20261026T192538Z",
+  "scale": {
+    "max_mm": 0.12901066836609384,
+    "rms_mm": 0.07514783201420489,
+    "passed": false,
+    "target_mm": 0.05,
+    "scale_bias": 1.0026662082141908
+  }
+}

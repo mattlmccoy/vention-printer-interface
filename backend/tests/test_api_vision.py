@@ -279,6 +279,9 @@ def test_vision_calibrate_computes_saves_and_hot_swaps(
 
     status = client.get("/api/vision/status").json()
     assert status["calibration"] == out["calibration_version"]  # hot-swapped onto app.state.vision
+    # kept in the history (Settings -> Calibrations)
+    assert (tmp_path / "vision_calibrations" / out["calibration_version"]
+            / "calibration.json").is_file()
 
 
 def test_vision_overview_stream_headers_when_overview_source_present(tmp_path: Path) -> None:
@@ -1505,6 +1508,8 @@ def test_calibrate_finalize_uses_last_capture_as_bed_and_reaches_runtime(
         assert app.state.vision.calibration is not None
         assert app.state.vision.calibration.camera_matrix is not None
         assert app.state.vision.calibration.version == out["calibration_version"]
+        assert (tmp_path / "vision_calibrations" / out["calibration_version"]
+                / "calibration.json").is_file()
 
 
 def _charuco_png_bytes(seed: int = 3) -> bytes:

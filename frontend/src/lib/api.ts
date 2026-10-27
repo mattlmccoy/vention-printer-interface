@@ -2,6 +2,7 @@
  *  guard). Method + path per call are locked by api.test.ts so a Save can never silently 405. */
 
 import { apiUrl, loadOperatorBase } from "./operator.ts";
+import type { CalibrationDetail, CalibrationSummary } from "./calibration_history.ts";
 import type { ResidualGroup, SelfCheckResult } from "./autocal.ts";
 import type { LastSweep } from "../components/CalibrationRunReport.tsx";
 import type { StatusPayload } from "./telemetry.ts";
@@ -182,7 +183,7 @@ export interface VisionBoardSpecBody {
 // GET/POST /api/vision/calibrate/session — see backend app.py's `_calib_session_state`.
 export interface CalibCoverage { cells_filled: number; tilt_bins_filled: number; enough: boolean; gaps: string[]; total_views: number }
 export interface VisionCalibSession { n_views: number; image_size?: [number, number] | null; spec: Record<string, unknown> | null; ready: boolean; coverage?: CalibCoverage }
-export interface VisionValidateScaleResult { rms_mm: number; max_mm: number; scale_bias: number; n_points: number; target_mm: number; passed: boolean; per_point?: Array<{ error_mm: number }>; image_size?: [number, number]; n_outside?: number; area_known?: boolean; area_note?: string; scale_free_rms_mm?: number; scale_free_max_mm?: number; annotated_url?: string }
+export interface VisionValidateScaleResult { rms_mm: number; max_mm: number; scale_bias: number; n_points: number; target_mm: number; passed: boolean; per_point?: Array<{ error_mm: number }>; image_size?: [number, number]; n_outside?: number; area_known?: boolean; area_note?: string; scale_free_rms_mm?: number; scale_free_max_mm?: number; annotated_url?: string; raw_url?: string }
 // Camera-center sweep (browser-driven): the client steps the recoater + captures a science frame
 // per pose; the server scores each frame's bore offset and picks the centering recoater pose.
 export interface CenterSweepSample { recoater_mm: number; offset_px: number | null }
@@ -484,6 +485,11 @@ export const api = {
   autocalCancel: () => req<{ active: false }>("POST", "/api/vision/autocal/cancel"),
   /** Start another board placement in the same run (the board is moved, then swept again). */
   autocalNewPlacement: () => req<{ placement: number; session: AutocalSession }>("POST", "/api/vision/autocal/placement"),
+  /** Settings → Calibrations: every saved calibration (newest first), one in detail, restore one. */
+  calibrations: () => req<CalibrationSummary[]>("GET", "/api/vision/calibrations"),
+  calibration: (version: string) => req<CalibrationDetail>("GET", `/api/vision/calibrations/${encodeURIComponent(version)}`),
+  activateCalibration: (version: string) =>
+    req<{ active: string }>("POST", `/api/vision/calibrations/${encodeURIComponent(version)}/activate`, {}),
 };
 
 export interface AutocalStartBody {

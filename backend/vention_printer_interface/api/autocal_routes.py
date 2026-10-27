@@ -21,6 +21,7 @@ from __future__ import annotations
 
 import dataclasses
 import json
+import logging
 import math
 import re
 from collections.abc import Callable
@@ -50,6 +51,7 @@ from vention_printer_interface.vision.board_gen import (
     validate_charuco_spec,
     with_auto_dict,
 )
+from vention_printer_interface.vision.calibration_history import archive_calibration
 from vention_printer_interface.vision.charuco_points import MARKER_ID_BASE, detect_board_points
 from vention_printer_interface.vision.charuco_selfcheck import score_self_check
 from vention_printer_interface.vision.coverage import corner_cells
@@ -67,6 +69,8 @@ from vention_printer_interface.vision.registration import (
     save_calibration,
     undistort_points,
 )
+
+log = logging.getLogger(__name__)
 
 DEFAULT_WINDOW = (0.0, 523.0)  # Matt, 2026-10-20: 523 mm is the farthest safe extent (blade)
 PLANE_NOTE = "board top surface, assumed print plane"
@@ -296,6 +300,7 @@ def register_autocal_routes(
             "image_size": None, "result": None, "verdict": None, "self_check": None,
             "capture_image": None, "capture_dmm": None, "capture_points": None,
             "placement_index": 0, "fit_views": None, "point_method": None, "point_methods": None,
+            "report": None,
         }
         events("autocal_start", {"poses": plan.poses, "window": list(window)})
         return summary(state["session"])
@@ -396,6 +401,7 @@ def register_autocal_routes(
             "current": _calibration_in_use(calibration_path),
             "point_method": best.method, "point_methods": best.methods,
         })
+        s["report"] = out
         # Keep the sweep's points on disk so a failed run can be diagnosed (and re-solved) without
         # repeating the motion; one file, overwritten by the next solve.
         try:
@@ -453,36 +459,36 @@ def register_autocal_routes(
             "markers": [np.asarray(m, float).reshape(4, 2).tolist() for m in det.markers_px],
         }
 
-    @app.get("/api/vision/autocal/overlay.png")
-    def autocal_overlay(view: Literal["raw", "corrected", "residuals"] = "raw") -> Response:
-        """The capture-pose photo with the bed grid + calibrated area drawn on it (raw), or
-        undistorted and warped onto the bed (corrected). 409 before a solve."""
-        s = session()
+    def overlay_image(s: dict[str, Any], view: str) -> np.ndarray:
+        """The capture-pose photo drawn for ``view`` (raw grid / corrected onto the bed / lens-fit
+        residual arrows) for the session's solve; ValueError when it cannot be drawn."""
         res = s["result"]
-        if res is None:
-            raise HTTPException(409, "solve first: the overlay shows the solved calibration")
-        if s["capture_image"] is None:
-            raise HTTPException(409, "no photo at the capture pose in this run")
-        import cv2
-
         if view == "residuals":
             fit = s["fit_views"]  # aligned with res.point_residuals (the kept point method)
             near = min(range(len(fit)),
                        key=lambda i: abs(fit[i].recoater_mm - s["plan"].capture_mm))
-            img = draw_residual_arrows(s["capture_image"], fit[near].image_points,
-                                       res.point_residuals[near])
-            ok, buf = cv2.imencode(".png", img)
-            if not ok:
-                raise HTTPException(500, "could not encode the overlay")
-            return Response(content=bytes(buf.tobytes()), media_type="image/png",
-                            headers={"Cache-Control": "no-store"})
+            return draw_residual_arrows(s["capture_image"], fit[near].image_points,
+                                        res.point_residuals[near])
         lines = None
         if s["capture_points"] is not None and len(s["capture_points"][0]) >= 4:
             spec = s["spec"]
             to_bed = fit_board_to_bed(s["capture_points"][0], s["capture_points"][1], res)
             lines = board_grid_mm(spec.squares_x, spec.squares_y, spec.square_length_mm, to_bed)
+        return draw_overlay(s["capture_image"], res, view, lines)
+
+    @app.get("/api/vision/autocal/overlay.png")
+    def autocal_overlay(view: Literal["raw", "corrected", "residuals"] = "raw") -> Response:
+        """The capture-pose photo with the bed grid + calibrated area drawn on it (raw), or
+        undistorted and warped onto the bed (corrected). 409 before a solve."""
+        s = session()
+        if s["result"] is None:
+            raise HTTPException(409, "solve first: the overlay shows the solved calibration")
+        if s["capture_image"] is None:
+            raise HTTPException(409, "no photo at the capture pose in this run")
+        import cv2
+
         try:
-            img = draw_overlay(s["capture_image"], res, view, lines)
+            img = overlay_image(s, view)
         except ValueError as exc:
             raise HTTPException(400, str(exc)) from exc
         ok, buf = cv2.imencode(".png", img)
@@ -627,8 +633,27 @@ def register_autocal_routes(
         calib = to_calibration(res, version=version, provenance=provenance)
         save_calibration(calibration_path, calib)
         on_saved(calib)
+        archived = archive(s, calib)
         events("autocal_saved", {"calibration_version": version})
-        return {"calibration_version": version}
+        return {"calibration_version": version, "archived": archived}
+
+    def archive(s: dict[str, Any], calib: Calibration) -> bool:
+        """Keep the saved calibration with its report and photos in the history (Settings ->
+        Calibrations). Never fails the save: the active calibration is already written."""
+        images: dict[str, np.ndarray] = {}
+        if s["capture_image"] is not None:
+            images["capture"] = s["capture_image"]
+            for view in ("raw", "corrected", "residuals"):
+                try:
+                    images[view] = overlay_image(s, view)
+                except (ValueError, IndexError) as exc:
+                    log.warning("calibration history: no %s photo: %s", view, exc)
+        try:
+            archive_calibration(root, calib, report=s.get("report"), images=images)
+        except (OSError, ValueError) as exc:
+            log.warning("could not archive calibration %s: %s", calib.version, exc)
+            return False
+        return True
 
     @app.post("/api/vision/autocal/cancel")
     def autocal_cancel() -> dict[str, Any]:

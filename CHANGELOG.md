@@ -3,6 +3,23 @@
 Notable changes to the Vention Printer Interface. Versions follow semantic versioning; each entry
 corresponds to a tagged merge to `main`.
 
+## v0.22.0 — 2026-10-26
+
+### Added
+- **Settings → Calibrations: every science-camera calibration, viewable long after it was made.** Each saved calibration is kept in `experiments/vision_calibrations/<version>/` with:
+  - its calibration file;
+  - the run report (every check, plus the point-method table);
+  - the photos the Calibrate page showed: the capture-pose photo, the predicted grid, corrected onto the bed, and the lens-fit residual arrows.
+- **On the page:** a newest-first list with photo size, lens fit and validation status. Selecting one shows its numbers, photos (click for full size), self-check, run report and every validation against the certified plate, with photos.
+  - An unvalidated calibration reads **not validated**, never as passing.
+  - A validation from before photos were kept is labelled "numbers only".
+- **Use this calibration:** makes an older calibration the one in use again, after a confirm dialog that warns when its photo size differs from the calibration in use. The operator refuses a size mismatch when the photo size is stated.
+- **Validations keep the photo as taken (`raw.jpg`)** next to the annotated one, so a clean picture of the certified plate is always available. The Validate panel links to it.
+- **Older and manual calibrations:**
+  - Manual calibrations (homography form, manual capture wizard) are kept too, as numbers only.
+  - On start, the operator archives the calibration in use if the history doesn't hold it yet. It adds that run's report and photos only when the stored sweep is provably the run it came from (identical solve numbers, solved before the save).
+  - Real data: `cal-20261026T192538Z` was archived with its report and all four photos from the stored sweep.
+
 ## v0.21.0 — 2026-10-26
 
 ### Added
