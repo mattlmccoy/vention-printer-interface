@@ -117,6 +117,23 @@ def test_a_numbers_only_validation_is_labelled_and_never_hidden(tmp_path: Path) 
     assert list_calibrations(tmp_path, active=_real())[0]["validation"]["status"] == "failed"
 
 
+def test_the_summary_file_of_a_stored_validation_is_not_listed_twice(tmp_path: Path) -> None:
+    # Every validation since 0.19.3 also rewrites .vision_validation.json with its numbers, so on
+    # 2026-10-27 the history showed the newest validation twice (once as "numbers only"). Real
+    # files: the stored result and the summary file the same run wrote.
+    version = "cal-20261027T175542Z"
+    cal = dataclasses.replace(_real(), version=version)
+    stamp = "20261027T175712265073Z"
+    d = tmp_path / "validations" / version / stamp
+    d.mkdir(parents=True)
+    shutil.copy(FIX / "validation_result_20261027.json", d / "result.json")
+    shutil.copy(FIX / "vision_validation_20261027.json", tmp_path / ".vision_validation.json")
+    detail = calibration_detail(tmp_path, version, active=cal)
+    assert detail is not None
+    assert [(v["stamp"], v["legacy"]) for v in detail["validations"]] == [(stamp, False)]
+    assert list_calibrations(tmp_path, active=cal)[0]["validation"]["count"] == 1
+
+
 def test_no_validation_reads_not_validated(tmp_path: Path) -> None:
     row = list_calibrations(tmp_path, active=_real())[0]
     assert row["validation"] == {"count": 0, "status": "none", "latest": None}
