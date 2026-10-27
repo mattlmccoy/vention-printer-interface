@@ -120,8 +120,13 @@ def _validations(root: Path, version: str) -> list[dict[str, Any]]:
         out.append({**r, "stamp": d.name, "legacy": False,
                     "annotated": (d / "annotated.jpg").is_file(), "raw": (d / "raw.jpg").is_file()})
     legacy = _read_json(Path(root) / ".vision_validation.json")
-    if isinstance(legacy, dict) and legacy.get("calibration_version") == version:
-        out.append({**(legacy.get("scale") or {}), "stamp": None, "legacy": True,
+    scale = (legacy.get("scale") or {}) if isinstance(legacy, dict) else {}
+    # Every stored validation (0.19.3+) also rewrites this file with its own numbers: it is only a
+    # separate, photo-less validation when no stored one has the same numbers.
+    mirrors = any(r.get("max_mm") == scale.get("max_mm") and r.get("rms_mm") == scale.get("rms_mm")
+                  for r in out)
+    if isinstance(legacy, dict) and legacy.get("calibration_version") == version and not mirrors:
+        out.append({**scale, "stamp": None, "legacy": True,
                     "annotated": False, "raw": False, "note": LEGACY_NOTE})
     return out
 

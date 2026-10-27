@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import json
 import logging
+from collections.abc import Iterable
 from dataclasses import asdict, dataclass, field
 from pathlib import Path
 from typing import Any, Literal
@@ -294,21 +295,40 @@ def detect_board(image: np.ndarray, spec: BoardSpec) -> BoardDetection | None:
     )
 
 
-def detect_chessboard_partial(
-    image: np.ndarray, min_cols: int = 5, min_rows: int = 5,
-) -> tuple[np.ndarray, np.ndarray] | None:
-    """Find the VISIBLE part of a chessboard: ``(image_points Nx2, grid Nx2 (col, row))``.
+GRID_STEP_TOL = 0.25  # a neighbouring-corner step may differ from the median step by at most 25 %
+PARTIAL_ATTEMPTS = 4
 
-    The certified validation board (17x17 inner corners, 81 mm) is larger than the science
-    camera's field of view, so a fixed-count ``findChessboardCorners`` never finds it.
-    ``findChessboardCornersSBWithMeta`` with ``CALIB_CB_LARGER`` accepts any visible board of at
-    least ``min_cols`` x ``min_rows`` inner corners and returns its corners row-major over the
-    meta grid (rows x cols). Grid indices are relative to the first visible corner; only
-    differences matter for scoring. ``None`` when nothing is found (never raises on a blank frame).
-    """
+
+def grid_is_regular(points: np.ndarray, grid: np.ndarray, tol: float = GRID_STEP_TOL) -> bool:
+    """True when every step between grid neighbours (along columns and rows) is within ``tol``
+    of the median step. A detection that skips a row or column has steps of two squares."""
+    g = np.asarray(grid, int)
+    cols, rows = int(g[:, 0].max()) + 1, int(g[:, 1].max()) + 1
+    pts = np.asarray(points, float).reshape(-1, 2)
+    if len(pts) != rows * cols or rows < 2 or cols < 2:
+        return False
+    p = pts.reshape(rows, cols, 2)
+    steps = np.concatenate([np.linalg.norm(np.diff(p, axis=1), axis=2).ravel(),
+                            np.linalg.norm(np.diff(p, axis=0), axis=2).ravel()])
+    med = float(np.median(steps))
+    return med > 0 and bool(np.all(np.abs(steps - med) <= tol * med))
+
+
+def first_regular_grid(
+    attempts: Iterable[tuple[np.ndarray, np.ndarray] | None],
+) -> tuple[np.ndarray, np.ndarray] | None:
+    """The first detection with a regular grid; stops trying as soon as one is found."""
+    for r in attempts:
+        if r is not None and grid_is_regular(*r):
+            return r
+    return None
+
+
+def _detect_chessboard_once(
+    gray: np.ndarray, min_cols: int, min_rows: int,
+) -> tuple[np.ndarray, np.ndarray] | None:
     import cv2
 
-    gray = _to_gray(image)
     flags = cv2.CALIB_CB_LARGER | cv2.CALIB_CB_EXHAUSTIVE | cv2.CALIB_CB_ACCURACY
     try:
         found, corners, meta = cv2.findChessboardCornersSBWithMeta(
@@ -324,6 +344,27 @@ def detect_chessboard_partial(
     idx = np.arange(len(pts))
     grid = np.column_stack([idx % cols, idx // cols]).astype(float)
     return pts, grid
+
+
+def detect_chessboard_partial(
+    image: np.ndarray, min_cols: int = 5, min_rows: int = 5, attempts: int = PARTIAL_ATTEMPTS,
+) -> tuple[np.ndarray, np.ndarray] | None:
+    """Find the VISIBLE part of a chessboard: ``(image_points Nx2, grid Nx2 (col, row))``.
+
+    The certified validation board (17x17 inner corners, 81 mm) is larger than the science
+    camera's field of view, so a fixed-count ``findChessboardCorners`` never finds it.
+    ``findChessboardCornersSBWithMeta`` with ``CALIB_CB_LARGER`` accepts any visible board of at
+    least ``min_cols`` x ``min_rows`` inner corners and returns its corners row-major over the
+    meta grid (rows x cols). Grid indices are relative to the first visible corner; only
+    differences matter for scoring. ``None`` when nothing is found (never raises on a blank frame).
+
+    The detector is not deterministic and sometimes returns a grid that skips rows or columns
+    (2026-10-27: a 24 mm "validation failure" on a good photo), so an irregular grid is retried,
+    up to ``attempts`` times, and never returned.
+    """
+    gray = _to_gray(image)
+    return first_regular_grid(
+        _detect_chessboard_once(gray, min_cols, min_rows) for _ in range(max(1, attempts)))
 
 
 def calibrate_intrinsics_boards(
