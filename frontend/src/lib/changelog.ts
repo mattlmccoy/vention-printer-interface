@@ -11,6 +11,14 @@ export interface Release {
 
 export const CHANGELOG: Release[] = [
   {
+    version: "0.21.0",
+    date: "2026-10-26",
+    changes: [
+      "Each calibration run is fitted three ways (all points; outliers over 3 px dropped; chessboard corners only) and keeps the one with the lowest error on held-out photos. The run report shows all three.",
+      "New board preset: frame — 10×7, 12 mm squares, sized to fill the zoomed view in one placement.",
+    ],
+  },
+  {
     version: "0.20.0",
     date: "2026-10-26",
     changes: [

@@ -1,6 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { canSolvePartial, checkRows, compareCalibrations, placementSummary } from "./autocal_report.ts";
+import { canSolvePartial, checkRows, compareCalibrations, placementSummary, pointMethodSummary } from "./autocal_report.ts";
 
 // The 23-photo run of 2026-10-21 (real numbers, from experiments/.autocal_last_sweep.json).
 const run = {
@@ -59,4 +59,40 @@ test("placements are summarised by how many photos each contributed", () => {
   assert.equal(placementSummary([{ placement: 0 }, { placement: 0 }, { placement: 1 }]), "2 placements: 2 + 1 photos");
   assert.equal(placementSummary([{ placement: 0 }, {}]), "1 placement: 2 photos");
   assert.equal(placementSummary([]), "no photos");
+});
+
+// solve_best on the real 2026-10-26 sweep (14 photos, 5120x3840), every method scored on all points.
+const methods = [
+  { method: "all", label: "every identified point", n_photos: 14, n_points: 425, chosen: true, passed: true,
+    lens_mm: 0.0353, n_heldout: 13, heldout_mean_mm: 0.032833, heldout_worst_mm: 0.0981 },
+  { method: "drop_outliers", label: "every point except lens-fit misses over 3 px", n_photos: 14, n_points: 417, chosen: false, passed: true,
+    lens_mm: 0.0334, n_heldout: 13, heldout_mean_mm: 0.032781, heldout_worst_mm: 0.0998 },
+  { method: "chessboard", label: "chessboard corners only", n_photos: 10, n_points: 76, chosen: false, passed: true,
+    lens_mm: 0.0178, n_heldout: 13, heldout_mean_mm: 0.084774, heldout_worst_mm: 0.7159 },
+];
+
+test("the point-method table names the kept method and lists all three", () => {
+  const v = pointMethodSummary(methods)!;
+  assert.match(v.verdict, /every identified point/);
+  assert.match(v.verdict, /0\.033 mm/);
+  assert.deepEqual(v.rows.map((r) => r.kept), [true, false, false]);
+  assert.equal(v.rows[2].heldout, "0.085 mm");
+  assert.equal(v.rows[2].worst, "0.716 mm");
+  assert.equal(v.rows[1].points, "417 points, 14 photos");
+});
+
+test("a method that could not solve shows its reason, never a number", () => {
+  const v = pointMethodSummary([methods[0], { method: "chessboard", label: "chessboard corners only", n_photos: 3, n_points: 20,
+    chosen: false, passed: false, error: "no usable photo at the capture pose" }])!;
+  assert.equal(v.rows[1].heldout, "—");
+  assert.equal(v.rows[1].note, "no usable photo at the capture pose");
+});
+
+test("a run without held-out photos says so instead of claiming a best", () => {
+  const v = pointMethodSummary([{ ...methods[0], heldout_mean_mm: null, heldout_worst_mm: null, n_heldout: 0 }])!;
+  assert.match(v.verdict, /no held-out photos/);
+});
+
+test("an older run without point methods has no table", () => {
+  assert.equal(pointMethodSummary(undefined), null);
 });

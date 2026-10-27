@@ -1,6 +1,6 @@
 import type { CSSProperties } from "react";
 import { residualText, type ResidualGroup } from "../lib/autocal.ts";
-import { checkRows, compareCalibrations, placementSummary, type RunResult, type SavedCalibration } from "../lib/autocal_report.ts";
+import { checkRows, compareCalibrations, placementSummary, pointMethodSummary, type PointMethodRow, type RunResult, type SavedCalibration } from "../lib/autocal_report.ts";
 import { arrowGain, type Pt } from "../lib/overlay_geom.ts";
 
 /** One solved sweep as the operator saved it (GET /api/vision/autocal/last). */
@@ -8,7 +8,7 @@ export interface LastSweep {
   saved_at: string | null;
   image_size: [number, number];
   capture_mm: number;
-  result: RunResult & { reasons?: string[]; residuals?: Record<string, ResidualGroup>; current?: SavedCalibration | null };
+  result: RunResult & { reasons?: string[]; residuals?: Record<string, ResidualGroup>; current?: SavedCalibration | null; point_methods?: PointMethodRow[] };
   views: Array<{ recoater_mm: number; points: number; chessboard: number; markers: number; image_points: [number, number][]; residuals_px?: [number, number][] | null; placement?: number }>;
 }
 
@@ -20,6 +20,7 @@ const MAP_W = 320;
 export function CalibrationRunReport({ last }: { last: LastSweep }) {
   const r = last.result;
   const rows = checkRows(r);
+  const methods = pointMethodSummary(r.point_methods);
   const cmp = "current" in r ? compareCalibrations(r, r.current ?? null) : null;
   const [w, h] = last.image_size;
   const mapH = Math.round((MAP_W * h) / w);
@@ -61,6 +62,28 @@ export function CalibrationRunReport({ last }: { last: LastSweep }) {
           </tbody>
         </table>
       </div>
+
+      {methods && (
+        <div>
+          <div className="hint" style={{ margin: 0 }} title="Each method is fitted on every photo but one and predicts where the left-out photo's points are; repeated for each photo. Every method is scored on the same points.">
+            {methods.verdict}
+          </div>
+          <div style={{ overflowX: "auto" }}>
+            <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 13, marginTop: 6, fontVariantNumeric: "tabular-nums" }}>
+              <thead><tr><th style={th}>points fitted</th><th style={th}>used</th><th style={th}>held-out photos, average</th><th style={th}>worst point</th><th style={th}></th></tr></thead>
+              <tbody>{methods.rows.map((m) => (
+                <tr key={m.label} style={m.kept ? { boxShadow: "inset 3px 0 0 var(--live)" } : undefined}>
+                  <td style={td}>{m.label}{m.kept ? " (kept)" : ""}</td>
+                  <td style={td}>{m.points}</td>
+                  <td style={{ ...td, fontFamily: "var(--font-mono)" }}>{m.heldout}</td>
+                  <td style={{ ...td, fontFamily: "var(--font-mono)" }}>{m.worst}</td>
+                  <td style={{ ...td, color: "var(--muted)" }}>{m.note}</td>
+                </tr>
+              ))}</tbody>
+            </table>
+          </div>
+        </div>
+      )}
 
       {r.residuals && (
         <div className="hint" style={{ margin: 0 }} title="Lens-fit error by point type and by distance from the photo centre (centre < 1/3 of the half-diagonal, edge ≥ 2/3).">

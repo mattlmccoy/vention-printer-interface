@@ -457,3 +457,44 @@ def test_a_new_placement_before_any_photo_is_refused(tmp_path: Path) -> None:
         _start(c)
         r = c.post("/api/vision/autocal/placement")
         assert r.status_code == 409 and "sweep" in r.json()["detail"]
+
+
+# ---- per-run point method: best on held-out photos ------------------------------------------
+def test_solve_reports_every_point_method_and_the_one_kept(tmp_path: Path) -> None:
+    app = _app(tmp_path)
+    with TestClient(app) as c:
+        _solved(c, app)
+        res = c.get("/api/vision/autocal/last").json()["result"]
+        rows = res["point_methods"]
+        assert [r["method"] for r in rows] == ["all", "drop_outliers", "chessboard"]
+        assert [r["method"] for r in rows if r["chosen"]] == [res["point_method"]]
+        assert all("heldout_mean_mm" in r for r in rows if not r.get("error"))
+
+
+def test_saved_calibration_records_its_point_method(tmp_path: Path) -> None:
+    app = _app(tmp_path)
+    with TestClient(app) as c:
+        _solved(c, app)
+        assert c.post("/api/vision/autocal/selfcheck", content=_moved_photo()).json()["passed"]
+        assert c.post("/api/vision/autocal/save").status_code == 200
+        prov = json.loads((tmp_path / ".vision_calibration.json").read_text())["provenance"]
+        assert prov["point_method"] in {"all", "drop_outliers", "chessboard"}
+        assert len(prov["point_methods"]) == 3
+
+
+def test_a_chessboard_only_pick_keeps_residuals_aligned_with_its_points(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from vention_printer_interface.vision import autocal_methods
+
+    monkeypatch.setattr(autocal_methods, "pick_method", lambda rows: "chessboard")
+    app = _app(tmp_path)
+    with TestClient(app) as c:
+        _solved(c, app)
+        last = c.get("/api/vision/autocal/last").json()
+        assert last["result"]["point_method"] == "chessboard"
+        for v in last["views"]:
+            assert v["markers"] == 0
+            assert len(v["residuals_px"]) == len(v["image_points"])
+        r = c.get("/api/vision/autocal/overlay.png?view=residuals")
+        assert r.status_code == 200

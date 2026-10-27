@@ -161,6 +161,17 @@ BOARD_PRESETS: dict[str, BoardSpec] = {
         marker_length_mm=3.75,
         aruco_dict="DICT_4X4_100",
     ),
+    # Sized to the zoomed science view (~126 x 95 mm at 0.0247 mm/px, 2026-10-26): one placement
+    # covers nearly the whole frame (the 64 mm board covered ~47% of the width). 120 x 84 mm, a
+    # square cut for the substrate; 54 chessboard corners, 35 markers.
+    "frame_zoom": BoardSpec(
+        kind="charuco",
+        squares_x=10,
+        squares_y=7,
+        square_length_mm=12.0,
+        marker_length_mm=9.0,
+        aruco_dict="DICT_4X4_50",
+    ),
 }
 
 # Presets that must fit a round build cylinder get a circular cut by default (diameter, mm).
