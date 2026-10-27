@@ -300,6 +300,17 @@ def _plate_sample(s: dict[str, Any], image: np.ndarray, size: tuple[int, int],
                 [x["image_points"] for x in s["samples"] if x["usable"]], s["image_size"])}
 
 
+def _board_lines(spec: BoardSpec, to_bed: Callable[[np.ndarray], np.ndarray]) -> list[np.ndarray]:
+    """The board's square edges in bed mm. ChArUco corner coordinates start one square in from
+    the board's edge; plate labels start AT the first inner corner, so the plate's squares begin
+    one pitch before label 0."""
+    if spec.kind == "checkerboard":
+        pitch = spec.square_size_mm
+        return board_grid_mm(spec.cols + 1, spec.rows + 1, pitch,
+                             lambda xy: to_bed(np.asarray(xy, float) - pitch))
+    return board_grid_mm(spec.squares_x, spec.squares_y, spec.square_length_mm, to_bed)
+
+
 def _label_plate(s: dict[str, Any]) -> list[dict[str, Any]]:
     """Number every usable plate photo's corners across the sweep (plate_labels); returns the
     photos that could not be numbered, with why. 400 when the sweep cannot be anchored."""
@@ -316,7 +327,9 @@ def _label_plate(s: dict[str, Any]) -> list[dict[str, Any]]:
     dropped: list[dict[str, Any]] = []
     for x, r in zip(usable, labelled, strict=True):
         if isinstance(r, str):
+            # Not numbered = not used: it must not count as a view or as coverage.
             x["object_points"] = x["ids"] = None
+            x["usable"] = False
             dropped.append({"recoater_mm": x["recoater_mm"], "reason": r})
         else:
             x["object_points"], x["ids"] = r
@@ -573,11 +586,7 @@ def register_autocal_routes(
         if s["capture_points"] is not None and len(s["capture_points"][0]) >= 4:
             spec = s["spec"]
             to_bed = fit_board_to_bed(s["capture_points"][0], s["capture_points"][1], res)
-            if spec.kind == "checkerboard":
-                lines = board_grid_mm(spec.cols + 1, spec.rows + 1, spec.square_size_mm, to_bed)
-            else:
-                lines = board_grid_mm(spec.squares_x, spec.squares_y, spec.square_length_mm,
-                                      to_bed)
+            lines = _board_lines(spec, to_bed)
         return draw_overlay(s["capture_image"], res, view, lines)
 
     @app.get("/api/vision/autocal/overlay.png")

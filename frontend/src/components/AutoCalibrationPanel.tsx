@@ -197,7 +197,7 @@ export function AutoCalibrationPanel({ status, printing }: { status: StatusPaylo
       </div>
       <div className="fields">
         <span title="The board you placed. The certified chessboard is flat and manufactured, so its squares are the length reference. A ChArUco board needs its exact squares, sizes and marker dictionary; a custom board made on the Calibration board page appears here too.">calibration board</span>
-        <select value={boardKey} onChange={(e) => pickBoard(e.target.value)} disabled={busy}>
+        <select value={boardKey} onChange={(e) => pickBoard(e.target.value)} disabled={busy || phase !== "idle"}>
           <option value={CERTIFIED_PLATE.key}>{CERTIFIED_PLATE.label}</option>
           {boardChoices.map((c) => <option key={c.key} value={c.key}>{c.label}</option>)}
         </select>

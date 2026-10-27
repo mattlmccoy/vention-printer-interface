@@ -113,3 +113,40 @@ def test_a_plate_session_refuses_a_board_without_its_size(tmp_path: Path) -> Non
             "spec": {"kind": "checkerboard", "cols": 9, "rows": 9, "square_size_mm": 0},
             "window_min_mm": 0.0, "window_max_mm": 523.0, "placement": "substrate"})
         assert r.status_code == 400 and "square" in r.json()["detail"]
+
+
+def test_the_plate_overlay_grid_is_on_the_plates_real_squares() -> None:
+    # Plate labels start at the first INNER corner, so the plate's squares span -pitch .. 9*pitch
+    # (review of #143: the grid was drawn one square off). A ChArUco's corners start at one square.
+    from vention_printer_interface.api.autocal_routes import _board_lines
+    from vention_printer_interface.vision.registration import BoardSpec
+
+    plate = BoardSpec(kind="checkerboard", cols=9, rows=9, square_size_mm=4.5)
+    lines = np.vstack(_board_lines(plate, lambda xy: xy))
+    assert lines.min(axis=0) == pytest.approx([-4.5, -4.5]) and lines.max(axis=0) == pytest.approx(
+        [40.5, 40.5])
+    charuco = BoardSpec(kind="charuco", squares_x=4, squares_y=4, square_length_mm=16.0,
+                        marker_length_mm=12.0)
+    lines = np.vstack(_board_lines(charuco, lambda xy: xy))
+    assert lines.min(axis=0) == pytest.approx([0, 0])
+    assert lines.max(axis=0) == pytest.approx([64, 64])
+
+
+def test_a_dropped_plate_photo_is_not_counted_as_used(tmp_path: Path) -> None:
+    # One photo's encoder reading is off by half a square: it cannot be numbered, so it must not
+    # appear as a used view or as coverage.
+    app = _app(tmp_path)
+    with TestClient(app) as c:
+        _set_capture_pose(app, CAPTURE)
+        poses = _start(c).json()["poses"]
+        far = max(poses, key=lambda p: abs(p - CAPTURE))
+        for p in poses:
+            reported = p + 2.25 if p == far else p
+            r = c.post(f"/api/vision/autocal/sample?recoater_mm={reported}",
+                       content=_photo(p - CAPTURE))
+            assert r.status_code == 200, r.text
+        res = c.post("/api/vision/autocal/solve").json()
+        assert [d["recoater_mm"] for d in res["dropped_views"]] == [far + 2.25]
+        assert all(v["points"] > 0 for v in res["views"])
+        sess = c.get("/api/vision/autocal/session").json()
+        assert [x["usable"] for x in sess["samples"] if x["recoater_mm"] == far + 2.25] == [False]
