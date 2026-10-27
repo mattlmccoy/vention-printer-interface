@@ -11,6 +11,14 @@ export interface Release {
 
 export const CHANGELOG: Release[] = [
   {
+    version: "0.22.1",
+    date: "2026-10-27",
+    changes: [
+      "Validate no longer scores a bad corner detection: a chessboard grid with uneven spacing is retried and never scored (it had produced a 24 mm \"failure\" on a good photo).",
+      "Settings → Calibrations no longer lists the newest validation twice.",
+    ],
+  },
+  {
     version: "0.22.0",
     date: "2026-10-26",
     changes: [

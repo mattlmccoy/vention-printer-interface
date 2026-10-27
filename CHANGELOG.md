@@ -3,6 +3,12 @@
 Notable changes to the Vention Printer Interface. Versions follow semantic versioning; each entry
 corresponds to a tagged merge to `main`.
 
+## v0.22.1 — 2026-10-27
+
+### Fixed
+- **A validation could report a huge error from a bad corner detection.** The chessboard detector is not deterministic: on a good certified-plate photo it sometimes returned a grid that skips rows or columns, and that grid was scored (a 24 mm "failure" on 2026-10-27). A grid whose corner spacing is uneven is now retried, up to 4 times, and never scored.
+- **Settings → Calibrations listed the newest validation twice.** Every validation also rewrites the old summary file, which was then shown again as a "numbers only" validation.
+
 ## v0.22.0 — 2026-10-26
 
 ### Added
