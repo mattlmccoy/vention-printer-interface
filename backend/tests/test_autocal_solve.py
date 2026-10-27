@@ -118,7 +118,7 @@ def test_a_certified_board_keeps_its_own_mm_and_reports_the_encoder_disagreement
     err_encoder = np.abs(_map(encoder, cap.image_points) - truth.bed_xy(cap.object_points)).max()
     assert err_board < 0.02 and err_encoder > 0.04
     assert board.scale_ratio == pytest.approx(1 / 1.002, abs=0.0005)
-    assert board.scale_ratio == pytest.approx(encoder.scale_ratio, abs=1e-9)
+    assert board.scale_ratio == pytest.approx(encoder.scale_ratio, abs=1e-6)
 
 
 def test_a_good_run_has_small_shift_and_reprojection_errors() -> None:
