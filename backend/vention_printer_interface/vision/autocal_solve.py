@@ -25,7 +25,7 @@ from __future__ import annotations
 
 import math
 from dataclasses import dataclass, field
-from typing import Any
+from typing import Any, Literal
 
 import numpy as np
 
@@ -183,8 +183,13 @@ def solve_autocal(
     capture_recoater_mm: float,
     image_size: tuple[int, int],
     max_bed_px: int = MAX_BED_IMAGE_PX,
+    scale_reference: Literal["encoder", "board"] = "encoder",
 ) -> AutocalResult:
-    """Solve the calibration from a sweep, or raise ``ValueError`` with a user-facing reason."""
+    """Solve the calibration from a sweep, or raise ``ValueError`` with a user-facing reason.
+
+    ``scale_reference`` picks the length reference: ``"encoder"`` (the engraved ChArUco, which is
+    ~0.2% small) rescales to the recoater encoder's mm; ``"board"`` (a certified plate) keeps the
+    board's own mm. ``scale_ratio`` is reported either way, as the check."""
     usable = [v for v in views if len(np.asarray(v.image_points).reshape(-1, 2)) >= MIN_CORNERS]
     if len(usable) < 2:
         raise ValueError(
@@ -264,7 +269,8 @@ def solve_autocal(
     to_bed_board = np.eye(3)
     to_bed_board[:2, :2] = rot
     to_bed_board[:2, 2] = -rot @ origin
-    to_encoder_mm = np.diag([1.0 / scale_ratio, 1.0 / scale_ratio, 1.0])
+    k_scale = 1.0 / scale_ratio if scale_reference == "encoder" else 1.0
+    to_encoder_mm = np.diag([k_scale, k_scale, 1.0])
     h_bed = to_encoder_mm @ to_bed_board @ h_board
     mm_per_px, extent, region, px_mm = _bed_raster(h_bed, k, dist, usable, image_size,
                                                    max_bed_px)

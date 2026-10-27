@@ -11,6 +11,13 @@ export interface Release {
 
 export const CHANGELOG: Release[] = [
   {
+    version: "0.23.0",
+    date: "2026-10-27",
+    changes: [
+      "Calibrate → Auto can run on the certified chessboard (DEvision Q18-100-4.5). The plate is the length reference and fills the photo; the recoater encoder becomes the check. Photos whose corners cannot be numbered safely are dropped and listed.",
+    ],
+  },
+  {
     version: "0.22.1",
     date: "2026-10-27",
     changes: [

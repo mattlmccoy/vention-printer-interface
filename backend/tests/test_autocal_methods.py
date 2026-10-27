@@ -128,3 +128,12 @@ def test_pick_method_needs_a_1um_gain_to_leave_an_earlier_method() -> None:
     assert pick_method(rows) == "all"
     rows = [_row("all", 0.03283, True), _row("drop_outliers", 0.03170, True)]
     assert pick_method(rows) == "drop_outliers"
+
+
+def test_the_best_method_keeps_a_certified_boards_own_mm() -> None:
+    views, truth = synth_views(spec=SPEC, encoder_scale=1.002)
+    best = solve_best(views, capture_recoater_mm=truth.capture_mm, image_size=SIZE,
+                      scale_reference="board")
+    direct = solve_autocal(views, capture_recoater_mm=truth.capture_mm, image_size=SIZE,
+                           scale_reference="board")
+    assert np.allclose(best.result.H, direct.H)

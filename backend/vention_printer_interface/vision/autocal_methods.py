@@ -16,7 +16,7 @@ Real 2026-10-26 sweep (14 photos, 5120x3840), every method scored on all points:
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from typing import Any
+from typing import Any, Literal
 
 import numpy as np
 
@@ -84,12 +84,14 @@ def method_views(
 
 def solve_best(
     views: list[AutocalView], *, capture_recoater_mm: float, image_size: tuple[int, int],
+    scale_reference: Literal["encoder", "board"] = "encoder",
 ) -> BestSolve:
     """Solve with every method and keep the lowest mean held-out error among those that pass
     ``judge`` (or, when none passes, among those that solved). Raises ``ValueError`` when even the
     all-points solve fails, with the solver's own reason."""
     usable = [v for v in views if _n(v) >= MIN_CORNERS]
-    base = solve_autocal(usable, capture_recoater_mm=capture_recoater_mm, image_size=image_size)
+    base = solve_autocal(usable, capture_recoater_mm=capture_recoater_mm, image_size=image_size,
+                         scale_reference=scale_reference)
     rows: list[dict[str, Any]] = []
     solved: dict[str, tuple[AutocalResult, list[AutocalView]]] = {}
     for key, label in METHODS:
@@ -99,9 +101,10 @@ def solve_best(
                                "n_points": sum(_n(v) for v in fitted), "chosen": False}
         try:
             res = base if key == "all" else solve_autocal(
-                fitted, capture_recoater_mm=capture_recoater_mm, image_size=image_size)
+                fitted, capture_recoater_mm=capture_recoater_mm, image_size=image_size,
+                scale_reference=scale_reference)
             held = heldout_scores(train, usable, capture_recoater_mm=capture_recoater_mm,
-                                  image_size=image_size)
+                                  image_size=image_size, scale_reference=scale_reference)
         except ValueError as exc:
             rows.append({**row, "error": str(exc), "passed": False})
             continue

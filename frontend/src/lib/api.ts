@@ -493,7 +493,7 @@ export const api = {
 };
 
 export interface AutocalStartBody {
-  spec: VisionBoardSpecBody;  // a ChArUco spec (sessionSpecFromDef)
+  spec: VisionBoardSpecBody;  // ChArUco (sessionSpecFromDef) or the certified plate (autocalSpec)
   window_min_mm: number;
   window_max_mm: number;
   step_mm?: number;
@@ -557,4 +557,6 @@ export interface AutocalReport {
   placement: "substrate" | "cylinder";
   board_thickness_mm: number;
   plane_note: string;
+  scale_reference?: "board" | "encoder";  // 0.23.0+: "board" = a certified plate is the ruler
+  dropped_views?: { recoater_mm: number; reason: string }[];  // plate photos that could not be numbered
 }

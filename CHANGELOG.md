@@ -3,6 +3,15 @@
 Notable changes to the Vention Printer Interface. Versions follow semantic versioning; each entry
 corresponds to a tagged merge to `main`.
 
+## v0.23.0 — 2026-10-27
+
+### Added
+- **Calibrate on the certified chessboard.** Settings → Calibrate → Auto has a new board choice: the certified plate (DEvision Q18-100-4.5, 17 × 17 corners, 4.5 mm).
+  - **Why:** on 2026-10-27 the ChArUco calibration validated at a worst corner of 0.075 mm. Every miss was at the left and right edges, which the 4×4 ChArUco never covers, and the engraved board is about 0.2 % small. The plate is flat, manufactured, and fills the photo.
+  - **Numbering the corners:** a plain chessboard has no markers. The photos near the capture pose show the whole plate and number every corner. Further along the sweep the plate runs off the photo, and the encoder works out which corners those are. A photo that cannot be numbered safely is dropped and listed, never guessed.
+  - **Length reference:** the plate's millimetres are used as they are. The recoater encoder becomes the independent check, shown as "length reference" in the run report.
+  - **Self-check:** moving or rotating the plate works the same way as with the ChArUco.
+
 ## v0.22.1 — 2026-10-27
 
 ### Fixed

@@ -105,6 +105,22 @@ def test_a_small_board_scale_error_is_corrected_to_the_recoater_encoder() -> Non
     assert judge(res)[0]
 
 
+def test_a_certified_board_keeps_its_own_mm_and_reports_the_encoder_disagreement() -> None:
+    # Certified plate (2026-10-27): the board is the length reference and the encoder only the
+    # check. Encoder 0.2% off here: the board-referenced map stays true, the encoder-referenced
+    # one inherits the encoder's error, and both report the same ratio.
+    views, truth = synth_views(spec=SPEC, encoder_scale=1.002)
+    cap = _capture_view(views, truth.capture_mm)
+    board = solve_autocal(views, capture_recoater_mm=truth.capture_mm, image_size=SIZE,
+                          scale_reference="board")
+    encoder = solve_autocal(views, capture_recoater_mm=truth.capture_mm, image_size=SIZE)
+    err_board = np.abs(_map(board, cap.image_points) - truth.bed_xy(cap.object_points)).max()
+    err_encoder = np.abs(_map(encoder, cap.image_points) - truth.bed_xy(cap.object_points)).max()
+    assert err_board < 0.02 and err_encoder > 0.04
+    assert board.scale_ratio == pytest.approx(1 / 1.002, abs=0.0005)
+    assert board.scale_ratio == pytest.approx(encoder.scale_ratio, abs=1e-6)
+
+
 def test_a_good_run_has_small_shift_and_reprojection_errors() -> None:
     views, truth = synth_views(spec=SPEC)
     res = solve_autocal(views, capture_recoater_mm=truth.capture_mm, image_size=SIZE)
